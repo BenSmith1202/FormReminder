@@ -28,11 +28,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Button color="inherit" onClick={() => navigate('/time')}>Server Time</Button>
             <Button color="inherit" onClick={() => navigate('/settings')}>Settings</Button>
           </Box>
-          
-          {/* Call to Action */}
-          <Button variant="contained" color="primary" sx={{ ml: 2 }} onClick={() => navigate('/new')}>
-            New Request
-          </Button>
+        
         </Toolbar>
       </AppBar>
 

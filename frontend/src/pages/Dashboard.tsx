@@ -153,19 +153,23 @@ export default function Dashboard() {
         </Box>
       </Stack>
 
-      {/* Data Grid Table */}
-      <Paper sx={{ height: 400, width: '100%', p: 1 }}>
-        <DataGrid
-            rows={rows}
-            columns={columns}
-            slots={{ noRowsOverlay: CustomNoRowsOverlay }}
-            initialState={{
-                pagination: { paginationModel: { pageSize: 10 } },
-            }}
-            pageSizeOptions={[5, 10, 25]}
-            disableRowSelectionOnClick
-        />
-      </Paper>
+        {/* Call to Action */}
+            <Button variant="contained" color="primary" sx={{ mb: 1, mt: 1}} onClick={() => navigate('/new')}>
+                New Request
+            </Button>
+        {/* Data Grid Table */}
+        <Paper sx={{ height: 400, width: '100%', p: 1 }}>
+            <DataGrid
+                rows={rows}
+                columns={columns}
+                slots={{ noRowsOverlay: CustomNoRowsOverlay }}
+                initialState={{
+                    pagination: { paginationModel: { pageSize: 10 } },
+                }}
+                pageSizeOptions={[5, 10, 25]}
+                disableRowSelectionOnClick
+            />
+        </Paper>
     </Box>
-  );
+);
 }
