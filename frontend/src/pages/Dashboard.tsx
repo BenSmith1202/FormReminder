@@ -1,19 +1,107 @@
 import { useEffect, useState } from 'react';
-import { Paper, Typography, Box, CircularProgress, Chip, Stack } from '@mui/material';
+import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link } from '@mui/material';
+import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
+import { useNavigate } from 'react-router-dom';
 
-// Interface for the data we expect from Flask
+// Interface for the health data
 interface HealthResponse {
   status: string;
   database: string;
-  submission_count?: number; // Optional until backend implements it fully
+  submission_count?: number; 
+}
+
+// Interface for the table rows (matching your requirements)
+interface FormRequestRow {
+  id: number; // DataGrid requires a unique 'id'
+  name: string;
+  responded: number | null;
+  recipients: number | null;
+  issued: string | null;
+  last_reminder: string | null;
+  status: 'Active' | 'Inactive' | null;
+  next_reminder: string | null;
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // In the future, this will be populated by a fetch call.
+  // For now, it is empty to trigger the "No Data" state you requested.
+  const [rows] = useState<FormRequestRow[]>([]); 
+
+  // Column Definitions
+  const columns: GridColDef[] = [
+    { field: 'name', headerName: 'Name', flex: 1.5, minWidth: 200 },
+    { 
+      field: 'responded', 
+      headerName: 'Responded', 
+      width: 100, 
+      align: 'center', 
+      headerAlign: 'center',
+      valueFormatter: (params: any) => params.value ?? '-' // Handle nulls
+    },
+    { 
+      field: 'recipients', 
+      headerName: 'Recipients', 
+      width: 100, 
+      align: 'center', 
+      headerAlign: 'center',
+      valueFormatter: (params: any) => params.value ?? '-' 
+    },
+    { field: 'issued', headerName: 'Issued', width: 120, valueFormatter: (params: any) => params.value ?? '-' },
+    { field: 'last_reminder', headerName: 'Last Reminder', width: 120, valueFormatter: (params: any) => params.value ?? '-' },
+    { 
+      field: 'status', 
+      headerName: 'Status', 
+      width: 100,
+      renderCell: (params: GridRenderCellParams) => {
+        if (!params.value) return <Typography variant="caption">-</Typography>;
+        return (
+          <Chip 
+            label={params.value} 
+            color={params.value === 'Active' ? 'success' : 'default'} 
+            size="small" 
+            variant="outlined" 
+          />
+        );
+      }
+    },
+    { field: 'next_reminder', headerName: 'Next Reminder', width: 120, valueFormatter: (params: any) => params.value ?? '-' },
+    { 
+      field: 'details', 
+      headerName: '', 
+      width: 100,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams) => (
+        <Button variant="outlined" size="small" onClick={() => console.log('View details', params.id)}>
+          Details
+        </Button>
+      )
+    },
+  ];
+
+  // Custom Message when table is empty
+  const CustomNoRowsOverlay = () => (
+    <Stack height="100%" alignItems="center" justifyContent="center">
+      <Typography color="text.secondary">
+        You don't have any form requests.{' '}
+        <Link 
+            component="button" 
+            variant="body1" 
+            onClick={() => navigate('/new')}
+            sx={{ verticalAlign: 'baseline', fontWeight: 'bold' }}
+        >
+            Click here
+        </Link>
+        {' '}to make one!
+      </Typography>
+    </Stack>
+  );
 
   useEffect(() => {
-    // Fetch from Flask Backend
+    // Fetch from Flask Backend (Health Check)
     fetch('http://127.0.0.1:5000/api/health')
       .then((res) => res.json())
       .then((data) => {
@@ -34,10 +122,8 @@ export default function Dashboard() {
         Your Form Requests
       </Typography>
 
-      {/* Milestone 1 Goal: Display Live Submission Count */}
-      {/* Switching to Stack for a simpler, more robust layout than Grid */}
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={3}>
-        {/* Card 1: System Status */}
+      {/* Metric Cards */}
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} sx={{ mb: 4 }}>
         <Box sx={{ flex: 1 }}>
           <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', height: 140 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
@@ -52,7 +138,6 @@ export default function Dashboard() {
           </Paper>
         </Box>
 
-        {/* Card 2: Live Submissions (The core metric) */}
         <Box sx={{ flex: 1 }}>
           <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', height: 140 }}>
             <Typography component="h2" variant="h6" color="primary" gutterBottom>
@@ -67,6 +152,20 @@ export default function Dashboard() {
           </Paper>
         </Box>
       </Stack>
+
+      {/* Data Grid Table */}
+      <Paper sx={{ height: 400, width: '100%', p: 1 }}>
+        <DataGrid
+            rows={rows}
+            columns={columns}
+            slots={{ noRowsOverlay: CustomNoRowsOverlay }}
+            initialState={{
+                pagination: { paginationModel: { pageSize: 5 } },
+            }}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+        />
+      </Paper>
     </Box>
   );
 }
