@@ -1,20 +1,42 @@
-import { useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import Dashboard from './pages/dashboard';
+import CreateRequest from './pages/CreateRequest';
+import Layout from './components/Layout';
+import ServerTime from './pages/ServerTime';
 
-// Health check test
+// 1. Create a custom theme (matches the Blue/White vibe of your report)
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: '#1976d2', // Standard Blue
+    },
+    background: {
+      default: '#f5f5f5', // Light Gray background
+    },
+  },
+  typography: {
+    h4: {
+      fontWeight: 600,
+    },
+  },
+});
+
 function App() {
-  const [status, setStatus] = useState("Checking...")
-
-  useEffect(() => {
-    fetch('http://127.0.0.1:5000/api/health')
-      .then(res => res.json())
-      .then(data => setStatus(data.status))
-      .catch(err => setStatus("Error connecting"))
-  }, [])
-
   return (
-    <div>
-      <h1>System Status: {status}</h1>
-    </div>
-  )
+    <ThemeProvider theme={theme}>
+      <CssBaseline /> {/* Normalizes CSS */}
+      <BrowserRouter>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/new" element={<CreateRequest />} />
+            <Route path="/time" element={<ServerTime />} /> {/* New Route */}
+          </Routes>
+        </Layout>
+      </BrowserRouter>
+    </ThemeProvider>
+  );
 }
-export default App
+
+export default App;
