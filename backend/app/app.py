@@ -8,18 +8,34 @@ from firebase_admin import credentials, firestore
 app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing
 
-# 2. Initialize Firebase (Uses local gcloud login or service account)
-# Only initialize if not already initialized to avoid errors during reloads
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
+@app.get("/")
+def root():
+    """Root endpoint"""
+    return {
+        "message": f"Welcome to FR API",
+        "status": "running",
+        "version": "1.0.0"
+    }
 
-db = firestore.client()
 
-# 3. Define Routes
-@app.route('/api/health', methods=['GET'])
+@app.get("/health")
 def health_check():
-    return jsonify({"status": "healthy", "database": "connected"})
+    """Health check endpoint"""
+    try:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
 
+        db = firestore.client()
+        return {
+            "status": "healthy",
+            "database": "connected" if db else "disconnected"
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+    
 # 4. Run the Server
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
