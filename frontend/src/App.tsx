@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
-import Dashboard from './pages/dashboard';
-import CreateRequest from './pages/CreateRequest';
 import Layout from './components/Layout';
+import Dashboard from './pages/Dashboard';
+import CreateRequest from './pages/CreateRequest';
 import ServerTime from './pages/ServerTime';
+import Groups from './pages/Groups'; // Import the new page
 
 // 1. Create a custom theme (matches the Blue/White vibe of your report)
 const theme = createTheme({
@@ -31,7 +32,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/new" element={<CreateRequest />} />
-            <Route path="/time" element={<ServerTime />} /> {/* New Route */}
+            <Route path="/time" element={<ServerTime />} />
+            <Route path="/groups" element={<Groups />} /> {/* New Route */}
           </Routes>
         </Layout>
       </BrowserRouter>

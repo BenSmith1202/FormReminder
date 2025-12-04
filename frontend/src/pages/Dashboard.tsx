@@ -160,7 +160,7 @@ export default function Dashboard() {
             columns={columns}
             slots={{ noRowsOverlay: CustomNoRowsOverlay }}
             initialState={{
-                pagination: { paginationModel: { pageSize: 5 } },
+                pagination: { paginationModel: { pageSize: 10 } },
             }}
             pageSizeOptions={[5, 10, 25]}
             disableRowSelectionOnClick
