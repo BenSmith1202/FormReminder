@@ -29,3 +29,4 @@ class Settings(BaseSettings):
 
 settings = Settings() # Creates a global settings instance
 
+
