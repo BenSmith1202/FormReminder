@@ -1,3 +1,10 @@
+"""
+DEPRECATED: This file is deprecated and will be removed in future versions.
+IT DOES NOT USE FLASK
+WE ARE USING FLASK, NOT FASTAPI
+"""
+
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager

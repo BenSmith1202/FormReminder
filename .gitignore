@@ -1,0 +1,88 @@
+# ==========================
+# Operating System & Editors
+# ==========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ==========================
+# Secrets & Environment Variables
+# (NEVER commit these)
+# ==========================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env
+
+# Google Cloud & Firebase Keys
+service-account.json
+client_secret.json
+*.key.json
+gcloud_keys/
+
+# ==========================
+# Backend (Python / Flask)
+# ==========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+env/
+backend/venv/
+
+# Flask instance folder
+instance/
+.webassets-cache
+
+# Distribution / Packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================
+# Frontend (Node / React / Vite)
+# ==========================
+# Dependencies (Heavy folder - never commit)
+node_modules/
+frontend/node_modules/
+
+# Production Build Output
+frontend/dist/
+frontend/build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+
+# ==========================
+# Miscellaneous
+# ==========================
+# Firebase cache
+.firebase/
