@@ -16,6 +16,18 @@ def root():
         "status": "running",
     }
 
+
+# TODO: API request to get form data; called in Dashboard.tsx
+@app.get("/api/data")
+def data():
+    return None
+
+# API request to get a form's id. Requires the link to the form be submitted as an argument.
+# Link must be in the pattern https://docs.google.com/forms/d/thisistheid/edit
+@app.get("/api/getid")
+def getid(formlink: str) -> str:
+    return formlink.split("/")[5]
+
 # RENAMED: Changed from /health to /api/health to match frontend/src/pages/Dashboard.tsx
 @app.get("/api/health")
 def health_check():
@@ -45,6 +57,8 @@ def get_current_time():
     return jsonify({
         "current_time": now.isoformat() + "Z"
     })
+
+
 
 # 4. Run the Server
 if __name__ == '__main__':
