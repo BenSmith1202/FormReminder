@@ -4,6 +4,8 @@
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud import firestore as gcp_firestore
+from google.oauth2 import service_account
 from typing import Optional
 import os
 from app.config import settings
@@ -27,11 +29,23 @@ class FirestoreDB:
             if settings.FIREBASE_CREDENTIALS_PATH and os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
                 cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
                 cls._app = firebase_admin.initialize_app(cred)
+                
+                # Load credentials for GCP Firestore client
+                gcp_creds = service_account.Credentials.from_service_account_file(
+                    settings.FIREBASE_CREDENTIALS_PATH
+                )
+                
+                # Use Google Cloud Firestore client directly to specify non-default database
+                cls._db = gcp_firestore.Client(
+                    project=settings.FIREBASE_PROJECT_ID,
+                    credentials=gcp_creds,
+                    database='formreminder'
+                )
             else:
                 # Use default credentials (for development or Google Cloud environment)
                 cls._app = firebase_admin.initialize_app()
+                cls._db = firestore.client()
             
-            cls._db = firestore.client()
             print("Firebase Firestore initialized successfully")
             return cls._db
             
