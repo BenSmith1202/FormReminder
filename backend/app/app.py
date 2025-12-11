@@ -20,7 +20,18 @@ def root():
 # TODO: API request to get form data; called in Dashboard.tsx
 @app.get("/api/data")
 def data():
-    return None
+    try:
+        # Initialize Firebase only if not already active
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
+        db = firestore.client()
+        forms = db.collection('forms').stream()
+        for form in forms:
+            print(f"{form.id} => {form.to_dict()}")
+        return f"{form.id} => {form.to_dict()}"
+    except Exception as e:
+        print(f"There was an error: {e}")
+        return "Something bad happen"
 
 # API request to get a form's id. Requires the link to the form be submitted as an argument.
 # Link must be in the pattern https://docs.google.com/forms/d/thisistheid/edit

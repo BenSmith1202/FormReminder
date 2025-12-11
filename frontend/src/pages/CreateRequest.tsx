@@ -8,6 +8,10 @@ export default function CreateRequest() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // TODO: Send this URL to the Flask backend to extract the Form ID
+    fetch('http://127.0.0.1:5000/api/data')
+    .then((data) => {
+      console.log(data)
+    })
     console.log("Submitting URL:", formUrl);
     setSubmitted(true);
   };
