@@ -43,6 +43,13 @@ interface Response {
   respondent_email: string;
   submitted_at: string;
   response_id: string;
+  is_member?: boolean;
+}
+
+interface MemberStatus {
+  email: string;
+  status: 'responded' | 'not_responded';
+  submitted_at?: string;
 }
 
 export default function ViewRequest() {
@@ -53,7 +60,8 @@ export default function ViewRequest() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formRequest, setFormRequest] = useState<FormRequest | null>(null);
-  const [responses, setResponses] = useState<Response[]>([]);
+  const [nonMemberResponses, setNonMemberResponses] = useState<Response[]>([]);
+  const [memberStatus, setMemberStatus] = useState<MemberStatus[]>([]);
 
   const loadFormRequestData = async () => {
     try {
@@ -73,7 +81,8 @@ export default function ViewRequest() {
       console.log('Loaded form request data:', data);
       
       setFormRequest(data.form_request);
-      setResponses(data.responses || []);
+      setNonMemberResponses(data.non_member_responses || []);
+      setMemberStatus(data.member_status || []);
     } catch (err: any) {
       console.error('Error loading form request:', err);
       setError(err.message || 'Failed to load form request');
@@ -264,48 +273,100 @@ export default function ViewRequest() {
             {formRequest.response_count}
           </Typography>
           <Typography variant="h5" color="text.secondary">
-            / {formRequest.total_recipients || 'N/A'}
+            / {formRequest.total_recipients || 0}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             responses received
           </Typography>
         </Box>
         
-        {formRequest.total_recipients === 0 && (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            No recipient group attached yet. Response tracking will show totals once a group is added.
+        {nonMemberResponses.length > 0 && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            ⚠️ {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
           </Alert>
         )}
       </Paper>
 
-      {/* Responses Table */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Responses ({responses.length})
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
+      {/* Member Status Table */}
+      {memberStatus.length > 0 && (
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Member Status ({memberStatus.length})
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
 
-        {responses.length === 0 ? (
-          <Box textAlign="center" py={4}>
-            <Typography color="text.secondary">
-              No responses yet. Click "Refresh Data" to check for new submissions.
-            </Typography>
-          </Box>
-        ) : (
           <TableContainer>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableRow>
-                    <TableCell width="50">#</TableCell>
-                    <TableCell>Respondent Email</TableCell>
-                    <TableCell>Submitted At</TableCell>
-                    <TableCell width="80" align="center">Status</TableCell>
-                  </TableRow>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {responses.map((response, index) => (
+                {memberStatus.map((member, index) => (
+                  <TableRow key={index} hover>
+                    <TableCell>{index + 1}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="medium">
+                        {member.email}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {member.submitted_at 
+                        ? new Date(member.submitted_at).toLocaleString()
+                        : '-'}
+                    </TableCell>
+                    <TableCell align="center">
+                      {member.status === 'responded' ? (
+                        <Chip 
+                          icon={<CheckCircleIcon />} 
+                          label="Responded" 
+                          color="success" 
+                          size="small" 
+                        />
+                      ) : (
+                        <Chip 
+                          icon={<CancelIcon />} 
+                          label="Not Responded" 
+                          color="error" 
+                          size="small" 
+                        />
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      )}
+
+      {/* Non-Member Responses */}
+      {nonMemberResponses.length > 0 && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Non-Member Responses ({nonMemberResponses.length})
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            These responses are from emails not in your recipient group
+          </Alert>
+
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {nonMemberResponses.map((response, index) => (
                   <TableRow key={response.id} hover>
                     <TableCell>{index + 1}</TableCell>
                     <TableCell>
@@ -319,18 +380,19 @@ export default function ViewRequest() {
                         : 'Unknown'}
                     </TableCell>
                     <TableCell align="center">
-                      <CheckCircleIcon color="success" fontSize="small" />
+                      <Chip 
+                        label="❓ Non-member" 
+                        color="warning" 
+                        size="small" 
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
-        )}
-      </Paper>
-
-      {/* TODO: Recipients Table (when groups are added) */}
-      {/* This will show all recipients and mark who has/hasn't responded */}
+        </Paper>
+      )}
     </Box>
   );
 }

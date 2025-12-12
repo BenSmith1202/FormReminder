@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.database import get_db
 from models.user import User
+from models.group import Group
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 
@@ -434,9 +435,19 @@ def get_form_requests():
         requests_list = []
         for req in form_requests:
             request_data = req.to_dict()
+            
+            # Get group to calculate total_recipients
+            group_id = request_data.get('group_id')
+            total_recipients = 0
+            if group_id:
+                group = Group.get_by_id(group_id)
+                if group:
+                    total_recipients = len(group.members)
+            
             requests_list.append({
                 "id": req.id,
-                **request_data
+                **request_data,
+                "total_recipients": total_recipients  # Always include fresh count
             })
         
         print(f"Retrieved {len(requests_list)} form requests for user {user_id}")
@@ -479,28 +490,68 @@ def get_form_request_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
+        # Get the group
+        group_id = request_data.get('group_id')
+        group = None
+        group_emails = set()
+        
+        if group_id:
+            group = Group.get_by_id(group_id)
+            if group:
+                group_emails = {member['email'].lower() for member in group.members}
+        
         # Get responses from database
         responses = db.collection(Collections.RESPONSES)\
             .where('request_id', '==', request_id)\
             .stream()
         
         responses_list = []
+        non_member_responses = []
+        
         for response in responses:
             response_data = response.to_dict()
-            responses_list.append({
+            response_email = response_data.get('respondent_email', '').lower()
+            
+            response_obj = {
                 "id": response.id,
-                **response_data
-            })
+                **response_data,
+                "is_member": response_email in group_emails if group_emails else True
+            }
+            
+            if group_emails and response_email not in group_emails:
+                non_member_responses.append(response_obj)
+            else:
+                responses_list.append(response_obj)
         
-        print(f"Retrieved {len(responses_list)} responses for request {request_id}")
+        # Create member status list
+        member_status = []
+        if group:
+            for member in group.members:
+                member_email = member['email'].lower()
+                has_responded = any(r['respondent_email'].lower() == member_email for r in responses_list)
+                member_status.append({
+                    "email": member['email'],
+                    "status": "responded" if has_responded else "not_responded",
+                    "submitted_at": next((r['submitted_at'] for r in responses_list if r['respondent_email'].lower() == member_email), None)
+                })
+        
+        print(f"Retrieved {len(responses_list)} member responses and {len(non_member_responses)} non-member responses for request {request_id}")
+        
+        # Calculate fresh total_recipients from group
+        total_recipients = len(group.members) if group else 0
         
         return jsonify({
             "form_request": {
                 "id": request_id,
-                **request_data
+                **request_data,
+                "total_recipients": total_recipients  # Override with fresh count from group
             },
             "responses": responses_list,
-            "response_count": len(responses_list)
+            "non_member_responses": non_member_responses,
+            "member_status": member_status,
+            "response_count": len(responses_list),
+            "non_member_count": len(non_member_responses),
+            "total_recipients": total_recipients
         }), 200
         
     except Exception as e:
@@ -651,9 +702,21 @@ def create_form_request():
         if not data or 'form_url' not in data:
             return jsonify({"error": "form_url is required"}), 400
         
-        form_url = data['form_url']
+        if 'group_id' not in data:
+            return jsonify({"error": "group_id is required"}), 400
         
-        print(f"Creating form request for URL: {form_url}")
+        form_url = data['form_url']
+        group_id = data['group_id']
+        
+        # Verify group exists and user owns it
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        if group.owner_id != user_id:
+            return jsonify({"error": "You don't own this group"}), 403
+        
+        print(f"Creating form request for URL: {form_url} with group: {group.name}")
         
         # Extract form ID
         form_id = GoogleFormsService.extract_form_id(form_url)
@@ -707,6 +770,7 @@ def create_form_request():
             'title': metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
             'owner_id': user_id,
+            'group_id': group_id,
             'created_at': datetime.utcnow().isoformat() + 'Z',
             'status': 'Active',
             'is_active': True,
@@ -716,7 +780,7 @@ def create_form_request():
                 'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
             },
             'response_count': len(responses),
-            'total_recipients': data.get('total_recipients', 0),  # Will be set when group is attached
+            'total_recipients': len(group.members),  # Number of members in the group
             'last_synced_at': datetime.utcnow().isoformat() + 'Z',
             'warnings': [] if email_collection_enabled else ['Email collection may not be enabled']
         }
@@ -760,6 +824,358 @@ def create_form_request():
             "error": "Failed to create form request",
             "details": error_msg
         }), 500
+
+
+@app.delete("/api/form-requests/<request_id>")
+def delete_form_request(request_id: str):
+    """Delete a form request and all its responses"""
+    from models.database import Collections
+    
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        db = get_db()
+        
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Delete all responses for this request
+        responses = db.collection(Collections.RESPONSES)\
+            .where('request_id', '==', request_id)\
+            .stream()
+        
+        deleted_responses = 0
+        for response in responses:
+            response.reference.delete()
+            deleted_responses += 1
+        
+        # Delete the form request
+        request_ref.delete()
+        
+        print(f"✅ Deleted form request {request_id} and {deleted_responses} responses")
+        
+        return jsonify({
+            "success": True,
+            "message": "Form request deleted",
+            "deleted_responses": deleted_responses
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error deleting form request: {error_msg}")
+        return jsonify({
+            "error": "Failed to delete form request",
+            "details": error_msg
+        }), 500
+
+
+# ============= GROUPS ROUTES =============
+
+@app.post("/api/groups")
+def create_group():
+    """Create a new group"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "Group name is required"}), 400
+        
+        name = data['name'].strip()
+        description = data.get('description', '').strip()
+        
+        if not name:
+            return jsonify({"error": "Group name cannot be empty"}), 400
+        
+        print(f"Creating group: {name} for user {user_id}")
+        
+        group = Group.create_group(
+            name=name,
+            description=description,
+            owner_id=user_id
+        )
+        
+        if not group:
+            return jsonify({"error": "Failed to create group"}), 500
+        
+        return jsonify({
+            "success": True,
+            "message": "Group created successfully",
+            "group": group.to_dict()
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error creating group: {error_msg}")
+        return jsonify({
+            "error": "Failed to create group",
+            "details": error_msg
+        }), 500
+
+
+@app.get("/api/groups")
+def get_user_groups():
+    """Get all groups owned by the current user"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        print(f"Fetching groups for user: {user_id}")
+        
+        groups = Group.get_user_groups(user_id)
+        
+        groups_list = [group.to_dict() for group in groups]
+        
+        print(f"Found {len(groups_list)} groups")
+        
+        return jsonify({
+            "groups": groups_list,
+            "count": len(groups_list)
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error fetching groups: {error_msg}")
+        return jsonify({
+            "error": "Failed to fetch groups",
+            "details": error_msg
+        }), 500
+
+
+@app.get("/api/groups/<group_id>")
+def get_group(group_id: str):
+    """Get a specific group with all members"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        group = Group.get_by_id(group_id)
+        
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Verify ownership
+        if group.owner_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        return jsonify({
+            "group": group.to_dict()
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error fetching group: {error_msg}")
+        return jsonify({
+            "error": "Failed to fetch group",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/groups/<group_id>/members")
+def add_group_members(group_id: str):
+    """Add members to a group (bulk email paste)"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        data = request.get_json()
+        if not data or 'emails' not in data:
+            return jsonify({"error": "Emails are required"}), 400
+        
+        emails_text = data['emails']
+        
+        # Get group
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Verify ownership
+        if group.owner_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Parse emails from text
+        emails = Group.parse_emails(emails_text)
+        
+        if not emails:
+            return jsonify({"error": "No valid emails found"}), 400
+        
+        print(f"Adding {len(emails)} emails to group {group_id}")
+        
+        # Add members
+        added_count = group.add_members(emails)
+        
+        return jsonify({
+            "success": True,
+            "message": f"Added {added_count} new members",
+            "added_count": added_count,
+            "total_members": len(group.members),
+            "skipped": len(emails) - added_count  # Duplicates
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error adding members: {error_msg}")
+        return jsonify({
+            "error": "Failed to add members",
+            "details": error_msg
+        }), 500
+
+
+@app.delete("/api/groups/<group_id>/members/<email>")
+def remove_group_member(group_id: str, email: str):
+    """Remove a member from a group"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        print(f"Removing member {email} from group {group_id}")
+        
+        # Get group
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Verify ownership
+        if group.owner_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Remove member
+        success = group.remove_member(email)
+        
+        if not success:
+            return jsonify({"error": "Member not found"}), 404
+        
+        return jsonify({
+            "success": True,
+            "message": f"Removed {email}",
+            "total_members": len(group.members)
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error removing member: {error_msg}")
+        return jsonify({
+            "error": "Failed to remove member",
+            "details": error_msg
+        }), 500
+
+
+@app.get("/api/groups/join/<invite_token>")
+def get_group_by_token(invite_token: str):
+    """PUBLIC: Get group info by invite token (for join page)"""
+    try:
+        print(f"Getting group info for token: {invite_token}")
+        
+        group = Group.get_by_invite_token(invite_token)
+        
+        if not group:
+            return jsonify({"error": "Invalid invite link"}), 404
+        
+        # Return limited info (no members list, just group details)
+        return jsonify({
+            "group": {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description,
+                "member_count": len(group.members)
+            }
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error getting group by token: {error_msg}")
+        return jsonify({
+            "error": "Failed to get group info",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/groups/join/<invite_token>")
+def join_group(invite_token: str):
+    """PUBLIC: Join a group via invite link (no auth required)"""
+    try:
+        data = request.get_json()
+        if not data or 'email' not in data:
+            return jsonify({"error": "Email is required"}), 400
+        
+        email = data['email'].strip()
+        
+        # Validate email format
+        if not Group.validate_email(email):
+            return jsonify({"error": "Invalid email format"}), 400
+        
+        print(f"User {email} joining group via token: {invite_token}")
+        
+        # Get group
+        group = Group.get_by_invite_token(invite_token)
+        if not group:
+            return jsonify({"error": "Invalid invite link"}), 404
+        
+        # Add member
+        success = group.add_member(email)
+        
+        if not success:
+            # Check if already a member
+            existing_emails = {member['email'].lower() for member in group.members}
+            if email.lower() in existing_emails:
+                return jsonify({
+                    "success": True,
+                    "message": "You're already a member of this group!",
+                    "already_member": True
+                }), 200
+            else:
+                return jsonify({"error": "Failed to join group"}), 500
+        
+        return jsonify({
+            "success": True,
+            "message": f"Successfully joined {group.name}!",
+            "group_name": group.name
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error joining group: {error_msg}")
+        return jsonify({
+            "error": "Failed to join group",
+            "details": error_msg
+        }), 500
+
+
+# ============= END GROUPS ROUTES =============
 
 # This matches frontend/src/pages/ServerTime.tsx
 @app.route('/time', methods=['GET'])
