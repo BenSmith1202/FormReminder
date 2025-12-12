@@ -233,7 +233,6 @@ export default function Dashboard() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Cleanup
     return () => {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -317,7 +316,6 @@ export default function Dashboard() {
       try {
         setData(healthData);
         
-        // Transform form requests to table rows
         const transformedRows: FormRequestRow[] = Array.isArray(formRequests) 
           ? formRequests.map((request: any) => ({
               id: request.id,

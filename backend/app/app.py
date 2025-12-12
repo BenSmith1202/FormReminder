@@ -11,6 +11,7 @@ from models.user import User
 from models.group import Group
 from config import settings
 from utils.google_forms_service import GoogleFormsService
+from utils.email_service import EmailService
 
 # 1. Initialize Flask
 app = Flask(__name__)
@@ -65,13 +66,11 @@ def register():
         
         print(f"Attempting to register user: {username}")
         
-        # Create user
         user = User.create_user(username, email, password)
         
         if not user:
             return jsonify({"error": "Username or email already exists"}), 409
         
-        # Log the user in by storing their ID in session
         session['user_id'] = user.id
         
         print(f"User registered and logged in: {user.id}")
@@ -110,19 +109,16 @@ def login():
         
         print(f"Login attempt for username: {username}")
         
-        # Find user
         user = User.get_by_username(username)
         
         if not user:
             print(f"User not found: {username}")
             return jsonify({"error": "Invalid username or password"}), 401
         
-        # Verify password
         if not User.verify_password(user.password_hash, password):
             print(f"Invalid password for user: {username}")
             return jsonify({"error": "Invalid username or password"}), 401
         
-        # Log the user in
         session['user_id'] = user.id
         
         print(f"User logged in successfully: {user.id}")
@@ -331,7 +327,6 @@ def google_auth_status():
 
 
 
-# TODO: API request to get form data; called in Dashboard.tsx
 @app.get("/api/data")
 def data():
     try:
@@ -353,7 +348,6 @@ def data():
         }), 500
 
 # API request to get a form's id. Requires the link to the form be submitted as an argument.
-# Link must be in the pattern https://docs.google.com/forms/d/thisistheid/edit
 @app.get("/api/getid")
 def getid():
     from flask import request
@@ -364,7 +358,6 @@ def getid():
     
     try:
         # Extract form ID from URL
-        # Pattern: https://docs.google.com/forms/d/FORM_ID/edit
         parts = formlink.split("/")
         form_id = None
         
@@ -387,7 +380,6 @@ def getid():
             "details": str(e)
         }), 500
 
-# RENAMED: Changed from /health to /api/health to match frontend/src/pages/Dashboard.tsx
 @app.get("/api/health")
 def health_check():
     """Health check endpoint"""
@@ -427,7 +419,6 @@ def get_form_requests():
         
         db = get_db()
         
-        # Get only the current user's form requests
         form_requests = db.collection(Collections.FORM_REQUESTS)\
             .where('owner_id', '==', user_id)\
             .stream()
@@ -1187,6 +1178,162 @@ def get_current_time():
         "current_time": now.isoformat() + "Z"
     })
 
+
+# ============= EMAIL REMINDER ROUTES =============
+
+@app.post("/api/form-requests/<request_id>/send-reminder/<email>")
+def send_single_reminder(request_id: str, email: str):
+    """Send a reminder email to a single recipient"""
+    from models.database import Collections
+    
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        db = get_db()
+        
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Get form info
+        form_title = request_data.get('title', 'Untitled Form')
+        form_url = request_data.get('form_url')
+        
+        print(f"Sending reminder to {email} for form: {form_title}")
+        
+        # Send reminder
+        result = EmailService.send_reminder(request_id, form_title, form_url, email)
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error sending reminder: {error_msg}")
+        return jsonify({
+            "error": "Failed to send reminder",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/form-requests/<request_id>/send-reminders")
+def send_bulk_reminders(request_id: str):
+    """Send reminders to all non-responders (excluding recently sent)"""
+    from models.database import Collections
+    
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        db = get_db()
+        
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Get form info
+        form_title = request_data.get('title', 'Untitled Form')
+        form_url = request_data.get('form_url')
+        group_id = request_data.get('group_id')
+        
+        if not group_id:
+            return jsonify({"error": "No group attached to this form request"}), 400
+        
+        # Get group and member status
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Get responses to determine who hasn't responded
+        responses = db.collection(Collections.RESPONSES)\
+            .where('request_id', '==', request_id)\
+            .stream()
+        
+        responded_emails = set()
+        for response in responses:
+            response_data = response.to_dict()
+            email_lower = response_data.get('respondent_email', '').lower()
+            if email_lower:
+                responded_emails.add(email_lower)
+        
+        # Find non-responders
+        non_responders = []
+        for member in group.members:
+            member_email = member['email']
+            if member_email.lower() not in responded_emails:
+                non_responders.append(member_email)
+        
+        print(f"Found {len(non_responders)} non-responders out of {len(group.members)} members")
+        
+        if not non_responders:
+            return jsonify({
+                "success": True,
+                "message": "All members have already responded!",
+                "sent": 0,
+                "skipped": 0,
+                "failed": 0
+            }), 200
+        
+        # Send reminders (respecting rate limits)
+        sent = 0
+        skipped = 0
+        failed = 0
+        
+        for recipient_email in non_responders:
+            result = EmailService.send_reminder(request_id, form_title, form_url, recipient_email)
+            
+            if result['success']:
+                sent += 1
+            elif 'Rate limit' in result.get('error', ''):
+                skipped += 1
+            else:
+                failed += 1
+        
+        print(f"✅ Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Sent {sent} reminders",
+            "sent": sent,
+            "skipped": skipped,
+            "failed": failed,
+            "total_non_responders": len(non_responders)
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error sending bulk reminders: {error_msg}")
+        return jsonify({
+            "error": "Failed to send reminders",
+            "details": error_msg
+        }), 500
 
 
 # 4. Run the Server
