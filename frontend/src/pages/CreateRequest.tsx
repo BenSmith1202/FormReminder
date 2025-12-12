@@ -1,75 +1,154 @@
-import { useState } from 'react';
-import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress } from '@mui/material';
+import { useState, useEffect } from 'react';
+import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+
+const API_URL = 'http://localhost:5000';
 
 export default function CreateRequest() {
   const navigate = useNavigate();
   const [formUrl, setFormUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [needsGoogleAuth, setNeedsGoogleAuth] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Check Google auth status on mount
+  useEffect(() => {
+    const checkGoogleAuth = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/google-auth-status`, {
+          credentials: 'include',
+        });
+        const data = await response.json();
+        
+        console.log('Google auth status:', data);
+        
+        if (!data.google_connected) {
+          setNeedsGoogleAuth(true);
+        }
+      } catch (error) {
+        console.error('Failed to check Google auth:', error);
+        setError('Failed to check Google connection status');
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+
+    checkGoogleAuth();
+  }, []);
+
+  const handleConnectGoogle = async () => {
+    try {
+      console.log('Initiating Google OAuth...');
+      const response = await fetch(`${API_URL}/login/google`, {
+        credentials: 'include',
+      });
+      const data = await response.json();
+      
+      if (data.authorization_url) {
+        console.log('Redirecting to Google authorization:', data.authorization_url);
+        // Redirect to Google's authorization page
+        window.location.href = data.authorization_url;
+      } else {
+        setError('Failed to get Google authorization URL');
+      }
+    } catch (error) {
+      console.error('Failed to initiate Google OAuth:', error);
+      setError('Failed to connect Google account');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     
-    // Step 1: Extract form ID from URL using backend endpoint
-    const formIdEndpoint = `http://127.0.0.1:5000/api/getid?formlink=${encodeURIComponent(formUrl)}`;
-    
-    fetch(formIdEndpoint)
-      .then((res) => {
-        if (!res.ok) {
-          return res.json().then(err => { throw new Error(err.error || `HTTP error! status: ${res.status}`); });
-        }
-        return res.json();
-      })
-      .then((data) => {
-        console.log("Extracted Form ID:", data.form_id);
-        console.log("Form URL:", data.form_url);
-        
-        // Step 2: Create form request with the extracted ID
-        return fetch('http://127.0.0.1:5000/api/form-requests', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            form_id: data.form_id,
-            form_url: data.form_url,
-            name: `Form ${data.form_id.substring(0, 8)}` // Default name
-          })
-        });
-      })
-      .then((res) => {
-        if (!res.ok) {
-          return res.json().then(err => { throw new Error(err.error || `HTTP error! status: ${res.status}`); });
-        }
-        return res.json();
-      })
-      .then((data) => {
-        console.log("Form request created:", data);
-        // Navigate to dashboard after successful creation
-        navigate('/');
-      })
-      .catch((err) => {
-        console.error("Failed to create form request", err);
-        setError(err.message || "Failed to create form request. Please try again.");
-        setLoading(false);
+    try {
+      console.log('Creating form request for URL:', formUrl);
+      
+      const response = await fetch(`${API_URL}/api/form-requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          form_url: formUrl
+        })
       });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        // Check if credentials were revoked - automatically reconnect
+        if (data.action_required === 'reconnect_google') {
+          console.log('Credentials revoked, automatically redirecting to Google OAuth...');
+          // Trigger OAuth flow automatically
+          const oauthResponse = await fetch(`${API_URL}/login/google`, {
+            credentials: 'include',
+          });
+          const oauthData = await oauthResponse.json();
+          
+          if (oauthData.authorization_url) {
+            // Redirect to Google's authorization page
+            window.location.href = oauthData.authorization_url;
+            return; // Don't throw error, user is being redirected
+          }
+        }
+        throw new Error(data.error || data.message || 'Failed to create form request');
+      }
+      
+      console.log('✅ Form request created:', data);
+      // Navigate to dashboard after successful creation
+      navigate('/');
+      
+    } catch (err: any) {
+      console.error('❌ Failed to create form request:', err);
+      setError(err.message || 'Failed to create form request. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCancel = () => {
     navigate('/');
   };
 
+  if (checkingAuth) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
   return (
     <Box maxWidth="sm" sx={{ mx: 'auto' }}>
+      {/* Google Auth Required Dialog */}
+      <Dialog open={needsGoogleAuth} onClose={() => {}}>
+        <DialogTitle>Connect Your Google Account</DialogTitle>
+        <DialogContent>
+          <Typography>
+            To create form requests and track responses, you need to connect your Google account.
+            This allows us to access your Google Forms data.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancel} color="inherit">
+            Cancel
+          </Button>
+          <Button onClick={handleConnectGoogle} variant="contained" color="primary">
+            Connect Google Account
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" gutterBottom>
           Create a New Form Request
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Paste the link to your Google Form below. We will automatically track responses.
+          Paste the link to your Google Form below. We will automatically track responses and fetch the latest data.
         </Typography>
 
         {error && (
@@ -81,7 +160,7 @@ export default function CreateRequest() {
         <form onSubmit={handleSubmit}>
           <TextField
             fullWidth
-            label="Form URL"
+            label="Google Form URL"
             placeholder="https://docs.google.com/forms/d/..."
             variant="outlined"
             margin="normal"
@@ -89,6 +168,7 @@ export default function CreateRequest() {
             onChange={(e) => setFormUrl(e.target.value)}
             required
             disabled={loading}
+            helperText="Example: https://docs.google.com/forms/d/1a2b3c4d5e6f7g8h9/edit"
           />
           
           <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>

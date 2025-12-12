@@ -1,0 +1,336 @@
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  Paper,
+  Typography,
+  Box,
+  CircularProgress,
+  Button,
+  Alert,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Chip,
+  Stack,
+  Divider,
+  IconButton,
+} from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+
+const API_URL = 'http://localhost:5000';
+
+interface FormRequest {
+  id: string;
+  title: string;
+  description: string;
+  form_url: string;
+  response_count: number;
+  total_recipients: number;
+  created_at: string;
+  last_synced_at: string;
+  status: string;
+  warnings?: string[];
+}
+
+interface Response {
+  id: string;
+  respondent_email: string;
+  submitted_at: string;
+  response_id: string;
+}
+
+export default function ViewRequest() {
+  const { requestId } = useParams<{ requestId: string }>();
+  const navigate = useNavigate();
+  
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [formRequest, setFormRequest] = useState<FormRequest | null>(null);
+  const [responses, setResponses] = useState<Response[]>([]);
+
+  const loadFormRequestData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/responses`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load form request: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      console.log('Loaded form request data:', data);
+      
+      setFormRequest(data.form_request);
+      setResponses(data.responses || []);
+    } catch (err: any) {
+      console.error('Error loading form request:', err);
+      setError(err.message || 'Failed to load form request');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      setError(null);
+
+      console.log(`Refreshing responses for request: ${requestId}`);
+      
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to refresh');
+      }
+
+      console.log('✅ Refresh successful:', result);
+      
+      // Reload the data
+      await loadFormRequestData();
+    } catch (err: any) {
+      console.error('❌ Refresh failed:', err);
+      setError(`Failed to refresh: ${err.message}`);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (requestId) {
+      loadFormRequestData();
+    }
+  }, [requestId]);
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error && !formRequest) {
+    return (
+      <Box>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/')}
+          sx={{ mb: 2 }}
+        >
+          Back to Dashboard
+        </Button>
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
+
+  if (!formRequest) {
+    return (
+      <Box>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/')}
+          sx={{ mb: 2 }}
+        >
+          Back to Dashboard
+        </Button>
+        <Alert severity="warning">Form request not found</Alert>
+      </Box>
+    );
+  }
+
+  return (
+    <Box>
+      {/* Header */}
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+        <Box display="flex" alignItems="center" gap={2}>
+          <IconButton onClick={() => navigate('/')}>
+            <ArrowBackIcon />
+          </IconButton>
+          <Typography variant="h4">
+            {formRequest.title}
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          startIcon={refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
+          onClick={handleRefresh}
+          disabled={refreshing}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh Data'}
+        </Button>
+      </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      {/* Warnings */}
+      {formRequest.warnings && formRequest.warnings.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {formRequest.warnings.join(', ')}
+        </Alert>
+      )}
+
+      {/* Form Details */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Form Details
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+        
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="subtitle2" color="text.secondary">
+              Description
+            </Typography>
+            <Typography variant="body1">
+              {formRequest.description || 'No description'}
+            </Typography>
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" color="text.secondary">
+              Form URL
+            </Typography>
+            <Typography variant="body2">
+              <a href={formRequest.form_url} target="_blank" rel="noopener noreferrer">
+                {formRequest.form_url}
+              </a>
+            </Typography>
+          </Box>
+
+          <Box display="flex" gap={4}>
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Created
+              </Typography>
+              <Typography variant="body1">
+                {new Date(formRequest.created_at).toLocaleString()}
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Last Synced
+              </Typography>
+              <Typography variant="body1">
+                {new Date(formRequest.last_synced_at).toLocaleString()}
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Status
+              </Typography>
+              <Chip 
+                label={formRequest.status} 
+                color={formRequest.status === 'Active' ? 'success' : 'default'}
+                size="small"
+              />
+            </Box>
+          </Box>
+        </Stack>
+      </Paper>
+
+      {/* Response Summary */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Response Summary
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+        
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="h3" color="primary">
+            {formRequest.response_count}
+          </Typography>
+          <Typography variant="h5" color="text.secondary">
+            / {formRequest.total_recipients || 'N/A'}
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            responses received
+          </Typography>
+        </Box>
+        
+        {formRequest.total_recipients === 0 && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            No recipient group attached yet. Response tracking will show totals once a group is added.
+          </Alert>
+        )}
+      </Paper>
+
+      {/* Responses Table */}
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Responses ({responses.length})
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+
+        {responses.length === 0 ? (
+          <Box textAlign="center" py={4}>
+            <Typography color="text.secondary">
+              No responses yet. Click "Refresh Data" to check for new submissions.
+            </Typography>
+          </Box>
+        ) : (
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableRow>
+                    <TableCell width="50">#</TableCell>
+                    <TableCell>Respondent Email</TableCell>
+                    <TableCell>Submitted At</TableCell>
+                    <TableCell width="80" align="center">Status</TableCell>
+                  </TableRow>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {responses.map((response, index) => (
+                  <TableRow key={response.id} hover>
+                    <TableCell>{index + 1}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="medium">
+                        {response.respondent_email || 'Anonymous'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {response.submitted_at 
+                        ? new Date(response.submitted_at).toLocaleString()
+                        : 'Unknown'}
+                    </TableCell>
+                    <TableCell align="center">
+                      <CheckCircleIcon color="success" fontSize="small" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+
+      {/* TODO: Recipients Table (when groups are added) */}
+      {/* This will show all recipients and mark who has/hasn't responded */}
+    </Box>
+  );
+}

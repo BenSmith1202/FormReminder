@@ -1,16 +1,35 @@
 import os
 import sys
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.database import get_db
+from models.user import User
+from config import settings
+from utils.google_forms_service import GoogleFormsService
 
 # 1. Initialize Flask
 app = Flask(__name__)
-CORS(app)  # Enable Cross-Origin Resource Sharing
+app.secret_key = settings.SECRET_KEY  # Required for sessions
+
+CORS(app, 
+     origins=["http://localhost:5173"],  # Frontend URL
+     supports_credentials=True,
+     allow_headers=["Content-Type"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+# Debug middleware to check sessions
+@app.before_request
+def log_session():
+    """Debug: Log session info for each request"""
+    print(f"\n=== REQUEST: {request.method} {request.path} ===")
+    print(f"Session data: {dict(session)}")
+    print(f"Has user_id: {'user_id' in session}")
+    if 'user_id' in session:
+        print(f"User ID: {session['user_id']}")
 
 @app.get("/")
 def root():
@@ -19,6 +38,296 @@ def root():
         "message": "Welcome to FR API. Visit localhost:5173 to see the App.",
         "status": "running",
     }
+
+
+# AUTHENTICATION ROUTES
+
+@app.post("/api/register")
+def register():
+    """Register a new user"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        
+        # Validate input
+        if not username or not email or not password:
+            return jsonify({"error": "Username, email, and password are required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        print(f"Attempting to register user: {username}")
+        
+        # Create user
+        user = User.create_user(username, email, password)
+        
+        if not user:
+            return jsonify({"error": "Username or email already exists"}), 409
+        
+        # Log the user in by storing their ID in session
+        session['user_id'] = user.id
+        
+        print(f"User registered and logged in: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "User registered successfully",
+            "user": user.to_safe_dict()
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during registration: {error_msg}")
+        return jsonify({
+            "error": "Registration failed",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/login")
+def login():
+    """Login an existing user"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        
+        print(f"Login attempt for username: {username}")
+        
+        # Find user
+        user = User.get_by_username(username)
+        
+        if not user:
+            print(f"User not found: {username}")
+            return jsonify({"error": "Invalid username or password"}), 401
+        
+        # Verify password
+        if not User.verify_password(user.password_hash, password):
+            print(f"Invalid password for user: {username}")
+            return jsonify({"error": "Invalid username or password"}), 401
+        
+        # Log the user in
+        session['user_id'] = user.id
+        
+        print(f"User logged in successfully: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Logged in successfully",
+            "user": user.to_safe_dict()
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during login: {error_msg}")
+        return jsonify({
+            "error": "Login failed",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/logout")
+def logout():
+    """Logout the current user"""
+    try:
+        user_id = session.get('user_id')
+        session.clear()
+        print(f"User logged out: {user_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Logged out successfully"
+        }), 200
+        
+    except Exception as e:
+        print(f"Error during logout: {e}")
+        return jsonify({
+            "error": "Logout failed"
+        }), 500
+
+
+@app.get("/api/current-user")
+def current_user():
+    """Get the currently logged in user"""
+    try:
+        user_id = session.get('user_id')
+        
+        if not user_id:
+            return jsonify({"authenticated": False}), 200
+        
+        user = User.get_by_id(user_id)
+        
+        if not user:
+            session.clear()
+            return jsonify({"authenticated": False}), 200
+        
+        return jsonify({
+            "authenticated": True,
+            "user": user.to_safe_dict()
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error getting current user: {error_msg}")
+        return jsonify({
+            "authenticated": False,
+            "error": error_msg
+        }), 500
+
+
+
+# GOOGLE OAUTH ROUTES
+
+@app.get("/login/google")
+def google_login():
+    """Initiate Google OAuth flow"""
+    try:
+        user_id = session.get('user_id')
+        
+        if not user_id:
+            return jsonify({"error": "Must be logged in to connect Google account"}), 401
+        
+        # Generate a unique state token for CSRF protection
+        import secrets
+        state = secrets.token_urlsafe(32)
+        session['oauth_state'] = state
+        
+        # Get authorization URL
+        authorization_url = GoogleFormsService.get_authorization_url(state)
+        
+        print(f"User {user_id} initiating Google OAuth")
+        print(f"Authorization URL: {authorization_url}")
+        
+        return jsonify({
+            "authorization_url": authorization_url
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error initiating Google login: {error_msg}")
+        return jsonify({
+            "error": "Failed to initiate Google login",
+            "details": error_msg
+        }), 500
+
+
+@app.get("/oauth/callback")
+def oauth_callback():
+    """Handle Google OAuth callback"""
+    try:
+        # Get the authorization code
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        if error:
+            print(f"OAuth error: {error}")
+            return f"<html><body><h1>Authorization Failed</h1><p>{error}</p><a href='http://localhost:5173'>Return to app</a></body></html>", 400
+        
+        if not code:
+            return "<html><body><h1>No authorization code received</h1></body></html>", 400
+        
+        # Verify state token (CSRF protection)
+        expected_state = session.get('oauth_state')
+        if not expected_state or state != expected_state:
+            print("State mismatch - possible CSRF attack")
+            return "<html><body><h1>Invalid state token</h1></body></html>", 400
+        
+        print(f"Received OAuth callback with code")
+        
+        # Exchange code for tokens
+        tokens = GoogleFormsService.exchange_code_for_tokens(code, state)
+        
+        # Get current user
+        user_id = session.get('user_id')
+        if not user_id:
+            return "<html><body><h1>Session expired, please log in again</h1></body></html>", 401
+        
+        user = User.get_by_id(user_id)
+        if not user:
+            return "<html><body><h1>User not found</h1></body></html>", 404
+        
+        # Store tokens in database
+        success = user.update_google_tokens(
+            access_token=tokens['access_token'],
+            refresh_token=tokens['refresh_token'],
+            expiry=tokens['token_expiry']
+        )
+        
+        if success:
+            print(f"Successfully stored Google tokens for user {user_id}")
+            return """
+            <html>
+            <body>
+                <h1>Successfully connected Google account!</h1>
+                <p>You can now close this window and return to the app.</p>
+                <script>
+                    setTimeout(function() {
+                        window.close();
+                        window.location.href = 'http://localhost:5173';
+                    }, 2000);
+                </script>
+            </body>
+            </html>
+            """, 200
+        else:
+            return "<html><body><h1>Failed to store tokens</h1></body></html>", 500
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error in OAuth callback: {error_msg}")
+        return f"<html><body><h1>OAuth Callback Error</h1><p>{error_msg}</p></body></html>", 500
+
+
+@app.get("/api/google-auth-status")
+def google_auth_status():
+    """Check if current user has connected their Google account"""
+    try:
+        user_id = session.get('user_id')
+        
+        if not user_id:
+            return jsonify({"authenticated": False, "google_connected": False}), 200
+        
+        user = User.get_by_id(user_id)
+        
+        if not user:
+            return jsonify({"authenticated": False, "google_connected": False}), 200
+        
+        has_google = bool(user.google_access_token and user.google_refresh_token)
+        
+        return jsonify({
+            "authenticated": True,
+            "google_connected": has_google
+        }), 200
+        
+    except Exception as e:
+        print(f"Error checking Google auth status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 # TODO: API request to get form data; called in Dashboard.tsx
@@ -111,16 +420,28 @@ def get_form_requests():
     from models.database import Collections
     
     try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
         db = get_db()
-        form_requests = db.collection(Collections.FORM_REQUESTS).stream()
+        
+        # Get only the current user's form requests
+        form_requests = db.collection(Collections.FORM_REQUESTS)\
+            .where('owner_id', '==', user_id)\
+            .stream()
+        
         requests_list = []
-        for request in form_requests:
-            request_data = request.to_dict()
+        for req in form_requests:
+            request_data = req.to_dict()
             requests_list.append({
-                "id": request.id,
+                "id": req.id,
                 **request_data
             })
+        
+        print(f"Retrieved {len(requests_list)} form requests for user {user_id}")
         return jsonify(requests_list)
+        
     except Exception as e:
         import traceback
         error_msg = str(e)
@@ -131,52 +452,310 @@ def get_form_requests():
             "details": error_msg
         }), 500
 
-# Create a new form request
-@app.post("/api/form-requests")
-def create_form_request():
-    """Create a new form request from a Google Form URL"""
-    from flask import request
+
+# Get responses for a specific form request
+@app.get("/api/form-requests/<request_id>/responses")
+def get_form_request_responses(request_id: str):
+    """Get all responses for a form request"""
+    from models.database import Collections
+    
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        db = get_db()
+        
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Get responses from database
+        responses = db.collection(Collections.RESPONSES)\
+            .where('request_id', '==', request_id)\
+            .stream()
+        
+        responses_list = []
+        for response in responses:
+            response_data = response.to_dict()
+            responses_list.append({
+                "id": response.id,
+                **response_data
+            })
+        
+        print(f"Retrieved {len(responses_list)} responses for request {request_id}")
+        
+        return jsonify({
+            "form_request": {
+                "id": request_id,
+                **request_data
+            },
+            "responses": responses_list,
+            "response_count": len(responses_list)
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error fetching responses: {error_msg}")
+        return jsonify({
+            "error": "Failed to fetch responses",
+            "details": error_msg
+        }), 500
+
+
+# Refresh responses from Google Forms
+@app.post("/api/form-requests/<request_id>/refresh")
+def refresh_form_responses(request_id: str):
+    """Manually refresh responses from Google Forms"""
     from datetime import datetime
     from models.database import Collections
     
     try:
-        data = request.get_json()
-        if not data or 'form_id' not in data or 'form_url' not in data:
-            return jsonify({"error": "form_id and form_url are required"}), 400
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        user = User.get_by_id(user_id)
+        if not user or not user.google_access_token:
+            return jsonify({"error": "Google account not connected"}), 403
         
         db = get_db()
         
-        # Create form request document
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        form_id = request_data.get('google_form_id')
+        if not form_id:
+            return jsonify({"error": "No Google Form ID found"}), 400
+        
+        print(f"Refreshing responses for form {form_id}")
+        
+        # Get user's Google credentials
+        try:
+            credentials = GoogleFormsService.get_credentials_from_tokens(
+                access_token=user.google_access_token,
+                refresh_token=user.google_refresh_token,
+                token_expiry=user.token_expiry
+            )
+        except ValueError as cred_error:
+            # Token was revoked or is invalid - clear it from database
+            print(f"Credentials invalid: {cred_error}")
+            print("Clearing invalid Google tokens from user account")
+            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+            return jsonify({
+                "error": "Google credentials have been revoked",
+                "message": "Please reconnect your Google account",
+                "action_required": "reconnect_google"
+            }), 401
+        
+        # Fetch latest responses from Google
+        responses = GoogleFormsService.get_form_responses(credentials, form_id)
+        
+        print(f"Found {len(responses)} total responses from Google")
+        
+        # Delete old responses for this request
+        old_responses = db.collection(Collections.RESPONSES)\
+            .where('request_id', '==', request_id)\
+            .stream()
+        
+        deleted_count = 0
+        for old_response in old_responses:
+            old_response.reference.delete()
+            deleted_count += 1
+        
+        print(f"Deleted {deleted_count} old responses")
+        
+        # Store new responses
+        for response in responses:
+            response_data = {
+                'request_id': request_id,
+                'form_id': form_id,
+                'respondent_email': response.get('respondent_email', ''),
+                'response_id': response.get('response_id', ''),
+                'submitted_at': response.get('submitted_at', ''),
+                'created_at': datetime.utcnow().isoformat() + 'Z'
+            }
+            db.collection(Collections.RESPONSES).add(response_data)
+        
+        # Update form request with new count and sync time
+        request_ref.update({
+            'response_count': len(responses),
+            'last_synced_at': datetime.utcnow().isoformat() + 'Z'
+        })
+        
+        print(f"✅ Refreshed {len(responses)} responses for request {request_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Responses refreshed successfully",
+            "response_count": len(responses),
+            "synced_at": datetime.utcnow().isoformat() + 'Z'
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error refreshing responses: {error_msg}")
+        return jsonify({
+            "error": "Failed to refresh responses",
+            "details": error_msg
+        }), 500
+
+# Create a new form request
+@app.post("/api/form-requests")
+def create_form_request():
+    """Create a new form request from a Google Form URL"""
+    from datetime import datetime
+    from models.database import Collections
+    
+    try:
+        # Check if user is authenticated
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        user = User.get_by_id(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has connected Google account
+        if not user.google_access_token or not user.google_refresh_token:
+            return jsonify({
+                "error": "Google account not connected",
+                "message": "Please connect your Google account first"
+            }), 403
+        
+        data = request.get_json()
+        if not data or 'form_url' not in data:
+            return jsonify({"error": "form_url is required"}), 400
+        
+        form_url = data['form_url']
+        
+        print(f"Creating form request for URL: {form_url}")
+        
+        # Extract form ID
+        form_id = GoogleFormsService.extract_form_id(form_url)
+        if not form_id:
+            return jsonify({"error": "Invalid Google Form URL"}), 400
+        
+        print(f"Extracted form ID: {form_id}")
+        
+        # Get user's Google credentials
+        try:
+            credentials = GoogleFormsService.get_credentials_from_tokens(
+                access_token=user.google_access_token,
+                refresh_token=user.google_refresh_token,
+                token_expiry=user.token_expiry
+            )
+        except ValueError as cred_error:
+            # Token was revoked or is invalid - clear it from database
+            print(f"Credentials invalid: {cred_error}")
+            print("Clearing invalid Google tokens from user account")
+            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+            return jsonify({
+                "error": "Google credentials have been revoked",
+                "message": "Please reconnect your Google account",
+                "action_required": "reconnect_google"
+            }), 401
+        
+        # Fetch form metadata
+        print("Fetching form metadata...")
+        metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+        
+        # Check email collection (optional for now, just warn)
+        print("Checking email collection...")
+        email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+        
+        if not email_collection_enabled:
+            print("WARNING: Email collection may not be enabled on this form")
+            # For testing, we'll allow it but warn
+            # In production, you might want to reject:
+            # return jsonify({"error": "Form must have email collection enabled"}), 400
+        
+        # Get initial response count
+        print("Fetching initial responses...")
+        responses = GoogleFormsService.get_form_responses(credentials, form_id)
+        
+        db = get_db()
+        
+        # Create form request document with enhanced metadata
         form_request_data = {
-            'form_id': data['form_id'],
-            'form_url': data['form_url'],
-            'name': data.get('name', f"Form {data['form_id'][:8]}"),  # Default name
+            'google_form_id': form_id,
+            'form_url': form_url,
+            'title': metadata.get('title', f"Form {form_id[:8]}"),
+            'description': metadata.get('description', ''),
+            'owner_id': user_id,
             'created_at': datetime.utcnow().isoformat() + 'Z',
             'status': 'Active',
-            'responded': 0,
-            'recipients': 0,
-            'is_active': True
+            'is_active': True,
+            # Google Forms specific data
+            'form_settings': {
+                'email_collection_enabled': email_collection_enabled,
+                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
+            },
+            'response_count': len(responses),
+            'total_recipients': data.get('total_recipients', 0),  # Will be set when group is attached
+            'last_synced_at': datetime.utcnow().isoformat() + 'Z',
+            'warnings': [] if email_collection_enabled else ['Email collection may not be enabled']
         }
         
         # Add to form_requests collection
         doc_ref = db.collection(Collections.FORM_REQUESTS).document()
         doc_ref.set(form_request_data)
         
-        print(f"   Form request saved to database with ID: {doc_ref.id}")
-        print(f"   Collection: {Collections.FORM_REQUESTS}")
-        print(f"   Data: {form_request_data}")
+        # Store responses in responses collection
+        for response in responses:
+            response_data = {
+                'request_id': doc_ref.id,
+                'form_id': form_id,
+                'respondent_email': response.get('respondent_email', ''),
+                'response_id': response.get('response_id', ''),
+                'submitted_at': response.get('submitted_at', ''),
+                'created_at': datetime.utcnow().isoformat() + 'Z'
+            }
+            db.collection(Collections.RESPONSES).add(response_data)
+        
+        print(f"✅ Form request created with ID: {doc_ref.id}")
+        print(f"   Title: {metadata.get('title')}")
+        print(f"   Responses: {len(responses)}")
+        print(f"   Email collection: {email_collection_enabled}")
         
         return jsonify({
             "success": True,
             "id": doc_ref.id,
-            "form_request": form_request_data
+            "form_request": {
+                "id": doc_ref.id,
+                **form_request_data
+            }
         }), 201
         
     except Exception as e:
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"Error creating form request: {error_msg}")
+        print(f"❌ Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
             "details": error_msg

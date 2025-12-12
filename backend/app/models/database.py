@@ -48,7 +48,15 @@ class FirestoreDB:
             if cred_path and os.path.exists(cred_path):
                 print(f"Using credentials from: {cred_path}")
                 cred = credentials.Certificate(cred_path)
-                cls._app = firebase_admin.initialize_app(cred)
+                
+                # Check if Firebase app already exists before initializing
+                try:
+                    cls._app = firebase_admin.get_app()
+                    print("Using existing Firebase app")
+                except ValueError:
+                    # App doesn't exist, initialize it
+                    cls._app = firebase_admin.initialize_app(cred)
+                    print("Initialized new Firebase app")
                 
                 # Load credentials for GCP Firestore client
                 gcp_creds = service_account.Credentials.from_service_account_file(cred_path)

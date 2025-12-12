@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # Application Settings
     APP_NAME: str = "FormReminder"
     DEBUG: bool = True
+    SECRET_KEY: str = "change_me_in_production"  # Flask session secret
+    
+    # Google OAuth Settings
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: str = "http://localhost:5000/oauth/callback"
     
     # CORS Settings
     CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000"]
