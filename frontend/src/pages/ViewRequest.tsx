@@ -21,6 +21,8 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import EmailIcon from '@mui/icons-material/Email';
+import SendIcon from '@mui/icons-material/Send';
 
 const API_URL = 'http://localhost:5000';
 
@@ -62,6 +64,8 @@ export default function ViewRequest() {
   const [memberStatus, setMemberStatus] = useState<MemberStatus[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
+  const [sendingEmail, setSendingEmail] = useState<string | null>(null);
+  const [sendingBulk, setSendingBulk] = useState(false);
 
   const loadFormRequestData = async () => {
     try {
@@ -93,6 +97,71 @@ export default function ViewRequest() {
     }
   };
 
+  const handleSendReminder = async (email: string) => {
+    if (!window.confirm(`Send a reminder email to ${email}?`)) {
+      return;
+    }
+
+    setSendingEmail(email);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminder/${encodeURIComponent(email)}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminder');
+      }
+      
+      console.log('✅ Reminder sent:', result);
+      alert(result.message || 'Reminder sent successfully!');
+      
+    } catch (err: any) {
+      console.error('❌ Failed to send reminder:', err);
+      alert(`Failed to send reminder: ${err.message}`);
+    } finally {
+      setSendingEmail(null);
+    }
+  };
+
+  const handleSendBulkReminders = async () => {
+    const nonResponders = memberStatus.filter(m => m.status === 'not_responded');
+    
+    if (nonResponders.length === 0) {
+      alert('All members have already responded!');
+      return;
+    }
+
+    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?\n\n(This will skip anyone who was sent a reminder in the last hour)`)) {
+      return;
+    }
+
+    setSendingBulk(true);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminders`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminders');
+      }
+      
+      console.log('✅ Bulk reminders sent:', result);
+      alert(`Success!\n\nSent: ${result.sent}\nSkipped (rate limit): ${result.skipped}\nFailed: ${result.failed}`);
+      
+    } catch (err: any) {
+      console.error('❌ Failed to send bulk reminders:', err);
+      alert(`Failed to send reminders: ${err.message}`);
+    } finally {
+      setSendingBulk(false);
+    }
+  };
+
   useEffect(() => {
     if (requestId) {
       loadFormRequestData();
@@ -120,7 +189,6 @@ export default function ViewRequest() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Cleanup
     return () => {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -321,10 +389,20 @@ export default function ViewRequest() {
       {/* Member Status Table */}
       {memberStatus.length > 0 && (
         <Paper sx={{ p: 3, mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Member Status ({memberStatus.length})
-          </Typography>
-          <Divider sx={{ mb: 2 }} />
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6">
+              Member Status ({memberStatus.length})
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={sendingBulk ? <CircularProgress size={20} /> : <SendIcon />}
+              onClick={handleSendBulkReminders}
+              disabled={sendingBulk || memberStatus.filter(m => m.status === 'not_responded').length === 0}
+            >
+              {sendingBulk ? 'Sending...' : `Send to All Non-Responders (${memberStatus.filter(m => m.status === 'not_responded').length})`}
+            </Button>
+          </Box>
+          <Divider sx={{ mb: 2}} />
 
           <TableContainer>
             <Table>
@@ -334,6 +412,7 @@ export default function ViewRequest() {
                   <TableCell>Email</TableCell>
                   <TableCell>Submitted At</TableCell>
                   <TableCell width="120" align="center">Status</TableCell>
+                  <TableCell width="120" align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -365,6 +444,19 @@ export default function ViewRequest() {
                           color="error" 
                           size="small" 
                         />
+                      )}
+                    </TableCell>
+                    <TableCell align="center">
+                      {member.status === 'not_responded' && (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={sendingEmail === member.email ? <CircularProgress size={16} /> : <EmailIcon />}
+                          onClick={() => handleSendReminder(member.email)}
+                          disabled={sendingEmail === member.email}
+                        >
+                          {sendingEmail === member.email ? 'Sending...' : 'Send Reminder'}
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>

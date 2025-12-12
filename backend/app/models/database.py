@@ -118,6 +118,7 @@ class Collections:
     NOTIFICATIONS = "notifications"
     SETTINGS = "settings"
     AUDIT_LOGS = "audit_logs"
+    EMAIL_LOGS = "email_logs"
 
 # Helper function
 def get_db():

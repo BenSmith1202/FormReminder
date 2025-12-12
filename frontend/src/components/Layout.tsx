@@ -5,7 +5,6 @@ import CheckBoxIcon from '@mui/icons-material/CheckBox';
 
 const API_URL = 'http://localhost:5000';
 
-// This matches your report's "Top Bar Navigation" requirement
 export default function Layout() {
   const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
