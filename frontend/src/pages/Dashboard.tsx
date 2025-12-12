@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link, Alert, IconButton } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 
 const API_URL = 'http://localhost:5000';
@@ -31,7 +30,8 @@ export default function Dashboard() {
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<FormRequestRow[]>([]); 
-  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
 
   // Column Definitions
   const columns: GridColDef[] = [
@@ -104,21 +104,12 @@ export default function Dashboard() {
     { 
       field: 'actions', 
       headerName: '', 
-      width: 200,
+      width: 150,
       sortable: false,
       renderCell: (params: GridRenderCellParams) => {
         if (!params) return null;
-        const isRefreshing = refreshing === params.row.id;
         return (
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <IconButton 
-              size="small" 
-              onClick={() => handleRefresh(params.row.id)}
-              disabled={isRefreshing}
-              title="Refresh responses"
-            >
-              <RefreshIcon fontSize="small" />
-            </IconButton>
             <Button 
               variant="outlined" 
               size="small" 
@@ -139,47 +130,6 @@ export default function Dashboard() {
       }
     },
   ];
-
-  const handleRefresh = async (requestId: string) => {
-    setRefreshing(requestId);
-    try {
-      console.log(`Refreshing responses for request: ${requestId}`);
-      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        // Check if credentials were revoked - automatically reconnect
-        if (result.action_required === 'reconnect_google') {
-          console.log('Credentials revoked, automatically redirecting to Google OAuth...');
-          // Trigger OAuth flow automatically
-          const oauthResponse = await fetch(`${API_URL}/login/google`, {
-            credentials: 'include',
-          });
-          const oauthData = await oauthResponse.json();
-          
-          if (oauthData.authorization_url) {
-            // Redirect to Google's authorization page
-            window.location.href = oauthData.authorization_url;
-            return; // Don't throw error, user is being redirected
-          }
-        }
-        throw new Error(result.error || 'Failed to refresh');
-      }
-      
-      console.log('✅ Refresh successful:', result);
-      // Reload the form requests
-      loadFormRequests();
-    } catch (error: any) {
-      console.error('❌ Refresh failed:', error);
-      alert(`Failed to refresh: ${error.message}`);
-    } finally {
-      setRefreshing(null);
-    }
-  };
 
   const handleDelete = async (requestId: string) => {
     if (!window.confirm('Are you sure you want to delete this form request? This will also delete all associated responses.')) {
@@ -237,8 +187,10 @@ export default function Dashboard() {
         : [];
       
       setRows(transformedRows);
+      setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to load form requests:', error);
+      console.error('Auto-refresh error:', error);
       setRows([]);
     }
   };
@@ -260,6 +212,78 @@ export default function Dashboard() {
       </Typography>
     </Stack>
   );
+
+  // Auto-refresh polling
+  useEffect(() => {
+    // Poll every 30 seconds
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        // Refresh all form requests from Google Forms
+        refreshAllFormRequests();
+      }
+    }, 30000);
+
+    // Handle tab visibility changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Immediately refresh when tab becomes active
+        refreshAllFormRequests();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  const refreshAllFormRequests = async () => {
+    try {
+      // Get all form requests
+      const response = await fetch(`${API_URL}/api/form-requests`, {
+        credentials: 'include',
+      });
+      
+      if (!response.ok) return;
+      
+      const formRequests = await response.json();
+      
+      // Refresh each form request from Google Forms (in parallel)
+      const refreshPromises = formRequests.map((req: any) =>
+        fetch(`${API_URL}/api/form-requests/${req.id}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        }).catch(err => {
+          console.error(`Auto-refresh error for ${req.id}:`, err);
+          return null; // Continue with other refreshes even if one fails
+        })
+      );
+      
+      await Promise.all(refreshPromises);
+      
+      // Now load the updated data
+      await loadFormRequests();
+    } catch (error) {
+      console.error('Auto-refresh error:', error);
+      // Still try to load cached data
+      loadFormRequests();
+    }
+  };
+
+  // Update "seconds since update" counter
+  useEffect(() => {
+    if (!lastUpdated) return;
+
+    const timer = setInterval(() => {
+      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      setSecondsSinceUpdate(seconds);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [lastUpdated]);
 
   useEffect(() => {
     // Fetch health check and form requests in parallel
@@ -349,9 +373,24 @@ export default function Dashboard() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Your Form Requests
-      </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Box>
+          <Typography variant="h4">
+            Your Form Requests
+          </Typography>
+          {lastUpdated && (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+              Last updated: {secondsSinceUpdate}s ago
+            </Typography>
+          )}
+        </Box>
+        <Button
+          variant="contained"
+          onClick={() => navigate('/new')}
+        >
+          Create New
+        </Button>
+      </Box>
 
       {/* Metric Cards */}
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} sx={{ mb: 4 }}>

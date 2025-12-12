@@ -18,7 +18,6 @@ import {
   Divider,
   IconButton,
 } from '@mui/material';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -57,11 +56,12 @@ export default function ViewRequest() {
   const navigate = useNavigate();
   
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formRequest, setFormRequest] = useState<FormRequest | null>(null);
   const [nonMemberResponses, setNonMemberResponses] = useState<Response[]>([]);
   const [memberStatus, setMemberStatus] = useState<MemberStatus[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
 
   const loadFormRequestData = async () => {
     try {
@@ -83,41 +83,13 @@ export default function ViewRequest() {
       setFormRequest(data.form_request);
       setNonMemberResponses(data.non_member_responses || []);
       setMemberStatus(data.member_status || []);
+      setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error loading form request:', err);
+      console.error('Auto-refresh error:', err);
       setError(err.message || 'Failed to load form request');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleRefresh = async () => {
-    try {
-      setRefreshing(true);
-      setError(null);
-
-      console.log(`Refreshing responses for request: ${requestId}`);
-      
-      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to refresh');
-      }
-
-      console.log('✅ Refresh successful:', result);
-      
-      // Reload the data
-      await loadFormRequestData();
-    } catch (err: any) {
-      console.error('❌ Refresh failed:', err);
-      setError(`Failed to refresh: ${err.message}`);
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -126,6 +98,68 @@ export default function ViewRequest() {
       loadFormRequestData();
     }
   }, [requestId]);
+
+  // Auto-refresh polling
+  useEffect(() => {
+    if (!requestId) return;
+
+    // Poll every 30 seconds
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        syncAndLoadData();
+      }
+    }, 30000);
+
+    // Handle tab visibility changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Immediately refresh when tab becomes active
+        syncAndLoadData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestId]);
+
+  const syncAndLoadData = async () => {
+    try {
+      // Sync with Google Forms first
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const result = await response.json();
+        console.error('Auto-refresh sync error:', result.error);
+      }
+      
+      // Then load the updated data
+      await loadFormRequestData();
+    } catch (error) {
+      console.error('Auto-refresh error:', error);
+      // Still try to load cached data
+      loadFormRequestData();
+    }
+  };
+
+  // Update "seconds since update" counter
+  useEffect(() => {
+    if (!lastUpdated) return;
+
+    const timer = setInterval(() => {
+      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      setSecondsSinceUpdate(seconds);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [lastUpdated]);
 
   if (loading) {
     return (
@@ -168,23 +202,20 @@ export default function ViewRequest() {
   return (
     <Box>
       {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
-        <Box display="flex" alignItems="center" gap={2}>
-          <IconButton onClick={() => navigate('/')}>
-            <ArrowBackIcon />
-          </IconButton>
+      <Box display="flex" alignItems="center" mb={3}>
+        <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
+          <ArrowBackIcon />
+        </IconButton>
+        <Box>
           <Typography variant="h4">
             {formRequest.title}
           </Typography>
+          {lastUpdated && (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+              Last updated: {secondsSinceUpdate}s ago
+            </Typography>
+          )}
         </Box>
-        <Button
-          variant="contained"
-          startIcon={refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          {refreshing ? 'Refreshing...' : 'Refresh Data'}
-        </Button>
       </Box>
 
       {error && (
