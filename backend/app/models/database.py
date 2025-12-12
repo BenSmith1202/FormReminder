@@ -8,7 +8,9 @@ from google.cloud import firestore as gcp_firestore
 from google.oauth2 import service_account
 from typing import Optional
 import os
-from app.config import settings
+
+# Import settings - use simple import to avoid circular dependency
+from config import settings
 
 
 class FirestoreDB:
@@ -25,15 +27,31 @@ class FirestoreDB:
             return cls._db
         
         try:
-            # Check if credentials file exists
-            if settings.FIREBASE_CREDENTIALS_PATH and os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
-                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+            # Resolve credentials path - check multiple possible locations
+            cred_path = None
+            if settings.FIREBASE_CREDENTIALS_PATH:
+                # Try the path as-is first
+                if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
+                    cred_path = settings.FIREBASE_CREDENTIALS_PATH
+                else:
+                    # Try relative to project root (two levels up from backend/app)
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                    alt_path = os.path.join(project_root, settings.FIREBASE_CREDENTIALS_PATH)
+                    if os.path.exists(alt_path):
+                        cred_path = alt_path
+                    else:
+                        # Try just the filename in project root
+                        alt_path2 = os.path.join(project_root, os.path.basename(settings.FIREBASE_CREDENTIALS_PATH))
+                        if os.path.exists(alt_path2):
+                            cred_path = alt_path2
+            
+            if cred_path and os.path.exists(cred_path):
+                print(f"Using credentials from: {cred_path}")
+                cred = credentials.Certificate(cred_path)
                 cls._app = firebase_admin.initialize_app(cred)
                 
                 # Load credentials for GCP Firestore client
-                gcp_creds = service_account.Credentials.from_service_account_file(
-                    settings.FIREBASE_CREDENTIALS_PATH
-                )
+                gcp_creds = service_account.Credentials.from_service_account_file(cred_path)
                 
                 # Use Google Cloud Firestore client directly to specify non-default database
                 cls._db = gcp_firestore.Client(
@@ -42,6 +60,7 @@ class FirestoreDB:
                     database='formreminder'
                 )
             else:
+                print("Warning: No credentials file found, using default credentials")
                 # Use default credentials (for development or Google Cloud environment)
                 cls._app = firebase_admin.initialize_app()
                 cls._db = firestore.client()
@@ -50,13 +69,15 @@ class FirestoreDB:
             return cls._db
             
         except Exception as e:
+            import traceback
             print(f"Error initializing Firebase: {e}")
+            traceback.print_exc()
             raise
 
     # Used to return the correct database client
     # Initializes the connection if it doesn't exist
     @classmethod
-    def get_db(cls) -> firestore.Client:
+    def get_db(cls):
         # Get client
         if cls._db is None:
             cls.initialize()
@@ -91,7 +112,7 @@ class Collections:
     AUDIT_LOGS = "audit_logs"
 
 # Helper function
-def get_db() -> firestore.Client:
+def get_db():
     # Gets Firestore database instance
     return FirestoreDB.get_db()
 
