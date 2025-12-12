@@ -4,16 +4,18 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import CreateRequest from './pages/CreateRequest';
 import ServerTime from './pages/ServerTime';
-import Groups from './pages/Groups'; // Import the new page
+import Groups from './pages/Groups';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import ViewRequest from './pages/ViewRequest';
 
-// 1. Create a custom theme (matches the Blue/White vibe of your report)
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#1976d2', // Standard Blue
+      main: '#1976d2', // Blue primary color
     },
     background: {
-      default: '#f5f5f5', // Light Gray background
+      default: '#f5f5f5', // Light gray background
     },
   },
   typography: {
@@ -28,14 +30,20 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline /> {/* Normalizes CSS */}
       <BrowserRouter>
-        <Layout>
-          <Routes>
+        <Routes>
+          {/* Public routes (no Layout) */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          
+          {/* Protected routes (with Layout) */}
+          <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/new" element={<CreateRequest />} />
+            <Route path="/request/:requestId" element={<ViewRequest />} />
             <Route path="/time" element={<ServerTime />} />
-            <Route path="/groups" element={<Groups />} /> {/* New Route */}
-          </Routes>
-        </Layout>
+            <Route path="/groups" element={<Groups />} />
+          </Route>
+        </Routes>
       </BrowserRouter>
     </ThemeProvider>
   );

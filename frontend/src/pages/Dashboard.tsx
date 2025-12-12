@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link, Alert } from '@mui/material';
+import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link, Alert, IconButton } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
+import RefreshIcon from '@mui/icons-material/Refresh';
+
+const API_URL = 'http://localhost:5000';
 
 // Interface for the health data
 interface HealthResponse {
@@ -10,16 +13,16 @@ interface HealthResponse {
   submission_count?: number; 
 }
 
-// Interface for the table rows (matching your requirements)
+// Interface for the table rows
 interface FormRequestRow {
-  id: number; // DataGrid requires a unique 'id'
-  name: string;
-  responded: number | null;
-  recipients: number | null;
-  issued: string | null;
-  last_reminder: string | null;
-  status: 'Active' | 'Inactive' | null;
-  next_reminder: string | null;
+  id: string; // Firestore document ID
+  title: string;
+  response_count: number;
+  total_recipients: number;
+  created_at: string;
+  last_synced_at: string;
+  status: 'Active' | 'Inactive';
+  warnings?: string[];
 }
 
 export default function Dashboard() {
@@ -27,37 +30,59 @@ export default function Dashboard() {
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<FormRequestRow[]>([]); 
+  const [refreshing, setRefreshing] = useState<string | null>(null);
 
   // Column Definitions
   const columns: GridColDef[] = [
-    { field: 'name', headerName: 'Name', flex: 1.5, minWidth: 200 },
     { 
-      field: 'responded', 
-      headerName: 'Responded', 
-      width: 100, 
+      field: 'title', 
+      headerName: 'Form Name', 
+      flex: 1.5, 
+      minWidth: 200 
+    },
+    { 
+      field: 'response_count', 
+      headerName: 'Responses', 
+      width: 120, 
       align: 'center', 
       headerAlign: 'center',
-      valueFormatter: (params: any) => params?.value ?? '-'
+      renderCell: (params: GridRenderCellParams) => {
+        const responded = params.row.response_count || 0;
+        const total = params.row.total_recipients || 0;
+        return (
+          <Typography variant="body2">
+            {responded} / {total}
+          </Typography>
+        );
+      }
     },
     { 
-      field: 'recipients', 
-      headerName: 'Recipients', 
-      width: 100, 
-      align: 'center', 
-      headerAlign: 'center',
-      valueFormatter: (params: any) => params?.value ?? '-'
+      field: 'created_at', 
+      headerName: 'Created', 
+      width: 120,
+      valueFormatter: (params: any) => {
+        if (!params) return '-';
+        try {
+          const date = new Date(params);
+          return date.toLocaleDateString();
+        } catch {
+          return '-';
+        }
+      }
     },
     { 
-      field: 'issued', 
-      headerName: 'Issued', 
-      width: 120, 
-      valueFormatter: (params: any) => params?.value ?? '-'
-    },
-    { 
-      field: 'last_reminder', 
-      headerName: 'Last Reminder', 
-      width: 120, 
-      valueFormatter: (params: any) => params?.value ?? '-'
+      field: 'last_synced_at', 
+      headerName: 'Last Synced', 
+      width: 120,
+      valueFormatter: (params: any) => {
+        if (!params) return '-';
+        try {
+          const date = new Date(params);
+          return date.toLocaleDateString();
+        } catch {
+          return '-';
+        }
+      }
     },
     { 
       field: 'status', 
@@ -76,26 +101,111 @@ export default function Dashboard() {
       }
     },
     { 
-      field: 'next_reminder', 
-      headerName: 'Next Reminder', 
-      width: 120, 
-      valueFormatter: (params: any) => params?.value ?? '-'
-    },
-    { 
-      field: 'details', 
+      field: 'actions', 
       headerName: '', 
-      width: 100,
+      width: 150,
       sortable: false,
       renderCell: (params: GridRenderCellParams) => {
         if (!params) return null;
+        const isRefreshing = refreshing === params.row.id;
         return (
-          <Button variant="outlined" size="small" onClick={() => console.log('View details', params.id)}>
-            Details
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <IconButton 
+              size="small" 
+              onClick={() => handleRefresh(params.row.id)}
+              disabled={isRefreshing}
+              title="Refresh responses"
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+            <Button 
+              variant="outlined" 
+              size="small" 
+              onClick={() => navigate(`/request/${params.row.id}`)}
+            >
+              View
+            </Button>
+          </Box>
         );
       }
     },
   ];
+
+  const handleRefresh = async (requestId: string) => {
+    setRefreshing(requestId);
+    try {
+      console.log(`Refreshing responses for request: ${requestId}`);
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        // Check if credentials were revoked - automatically reconnect
+        if (result.action_required === 'reconnect_google') {
+          console.log('Credentials revoked, automatically redirecting to Google OAuth...');
+          // Trigger OAuth flow automatically
+          const oauthResponse = await fetch(`${API_URL}/login/google`, {
+            credentials: 'include',
+          });
+          const oauthData = await oauthResponse.json();
+          
+          if (oauthData.authorization_url) {
+            // Redirect to Google's authorization page
+            window.location.href = oauthData.authorization_url;
+            return; // Don't throw error, user is being redirected
+          }
+        }
+        throw new Error(result.error || 'Failed to refresh');
+      }
+      
+      console.log('✅ Refresh successful:', result);
+      // Reload the form requests
+      loadFormRequests();
+    } catch (error: any) {
+      console.error('❌ Refresh failed:', error);
+      alert(`Failed to refresh: ${error.message}`);
+    } finally {
+      setRefreshing(null);
+    }
+  };
+
+  const loadFormRequests = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests`, {
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const formRequests = await response.json();
+      
+      console.log('Loaded form requests:', formRequests);
+      
+      // Transform to table rows
+      const transformedRows: FormRequestRow[] = Array.isArray(formRequests) 
+        ? formRequests.map((request: any) => ({
+            id: request.id,
+            title: request.title || 'Untitled Form',
+            response_count: request.response_count || 0,
+            total_recipients: request.total_recipients || 0,
+            created_at: request.created_at,
+            last_synced_at: request.last_synced_at,
+            status: request.is_active ? 'Active' : 'Inactive',
+            warnings: request.warnings || []
+          }))
+        : [];
+      
+      setRows(transformedRows);
+    } catch (error) {
+      console.error('Failed to load form requests:', error);
+      setRows([]);
+    }
+  };
 
   // Custom Message when table is empty
   const CustomNoRowsOverlay = () => (
@@ -118,7 +228,7 @@ export default function Dashboard() {
   useEffect(() => {
     // Fetch health check and form requests in parallel
     Promise.all([
-      fetch('http://127.0.0.1:5000/api/health')
+      fetch(`${API_URL}/api/health`, { credentials: 'include' })
         .then((res) => {
           if (!res.ok) {
             throw new Error(`HTTP error! status: ${res.status}`);
@@ -132,7 +242,7 @@ export default function Dashboard() {
             database: "disconnected"
           };
         }),
-      fetch('http://127.0.0.1:5000/api/form-requests')
+      fetch(`${API_URL}/api/form-requests`, { credentials: 'include' })
         .then((res) => {
           if (!res.ok) {
             throw new Error(`HTTP error! status: ${res.status}`);
@@ -147,33 +257,18 @@ export default function Dashboard() {
       try {
         setData(healthData);
         
-        // Transform form requests to table rows - handle empty or invalid data
+        // Transform form requests to table rows
         const transformedRows: FormRequestRow[] = Array.isArray(formRequests) 
-          ? formRequests.map((request: any, index: number) => {
-              let issuedDate = null;
-              if (request?.created_at) {
-                try {
-                  const date = new Date(request.created_at);
-                  if (!isNaN(date.getTime())) {
-                    issuedDate = date.toLocaleDateString();
-                  }
-                } catch (e) {
-                  console.warn("Invalid date format:", request.created_at);
-                }
-              }
-              
-              return {
-                id: index + 1, // DataGrid needs numeric ID
-                name: request?.name || `Form ${request?.form_id?.substring(0, 8) || 'Unknown'}`,
-                responded: request?.responded ?? null,
-                recipients: request?.recipients ?? null,
-                issued: issuedDate,
-                last_reminder: request?.last_reminder ?? null,
-                status: (request?.status as 'Active' | 'Inactive') || null,
-                next_reminder: request?.next_reminder ?? null,
-                _documentId: request?.id // Store the actual Firestore document ID
-              };
-            })
+          ? formRequests.map((request: any) => ({
+              id: request.id,
+              title: request.title || 'Untitled Form',
+              response_count: request.response_count || 0,
+              total_recipients: request.total_recipients || 0,
+              created_at: request.created_at,
+              last_synced_at: request.last_synced_at,
+              status: request.is_active ? 'Active' : 'Inactive',
+              warnings: request.warnings || []
+            }))
           : [];
         
         setRows(transformedRows);

@@ -12,6 +12,7 @@ ENV/
 # Firebase
 firebase-credentials.json
 *-firebase-adminsdk-*.json
+client_secret.json
 
 # Environment
 .env
