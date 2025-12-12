@@ -3,6 +3,7 @@ import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link, Al
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 const API_URL = 'http://localhost:5000';
 
@@ -103,7 +104,7 @@ export default function Dashboard() {
     { 
       field: 'actions', 
       headerName: '', 
-      width: 150,
+      width: 200,
       sortable: false,
       renderCell: (params: GridRenderCellParams) => {
         if (!params) return null;
@@ -125,6 +126,14 @@ export default function Dashboard() {
             >
               View
             </Button>
+            <IconButton 
+              size="small" 
+              onClick={() => handleDelete(params.row.id)}
+              title="Delete form request"
+              color="error"
+            >
+              <DeleteIcon fontSize="small" />
+            </IconButton>
           </Box>
         );
       }
@@ -169,6 +178,33 @@ export default function Dashboard() {
       alert(`Failed to refresh: ${error.message}`);
     } finally {
       setRefreshing(null);
+    }
+  };
+
+  const handleDelete = async (requestId: string) => {
+    if (!window.confirm('Are you sure you want to delete this form request? This will also delete all associated responses.')) {
+      return;
+    }
+
+    try {
+      console.log(`Deleting form request: ${requestId}`);
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to delete');
+      }
+      
+      console.log('✅ Delete successful:', result);
+      // Reload the form requests
+      loadFormRequests();
+    } catch (error: any) {
+      console.error('❌ Delete failed:', error);
+      alert(`Failed to delete: ${error.message}`);
     }
   };
 

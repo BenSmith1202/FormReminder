@@ -1,41 +1,66 @@
 import { useState, useEffect } from 'react';
-import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, FormControl, InputLabel } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 
 const API_URL = 'http://localhost:5000';
 
+interface Group {
+  id: string;
+  name: string;
+  member_count: number;
+}
+
 export default function CreateRequest() {
   const navigate = useNavigate();
   const [formUrl, setFormUrl] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [needsGoogleAuth, setNeedsGoogleAuth] = useState(false);
 
-  // Check Google auth status on mount
+  // Check Google auth status and load groups on mount
   useEffect(() => {
-    const checkGoogleAuth = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/google-auth-status`, {
-          credentials: 'include',
-        });
-        const data = await response.json();
-        
-        console.log('Google auth status:', data);
-        
-        if (!data.google_connected) {
-          setNeedsGoogleAuth(true);
-        }
-      } catch (error) {
-        console.error('Failed to check Google auth:', error);
-        setError('Failed to check Google connection status');
-      } finally {
-        setCheckingAuth(false);
-      }
+    const init = async () => {
+      await checkGoogleAuth();
+      await loadGroups();
     };
-
-    checkGoogleAuth();
+    init();
   }, []);
+
+  const loadGroups = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/groups`, {
+        credentials: 'include',
+      });
+      const data = await response.json();
+      console.log('Loaded groups:', data);
+      setGroups(data.groups || []);
+    } catch (error) {
+      console.error('Failed to load groups:', error);
+    }
+  };
+
+  const checkGoogleAuth = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/google-auth-status`, {
+        credentials: 'include',
+      });
+      const data = await response.json();
+      
+      console.log('Google auth status:', data);
+      
+      if (!data.google_connected) {
+        setNeedsGoogleAuth(true);
+      }
+    } catch (error) {
+      console.error('Failed to check Google auth:', error);
+      setError('Failed to check Google connection status');
+    } finally {
+      setCheckingAuth(false);
+    }
+  };
 
   const handleConnectGoogle = async () => {
     try {
@@ -60,11 +85,17 @@ export default function CreateRequest() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!groupId) {
+      setError('Please select a group');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     
     try {
-      console.log('Creating form request for URL:', formUrl);
+      console.log('Creating form request for URL:', formUrl, 'with group:', groupId);
       
       const response = await fetch(`${API_URL}/api/form-requests`, {
         method: 'POST',
@@ -73,7 +104,8 @@ export default function CreateRequest() {
         },
         credentials: 'include',
         body: JSON.stringify({
-          form_url: formUrl
+          form_url: formUrl,
+          group_id: groupId
         })
       });
       
@@ -158,6 +190,25 @@ export default function CreateRequest() {
         )}
 
         <form onSubmit={handleSubmit}>
+          <FormControl fullWidth sx={{ mb: 2 }} required>
+            <InputLabel>Select Group</InputLabel>
+            <Select
+              value={groupId}
+              label="Select Group"
+              onChange={(e) => setGroupId(e.target.value)}
+            >
+              {groups.length === 0 ? (
+                <MenuItem disabled>No groups available</MenuItem>
+              ) : (
+                groups.map((group) => (
+                  <MenuItem key={group.id} value={group.id}>
+                    {group.name} ({group.member_count} members)
+                  </MenuItem>
+                ))
+              )}
+            </Select>
+          </FormControl>
+          
           <TextField
             fullWidth
             label="Google Form URL"
