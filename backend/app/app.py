@@ -696,8 +696,58 @@ def create_form_request():
         if 'group_id' not in data:
             return jsonify({"error": "group_id is required"}), 400
         
+        if 'due_date' not in data:
+            return jsonify({"error": "due_date is required"}), 400
+        
         form_url = data['form_url']
         group_id = data['group_id']
+        
+        # Parse reminder schedule data
+        reminder_schedule = data.get('reminder_schedule', 'normal')
+        first_reminder_timing = data.get('first_reminder_timing', 'immediate')
+        custom_days = data.get('custom_days')  # For custom schedules
+        
+        # Parse due date
+        try:
+            due_date_str = data['due_date']
+            if isinstance(due_date_str, str):
+                due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+            else:
+                return jsonify({"error": "Invalid due_date format"}), 400
+        except (ValueError, AttributeError) as e:
+            return jsonify({"error": f"Invalid due_date: {str(e)}"}), 400
+        
+        # Parse scheduled reminder date/time if provided
+        scheduled_reminder_date = None
+        scheduled_reminder_time = None
+        if first_reminder_timing == 'scheduled':
+            if data.get('scheduled_date'):
+                try:
+                    scheduled_reminder_date = datetime.fromisoformat(
+                        data['scheduled_date'].replace('Z', '+00:00')
+                    )
+                except (ValueError, AttributeError):
+                    return jsonify({"error": "Invalid scheduled_date format"}), 400
+            
+            if data.get('scheduled_time'):
+                try:
+                    scheduled_reminder_time = datetime.fromisoformat(
+                        data['scheduled_time'].replace('Z', '+00:00')
+                    )
+                except (ValueError, AttributeError):
+                    return jsonify({"error": "Invalid scheduled_time format"}), 400
+        
+        # Validate and process reminder schedule
+        from utils.reminder_schedule import ReminderSchedule
+        
+        if reminder_schedule == 'custom':
+            if not custom_days:
+                return jsonify({"error": "custom_days required for custom schedule"}), 400
+            is_valid, error_msg = ReminderSchedule.validate_custom_schedule(custom_days)
+            if not is_valid:
+                return jsonify({"error": error_msg}), 400
+        
+        schedule_config = ReminderSchedule.get_schedule_config(reminder_schedule, custom_days)
         
         # Verify group exists and user owns it
         group = Group.get_by_id(group_id)
@@ -754,17 +804,35 @@ def create_form_request():
         
         db = get_db()
         
+        # Calculate reminder dates based on schedule
+        reminder_days = schedule_config['reminder_days']
+        reminder_dates = ReminderSchedule.calculate_reminder_dates(due_date, reminder_days)
+        
         # Create form request document with enhanced metadata
         form_request_data = {
             'google_form_id': form_id,
             'form_url': form_url,
-            'title': metadata.get('title', f"Form {form_id[:8]}"),
+            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
             'owner_id': user_id,
             'group_id': group_id,
             'created_at': datetime.utcnow().isoformat() + 'Z',
             'status': 'Active',
             'is_active': True,
+            # Reminder schedule configuration
+            'due_date': due_date.isoformat() + 'Z',
+            'reminder_schedule': {
+                'schedule_type': reminder_schedule,
+                'reminder_days': reminder_days,
+                'is_custom': schedule_config['is_custom'],
+                'custom_days': custom_days if reminder_schedule == 'custom' else None,
+                'calculated_reminder_dates': [d.isoformat() + 'Z' for d in reminder_dates]
+            },
+            'first_reminder_timing': {
+                'timing_type': first_reminder_timing,
+                'scheduled_date': scheduled_reminder_date.isoformat() + 'Z' if scheduled_reminder_date else None,
+                'scheduled_time': scheduled_reminder_time.isoformat() + 'Z' if scheduled_reminder_time else None,
+            },
             # Google Forms specific data
             'form_settings': {
                 'email_collection_enabled': email_collection_enabled,
@@ -813,6 +881,46 @@ def create_form_request():
         print(f"❌ Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
+            "details": error_msg
+        }), 500
+
+
+@app.post("/api/form-requests/custom-schedule")
+def create_custom_schedule():
+    """Create and validate a custom reminder schedule"""
+    from utils.reminder_schedule import ReminderSchedule
+    
+    try:
+        data = request.get_json()
+        if not data or 'custom_days' not in data:
+            return jsonify({"error": "custom_days is required"}), 400
+        
+        custom_days = data['custom_days']
+        
+        if not isinstance(custom_days, list):
+            return jsonify({"error": "custom_days must be a list"}), 400
+        
+        # Validate the custom schedule
+        is_valid, error_msg = ReminderSchedule.validate_custom_schedule(custom_days)
+        
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Get the schedule configuration
+        schedule_config = ReminderSchedule.get_schedule_config('custom', custom_days)
+        
+        return jsonify({
+            "success": True,
+            "schedule": schedule_config,
+            "message": "Custom schedule created successfully"
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to create custom schedule",
             "details": error_msg
         }), 500
 

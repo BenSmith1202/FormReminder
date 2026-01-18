@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AppBar, Toolbar, Typography, Button, Container, Box } from '@mui/material';
+import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
 import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
 import AddIcon from '@mui/icons-material/Add';
@@ -82,8 +82,8 @@ export default function Layout() {
             <Button
               color="inherit"
               startIcon={<AddIcon />}
-              onClick={() => navigate('/new')}
-              variant={location.pathname === '/new' ? 'outlined' : 'text'}
+              onClick={() => navigate('/requests/new')}
+              variant={location.pathname === '/requests/new' ? 'outlined' : 'text'}
             >
               New Request
             </Button>

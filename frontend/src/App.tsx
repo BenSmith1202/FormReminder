@@ -42,7 +42,7 @@ function App() {
           {/* Protected routes (with Layout) */}
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/new" element={<CreateRequest />} />
+            <Route path="/requests/new" element={<CreateRequest />} />
             <Route path="/request/:requestId" element={<ViewRequest />} />
             <Route path="/time" element={<ServerTime />} />
             <Route path="/groups" element={<Groups />} />

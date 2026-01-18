@@ -203,7 +203,7 @@ export default function Dashboard() {
         <Link 
             component="button" 
             variant="body1" 
-            onClick={() => navigate('/new')}
+            onClick={() => navigate('/requests/new')}
             sx={{ verticalAlign: 'baseline', fontWeight: 'bold' }}
         >
             Click here
@@ -384,7 +384,7 @@ export default function Dashboard() {
         </Box>
         <Button
           variant="contained"
-          onClick={() => navigate('/new')}
+          onClick={() => navigate('/requests/new')}
         >
           Create New
         </Button>
@@ -422,7 +422,7 @@ export default function Dashboard() {
       </Stack>
 
         {/* Call to Action */}
-            <Button variant="contained" color="primary" sx={{ mb: 1, mt: 1}} onClick={() => navigate('/new')}>
+            <Button variant="contained" color="primary" sx={{ mb: 1, mt: 1}} onClick={() => navigate('/requests/new')}>
                 New Request
             </Button>
         {/* Data Grid Table */}

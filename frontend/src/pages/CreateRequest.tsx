@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -18,7 +18,9 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  Stack,
+  DialogActions,
+  IconButton,
+  Chip,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -27,8 +29,9 @@ import {
   Group as GroupIcon,
   CalendarToday as CalendarIcon,
   Add as AddIcon,
+  Delete as DeleteIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { TimePicker } from '@mui/x-date-pickers/TimePicker';
 import { StaticDatePicker } from '@mui/x-date-pickers/StaticDatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -56,10 +59,96 @@ export default function CreateRequest() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scheduledTimeOpen, setScheduledTimeOpen] = useState(false);
+  const [highlightImmediate, setHighlightImmediate] = useState(false);
+  const scheduledDatePickerRef = useRef<HTMLDivElement>(null);
+  const [customScheduleOpen, setCustomScheduleOpen] = useState(false);
+  const [customDays, setCustomDays] = useState<number[]>([]);
+  const [newDayInput, setNewDayInput] = useState<string>('');
+  const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
 
   useEffect(() => {
     loadGroups();
   }, []);
+
+  // Handle cancel button click on scheduled date picker
+  useEffect(() => {
+    if (!scheduledDatePickerRef.current || firstReminderTiming !== 'scheduled') {
+      return;
+    }
+
+    const handleActionButtonClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const button = target.closest('button');
+      
+      if (!button) return;
+
+      // Check if the clicked element is in the action bar
+      const actionBar = button.closest('.MuiPickersActionBar-root');
+      if (actionBar) {
+        const buttons = Array.from(actionBar.querySelectorAll('button'));
+        const buttonIndex = buttons.indexOf(button);
+        const buttonText = button.textContent?.toLowerCase() || '';
+        const buttonAriaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+        const buttonDataAction = button.getAttribute('data-action') || '';
+        
+        // Determine if it's cancel (first button or has cancel text)
+        const isCancelButton = 
+          buttonIndex === 0 || // First button is usually cancel
+          buttonText.includes('cancel') ||
+          buttonDataAction === 'cancel' ||
+          buttonAriaLabel.includes('cancel');
+
+        // Determine if it's accept/ok (second button or has accept/ok text)
+        const isAcceptButton = 
+          buttonIndex === 1 || // Second button is usually accept
+          buttonText.includes('accept') ||
+          buttonText.includes('ok') ||
+          buttonDataAction === 'accept' ||
+          buttonAriaLabel.includes('accept') ||
+          buttonAriaLabel.includes('ok');
+
+        if (isCancelButton) {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          // Clear scheduled values
+          setScheduledDate(null);
+          setScheduledTime(null);
+          
+          // Switch back to immediate
+          setFirstReminderTiming('immediate');
+          
+          // Trigger highlight animation
+          setHighlightImmediate(true);
+          setTimeout(() => {
+            setHighlightImmediate(false);
+          }, 1500);
+        } else if (isAcceptButton) {
+          // Accept button - ensure the selected date is saved
+          // The date should already be saved via onChange, but we can confirm it here
+          if (scheduledDate) {
+            // Date is already saved, just ensure it's persisted
+            console.log('Date accepted:', scheduledDate);
+          }
+        }
+      }
+    };
+
+    // Wait for calendar to render, then attach listener
+    const timer = setTimeout(() => {
+      const container = scheduledDatePickerRef.current;
+      if (container) {
+        container.addEventListener('click', handleActionButtonClick, true);
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      if (scheduledDatePickerRef.current) {
+        scheduledDatePickerRef.current.removeEventListener('click', handleActionButtonClick, true);
+      }
+    };
+  }, [firstReminderTiming]);
 
   const loadGroups = async () => {
     try {
@@ -77,6 +166,11 @@ export default function CreateRequest() {
     e.preventDefault();
     setError(null);
     
+    if (!formUrl) {
+      setError('Please enter a form URL');
+      return;
+    }
+    
     if (!groupId) {
       setError('Please select a group');
       return;
@@ -87,20 +181,47 @@ export default function CreateRequest() {
       return;
     }
 
+    if (firstReminderTiming === 'scheduled' && (!scheduledDate || !scheduledTime)) {
+      setError('Please select both date and time for scheduled reminder');
+      return;
+    }
+
     setLoading(true);
     
     try {
+      // Prepare the request body with all form data
+      const requestBody: any = {
+        form_url: formUrl,
+        group_id: groupId,
+        title: requestTitle || undefined,
+        due_date: dueDate.toISOString(),
+        reminder_schedule: reminderSchedule,
+        first_reminder_timing: firstReminderTiming,
+      };
+
+      // Add custom_days if custom schedule is selected
+      if (reminderSchedule === 'custom') {
+        if (!customDays || customDays.length === 0) {
+          setError('Please create a custom schedule with at least one day');
+          setLoading(false);
+          return;
+        }
+        requestBody.custom_days = customDays;
+      }
+
+      // Add scheduled date/time if scheduled option is selected
+      if (firstReminderTiming === 'scheduled' && scheduledDate && scheduledTime) {
+        requestBody.scheduled_date = scheduledDate.toISOString();
+        requestBody.scheduled_time = scheduledTime.toISOString();
+      }
+
       const response = await fetch(`${API_URL}/api/form-requests`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({
-          form_url: formUrl,
-          group_id: groupId,
-          title: requestTitle || undefined,
-        })
+        body: JSON.stringify(requestBody)
       });
       
       const data = await response.json();
@@ -262,10 +383,14 @@ export default function CreateRequest() {
                   >
                     <StaticDatePicker
                       value={dueDate}
-                      onChange={(newValue) => setDueDate(newValue)}
+                      onChange={(newValue) => {
+                        if (newValue) {
+                          setDueDate(newValue);
+                        }
+                      }}
                       slotProps={{
                         actionBar: {
-                          actions: ['cancel', 'ok'],
+                          actions: [],
                         },
                       }}
                       sx={{
@@ -304,7 +429,14 @@ export default function CreateRequest() {
                     </FormLabel>
                     <RadioGroup
                       value={reminderSchedule}
-                      onChange={(e) => setReminderSchedule(e.target.value)}
+                      onChange={(e) => {
+                        const newSchedule = e.target.value;
+                        setReminderSchedule(newSchedule);
+                        // Clear custom days if switching away from custom
+                        if (newSchedule !== 'custom') {
+                          setCustomDays([]);
+                        }
+                      }}
                       sx={{ gap: 0.5 }}
                     >
                       <FormControlLabel
@@ -334,17 +466,54 @@ export default function CreateRequest() {
                           </Typography>
                         }
                       />
+                      {customDays.length > 0 && (
+                        <FormControlLabel
+                          value="custom"
+                          control={<Radio size="small" />}
+                          label={
+                            <Typography variant="body2">
+                              Custom: remind recipients {customDays.sort((a, b) => b - a).join(', ')} day{customDays.length !== 1 ? 's' : ''} before due date
+                            </Typography>
+                          }
+                        />
+                      )}
                     </RadioGroup>
                     <Button
                       variant="text"
                       size="small"
                       sx={{ mt: 1.5, alignSelf: 'flex-start', textTransform: 'none' }}
                       onClick={() => {
-                        alert('Custom schedule feature coming soon');
+                        setCustomScheduleOpen(true);
                       }}
                     >
                       Create a Custom Schedule
                     </Button>
+                    {reminderSchedule === 'custom' && customDays.length > 0 && (
+                      <Box sx={{ mt: 1.5, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                          Custom schedule: Remind recipients
+                        </Typography>
+                        {customDays
+                          .sort((a, b) => b - a)
+                          .map((day) => (
+                            <Chip
+                              key={day}
+                              label={`${day} day${day !== 1 ? 's' : ''} before`}
+                              size="small"
+                              onDelete={() => {
+                                const updated = customDays.filter((d) => d !== day);
+                                setCustomDays(updated);
+                                if (updated.length === 0) {
+                                  setReminderSchedule('normal');
+                                }
+                              }}
+                            />
+                          ))}
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                          before due date
+                        </Typography>
+                      </Box>
+                    )}
                   </FormControl>
                 </Box>
               </Box>
@@ -372,6 +541,48 @@ export default function CreateRequest() {
                         Send Immediately after first creating this request
                       </Typography>
                     }
+                    sx={{
+                      animation: highlightImmediate ? 'highlightSwitch 1.5s ease-in-out' : 'none',
+                      '@keyframes highlightSwitch': {
+                        '0%': {
+                          backgroundColor: 'transparent',
+                          transform: 'scale(1)',
+                          boxShadow: 'none',
+                        },
+                        '20%': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                          transform: 'scale(1.05)',
+                          boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+                        },
+                        '40%': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.15)',
+                          transform: 'scale(1.03)',
+                          boxShadow: '0 2px 8px rgba(25, 118, 210, 0.2)',
+                        },
+                        '60%': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                          transform: 'scale(1.05)',
+                          boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+                        },
+                        '80%': {
+                          backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                          transform: 'scale(1.02)',
+                          boxShadow: '0 2px 6px rgba(25, 118, 210, 0.15)',
+                        },
+                        '100%': {
+                          backgroundColor: 'transparent',
+                          transform: 'scale(1)',
+                          boxShadow: 'none',
+                        },
+                      },
+                      borderRadius: 2,
+                      px: highlightImmediate ? 2 : 0,
+                      py: highlightImmediate ? 1 : 0,
+                      mx: highlightImmediate ? -2 : 0,
+                      my: highlightImmediate ? -1 : 0,
+                      transition: 'all 0.3s ease',
+                      border: highlightImmediate ? '2px solid rgba(25, 118, 210, 0.5)' : '2px solid transparent',
+                    }}
                   />
                   <FormControlLabel
                     value="scheduled"
@@ -393,6 +604,7 @@ export default function CreateRequest() {
                         Select Date
                       </Typography>
                       <Box
+                        ref={scheduledDatePickerRef}
                         sx={{
                           border: '2px solid',
                           borderColor: '#000000',
@@ -403,10 +615,19 @@ export default function CreateRequest() {
                       >
                         <StaticDatePicker
                           value={scheduledDate}
-                          onChange={(newValue) => setScheduledDate(newValue)}
+                          onChange={(newValue) => {
+                            // Update date as user selects it
+                            setScheduledDate(newValue);
+                          }}
+                          onAccept={(newValue) => {
+                            // Explicitly save when OK/Accept is clicked
+                            if (newValue) {
+                              setScheduledDate(newValue);
+                            }
+                          }}
                           slotProps={{
                             actionBar: {
-                              actions: ['cancel', 'ok'],
+                              actions: ['cancel', 'accept'],
                             },
                           }}
                           sx={{
@@ -442,17 +663,33 @@ export default function CreateRequest() {
                       <TimePicker
                         label="Scheduled Time"
                         value={scheduledTime}
-                        onChange={(newValue) => setScheduledTime(newValue)}
+                        onChange={(newValue) => {
+                          // Update time as user selects it
+                          setScheduledTime(newValue);
+                        }}
+                        onAccept={(newValue) => {
+                          // Explicitly save when OK/Accept is clicked
+                          if (newValue) {
+                            setScheduledTime(newValue);
+                          }
+                          setScheduledTimeOpen(false);
+                        }}
+                        onClose={(reason?: string) => {
+                          // Handle cancel - clear time if cancelled
+                          if (reason === 'cancel') {
+                            setScheduledTime(null);
+                          }
+                          setScheduledTimeOpen(false);
+                        }}
                         open={scheduledTimeOpen}
                         onOpen={() => setScheduledTimeOpen(true)}
-                        onClose={() => setScheduledTimeOpen(false)}
                         slotProps={{
                           textField: {
                             fullWidth: true,
                             onClick: () => setScheduledTimeOpen(true),
                           },
                           actionBar: {
-                            actions: ['cancel', 'ok'],
+                            actions: ['cancel', 'accept'],
                           },
                         }}
                       />
@@ -486,6 +723,138 @@ export default function CreateRequest() {
         </Paper>
 
       </Box>
+
+      {/* Custom Schedule Dialog */}
+      <Dialog
+        open={customScheduleOpen}
+        onClose={() => {
+          setCustomScheduleOpen(false);
+          setCustomScheduleError(null);
+          setNewDayInput('');
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="h6">Create Custom Schedule</Typography>
+            <IconButton
+              onClick={() => {
+                setCustomScheduleOpen(false);
+                setCustomScheduleError(null);
+                setNewDayInput('');
+              }}
+              size="small"
+            >
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
+            Specify how many days before the due date you want to send reminders. You can add multiple days.
+          </Typography>
+
+          {customScheduleError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setCustomScheduleError(null)}>
+              {customScheduleError}
+            </Alert>
+          )}
+
+          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+            <TextField
+              label="Days before due date"
+              type="number"
+              value={newDayInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === '' || (Number(value) > 0 && Number(value) <= 365)) {
+                  setNewDayInput(value);
+                  setCustomScheduleError(null);
+                }
+              }}
+              inputProps={{ min: 1, max: 365 }}
+              fullWidth
+              size="small"
+              helperText="Enter a number between 1 and 365"
+            />
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => {
+                const day = parseInt(newDayInput);
+                if (isNaN(day) || day < 1 || day > 365) {
+                  setCustomScheduleError('Please enter a valid number between 1 and 365');
+                  return;
+                }
+                if (customDays.includes(day)) {
+                  setCustomScheduleError('This day is already in your schedule');
+                  return;
+                }
+                if (customDays.length >= 30) {
+                  setCustomScheduleError('Maximum 30 reminder days allowed');
+                  return;
+                }
+                setCustomDays([...customDays, day]);
+                setNewDayInput('');
+                setCustomScheduleError(null);
+              }}
+              disabled={!newDayInput || isNaN(parseInt(newDayInput))}
+            >
+              Add
+            </Button>
+          </Box>
+
+          {customDays.length > 0 && (
+            <Box>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                Your custom schedule ({customDays.length} day{customDays.length !== 1 ? 's' : ''}):
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {customDays
+                  .sort((a, b) => b - a)
+                  .map((day) => (
+                    <Chip
+                      key={day}
+                      label={`${day} day${day !== 1 ? 's' : ''} before`}
+                      onDelete={() => {
+                        setCustomDays(customDays.filter((d) => d !== day));
+                      }}
+                      deleteIcon={<DeleteIcon />}
+                    />
+                  ))}
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setCustomScheduleOpen(false);
+              setCustomScheduleError(null);
+              setNewDayInput('');
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (customDays.length === 0) {
+                setCustomScheduleError('Please add at least one day to your schedule');
+                return;
+              }
+              setReminderSchedule('custom');
+              setCustomScheduleOpen(false);
+              setCustomScheduleError(null);
+              setNewDayInput('');
+            }}
+            disabled={customDays.length === 0}
+          >
+            Save Schedule
+          </Button>
+        </DialogActions>
+      </Dialog>
     </LocalizationProvider>
   );
 }
