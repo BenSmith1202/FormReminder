@@ -45,6 +45,20 @@ class FirestoreDB:
                         if os.path.exists(alt_path2):
                             cred_path = alt_path2
             
+            # If no configured path, try default locations
+            if not cred_path:
+                # Try backend/firebase-credentials.json (one level up from app/models)
+                backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                default_path = os.path.join(backend_dir, 'firebase-credentials.json')
+                if os.path.exists(default_path):
+                    cred_path = default_path
+                else:
+                    # Try backend/app/firebase-credentials.json
+                    app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                    default_path2 = os.path.join(app_dir, 'firebase-credentials.json')
+                    if os.path.exists(default_path2):
+                        cred_path = default_path2
+            
             if cred_path and os.path.exists(cred_path):
                 print(f"Using credentials from: {cred_path}")
                 cred = credentials.Certificate(cred_path)
