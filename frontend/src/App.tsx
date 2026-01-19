@@ -5,6 +5,9 @@ import Dashboard from './pages/Dashboard';
 import CreateRequest from './pages/CreateRequest';
 import ServerTime from './pages/ServerTime';
 import Groups from './pages/Groups';
+import CreateGroup from './pages/CreateGroup';
+import JoinGroup from './pages/JoinGroup';
+import ViewGroup from './pages/ViewGroup';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ViewRequest from './pages/ViewRequest';
@@ -34,14 +37,17 @@ function App() {
           {/* Public routes (no Layout) */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/groups/join/:token" element={<JoinGroup />} />
           
           {/* Protected routes (with Layout) */}
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/new" element={<CreateRequest />} />
+            <Route path="/requests/new" element={<CreateRequest />} />
             <Route path="/request/:requestId" element={<ViewRequest />} />
             <Route path="/time" element={<ServerTime />} />
             <Route path="/groups" element={<Groups />} />
+            <Route path="/groups/new" element={<CreateGroup />} />
+            <Route path="/groups/:groupId" element={<ViewGroup />} />
           </Route>
         </Routes>
       </BrowserRouter>

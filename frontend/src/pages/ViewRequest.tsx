@@ -18,10 +18,11 @@ import {
   Divider,
   IconButton,
 } from '@mui/material';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import EmailIcon from '@mui/icons-material/Email';
+import SendIcon from '@mui/icons-material/Send';
 
 const API_URL = 'http://localhost:5000';
 
@@ -43,6 +44,13 @@ interface Response {
   respondent_email: string;
   submitted_at: string;
   response_id: string;
+  is_member?: boolean;
+}
+
+interface MemberStatus {
+  email: string;
+  status: 'responded' | 'not_responded';
+  submitted_at?: string;
 }
 
 export default function ViewRequest() {
@@ -50,10 +58,14 @@ export default function ViewRequest() {
   const navigate = useNavigate();
   
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formRequest, setFormRequest] = useState<FormRequest | null>(null);
-  const [responses, setResponses] = useState<Response[]>([]);
+  const [nonMemberResponses, setNonMemberResponses] = useState<Response[]>([]);
+  const [memberStatus, setMemberStatus] = useState<MemberStatus[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
+  const [sendingEmail, setSendingEmail] = useState<string | null>(null);
+  const [sendingBulk, setSendingBulk] = useState(false);
 
   const loadFormRequestData = async () => {
     try {
@@ -73,42 +85,80 @@ export default function ViewRequest() {
       console.log('Loaded form request data:', data);
       
       setFormRequest(data.form_request);
-      setResponses(data.responses || []);
+      setNonMemberResponses(data.non_member_responses || []);
+      setMemberStatus(data.member_status || []);
+      setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error loading form request:', err);
+      console.error('Auto-refresh error:', err);
       setError(err.message || 'Failed to load form request');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRefresh = async () => {
-    try {
-      setRefreshing(true);
-      setError(null);
+  const handleSendReminder = async (email: string) => {
+    if (!window.confirm(`Send a reminder email to ${email}?`)) {
+      return;
+    }
 
-      console.log(`Refreshing responses for request: ${requestId}`);
-      
-      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+    setSendingEmail(email);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminder/${encodeURIComponent(email)}`, {
         method: 'POST',
         credentials: 'include',
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to refresh');
-      }
-
-      console.log('✅ Refresh successful:', result);
       
-      // Reload the data
-      await loadFormRequestData();
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminder');
+      }
+      
+      console.log('✅ Reminder sent:', result);
+      alert(result.message || 'Reminder sent successfully!');
+      
     } catch (err: any) {
-      console.error('❌ Refresh failed:', err);
-      setError(`Failed to refresh: ${err.message}`);
+      console.error('❌ Failed to send reminder:', err);
+      alert(`Failed to send reminder: ${err.message}`);
     } finally {
-      setRefreshing(false);
+      setSendingEmail(null);
+    }
+  };
+
+  const handleSendBulkReminders = async () => {
+    const nonResponders = memberStatus.filter(m => m.status === 'not_responded');
+    
+    if (nonResponders.length === 0) {
+      alert('All members have already responded!');
+      return;
+    }
+
+    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?\n\n(This will skip anyone who was sent a reminder in the last hour)`)) {
+      return;
+    }
+
+    setSendingBulk(true);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminders`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminders');
+      }
+      
+      console.log('✅ Bulk reminders sent:', result);
+      alert(`Success!\n\nSent: ${result.sent}\nSkipped (rate limit): ${result.skipped}\nFailed: ${result.failed}`);
+      
+    } catch (err: any) {
+      console.error('❌ Failed to send bulk reminders:', err);
+      alert(`Failed to send reminders: ${err.message}`);
+    } finally {
+      setSendingBulk(false);
     }
   };
 
@@ -117,6 +167,67 @@ export default function ViewRequest() {
       loadFormRequestData();
     }
   }, [requestId]);
+
+  // Auto-refresh polling
+  useEffect(() => {
+    if (!requestId) return;
+
+    // Poll every 30 seconds
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        syncAndLoadData();
+      }
+    }, 30000);
+
+    // Handle tab visibility changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Immediately refresh when tab becomes active
+        syncAndLoadData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestId]);
+
+  const syncAndLoadData = async () => {
+    try {
+      // Sync with Google Forms first
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const result = await response.json();
+        console.error('Auto-refresh sync error:', result.error);
+      }
+      
+      // Then load the updated data
+      await loadFormRequestData();
+    } catch (error) {
+      console.error('Auto-refresh error:', error);
+      // Still try to load cached data
+      loadFormRequestData();
+    }
+  };
+
+  // Update "seconds since update" counter
+  useEffect(() => {
+    if (!lastUpdated) return;
+
+    const timer = setInterval(() => {
+      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      setSecondsSinceUpdate(seconds);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [lastUpdated]);
 
   if (loading) {
     return (
@@ -159,23 +270,20 @@ export default function ViewRequest() {
   return (
     <Box>
       {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
-        <Box display="flex" alignItems="center" gap={2}>
-          <IconButton onClick={() => navigate('/')}>
-            <ArrowBackIcon />
-          </IconButton>
+      <Box display="flex" alignItems="center" mb={3}>
+        <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
+          <ArrowBackIcon />
+        </IconButton>
+        <Box>
           <Typography variant="h4">
             {formRequest.title}
           </Typography>
+          {lastUpdated && (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+              Last updated: {secondsSinceUpdate}s ago
+            </Typography>
+          )}
         </Box>
-        <Button
-          variant="contained"
-          startIcon={refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          {refreshing ? 'Refreshing...' : 'Refresh Data'}
-        </Button>
       </Box>
 
       {error && (
@@ -264,48 +372,124 @@ export default function ViewRequest() {
             {formRequest.response_count}
           </Typography>
           <Typography variant="h5" color="text.secondary">
-            / {formRequest.total_recipients || 'N/A'}
+            / {formRequest.total_recipients || 0}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             responses received
           </Typography>
         </Box>
         
-        {formRequest.total_recipients === 0 && (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            No recipient group attached yet. Response tracking will show totals once a group is added.
+        {nonMemberResponses.length > 0 && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            ⚠️ {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
           </Alert>
         )}
       </Paper>
 
-      {/* Responses Table */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Responses ({responses.length})
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-
-        {responses.length === 0 ? (
-          <Box textAlign="center" py={4}>
-            <Typography color="text.secondary">
-              No responses yet. Click "Refresh Data" to check for new submissions.
+      {/* Member Status Table */}
+      {memberStatus.length > 0 && (
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6">
+              Member Status ({memberStatus.length})
             </Typography>
+            <Button
+              variant="contained"
+              startIcon={sendingBulk ? <CircularProgress size={20} /> : <SendIcon />}
+              onClick={handleSendBulkReminders}
+              disabled={sendingBulk || memberStatus.filter(m => m.status === 'not_responded').length === 0}
+            >
+              {sendingBulk ? 'Sending...' : `Send to All Non-Responders (${memberStatus.filter(m => m.status === 'not_responded').length})`}
+            </Button>
           </Box>
-        ) : (
+          <Divider sx={{ mb: 2}} />
+
           <TableContainer>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableRow>
-                    <TableCell width="50">#</TableCell>
-                    <TableCell>Respondent Email</TableCell>
-                    <TableCell>Submitted At</TableCell>
-                    <TableCell width="80" align="center">Status</TableCell>
-                  </TableRow>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
+                  <TableCell width="120" align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {responses.map((response, index) => (
+                {memberStatus.map((member, index) => (
+                  <TableRow key={index} hover>
+                    <TableCell>{index + 1}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="medium">
+                        {member.email}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {member.submitted_at 
+                        ? new Date(member.submitted_at).toLocaleString()
+                        : '-'}
+                    </TableCell>
+                    <TableCell align="center">
+                      {member.status === 'responded' ? (
+                        <Chip 
+                          icon={<CheckCircleIcon />} 
+                          label="Responded" 
+                          color="success" 
+                          size="small" 
+                        />
+                      ) : (
+                        <Chip 
+                          icon={<CancelIcon />} 
+                          label="Not Responded" 
+                          color="error" 
+                          size="small" 
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell align="center">
+                      {member.status === 'not_responded' && (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={sendingEmail === member.email ? <CircularProgress size={16} /> : <EmailIcon />}
+                          onClick={() => handleSendReminder(member.email)}
+                          disabled={sendingEmail === member.email}
+                        >
+                          {sendingEmail === member.email ? 'Sending...' : 'Send Reminder'}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      )}
+
+      {/* Non-Member Responses */}
+      {nonMemberResponses.length > 0 && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Non-Member Responses ({nonMemberResponses.length})
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            These responses are from emails not in your recipient group
+          </Alert>
+
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {nonMemberResponses.map((response, index) => (
                   <TableRow key={response.id} hover>
                     <TableCell>{index + 1}</TableCell>
                     <TableCell>
@@ -319,18 +503,19 @@ export default function ViewRequest() {
                         : 'Unknown'}
                     </TableCell>
                     <TableCell align="center">
-                      <CheckCircleIcon color="success" fontSize="small" />
+                      <Chip 
+                        label="❓ Non-member" 
+                        color="warning" 
+                        size="small" 
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
-        )}
-      </Paper>
-
-      {/* TODO: Recipients Table (when groups are added) */}
-      {/* This will show all recipients and mark who has/hasn't responded */}
+        </Paper>
+      )}
     </Box>
   );
 }

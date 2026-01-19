@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { AppBar, Toolbar, Typography, Button, Container, Box } from '@mui/material';
-import { useNavigate, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
+import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
+import AddIcon from '@mui/icons-material/Add';
+import EmailIcon from '@mui/icons-material/Email';
+import GroupIcon from '@mui/icons-material/Group';
+import SettingsIcon from '@mui/icons-material/Settings';
 
 const API_URL = 'http://localhost:5000';
 
-// This matches your report's "Top Bar Navigation" requirement
 export default function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -74,19 +78,56 @@ export default function Layout() {
           )}
 
           {/* Navigation Links */}
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button>
-            <Button color="inherit" onClick={() => navigate('/groups')}>Groups</Button>
-            <Button color="inherit" onClick={() => navigate('/time')}>Server Time</Button>
-            <Button color="inherit" onClick={handleLogout}>Logout</Button>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button
+              color="inherit"
+              startIcon={<AddIcon />}
+              onClick={() => navigate('/requests/new')}
+              variant={location.pathname === '/requests/new' ? 'outlined' : 'text'}
+            >
+              New Request
+            </Button>
+            <Button
+              color="inherit"
+              startIcon={<EmailIcon />}
+              onClick={() => navigate('/')}
+              variant={location.pathname === '/' ? 'outlined' : 'text'}
+            >
+              Form Requests
+            </Button>
+            <Button
+              color="inherit"
+              startIcon={<GroupIcon />}
+              onClick={() => navigate('/groups')}
+              variant={location.pathname.startsWith('/groups') ? 'outlined' : 'text'}
+            >
+              Groups
+            </Button>
+            <Button
+              color="inherit"
+              startIcon={<SettingsIcon />}
+              onClick={() => {
+                // TODO: Navigate to settings page when created
+                alert('Settings page coming soon');
+              }}
+            >
+              Settings
+            </Button>
+            <Button
+              color="inherit"
+              onClick={handleLogout}
+              sx={{ ml: 1 }}
+            >
+              Log Out
+            </Button>
           </Box>
         </Toolbar>
       </AppBar>
 
       {/* Main Page Content - Use Outlet for nested routes */}
-      <Container component="main" maxWidth="lg" sx={{ mt: 4, mb: 4, flexGrow: 1 }}>
+      <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default' }}>
         <Outlet />
-      </Container>
+      </Box>
     </Box>
   );
 }
