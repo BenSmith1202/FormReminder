@@ -12,6 +12,7 @@ from models.group import Group
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
+from utils.scheduler import init_scheduler
 
 # 1. Initialize Flask
 app = Flask(__name__)
@@ -669,7 +670,7 @@ def refresh_form_responses(request_id: str):
 @app.post("/api/form-requests")
 def create_form_request():
     """Create a new form request from a Google Form URL"""
-    from datetime import datetime
+    from datetime import datetime, timedelta
     from models.database import Collections
     
     try:
@@ -752,6 +753,25 @@ def create_form_request():
         print("Fetching initial responses...")
         responses = GoogleFormsService.get_form_responses(credentials, form_id)
         
+        # Parse schedule data from request
+        schedule_interval = data.get('schedule_interval_days', 3)  # Default: every 3 days
+        schedule_end_date = data.get('schedule_end_date')  # Optional end date
+        
+        # Calculate schedule dates
+        now = datetime.utcnow()
+        now_str = now.isoformat() + 'Z'
+        
+        # Default end date is 30 days from now if not provided
+        if schedule_end_date:
+            end_date_str = schedule_end_date
+        else:
+            end_date = now + timedelta(days=30)
+            end_date_str = end_date.isoformat() + 'Z'
+        
+        # Next send is after the interval (first send is immediate)
+        next_send = now + timedelta(days=schedule_interval)
+        next_send_str = next_send.isoformat() + 'Z'
+        
         db = get_db()
         
         # Create form request document with enhanced metadata
@@ -762,7 +782,7 @@ def create_form_request():
             'description': metadata.get('description', ''),
             'owner_id': user_id,
             'group_id': group_id,
-            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'created_at': now_str,
             'status': 'Active',
             'is_active': True,
             # Google Forms specific data
@@ -771,9 +791,17 @@ def create_form_request():
                 'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
             },
             'response_count': len(responses),
-            'total_recipients': len(group.members),  # Number of members in the group
-            'last_synced_at': datetime.utcnow().isoformat() + 'Z',
-            'warnings': [] if email_collection_enabled else ['Email collection may not be enabled']
+            'total_recipients': len(group.members),
+            'last_synced_at': now_str,
+            'warnings': [] if email_collection_enabled else ['Email collection may not be enabled'],
+            # Schedule fields
+            'schedule_enabled': True,
+            'schedule_paused': False,
+            'schedule_interval_days': schedule_interval,
+            'schedule_start_date': now_str,
+            'schedule_end_date': end_date_str,
+            'schedule_last_sent': now_str,
+            'schedule_next_send': next_send_str
         }
         
         # Add to form_requests collection
@@ -788,18 +816,39 @@ def create_form_request():
                 'respondent_email': response.get('respondent_email', ''),
                 'response_id': response.get('response_id', ''),
                 'submitted_at': response.get('submitted_at', ''),
-                'created_at': datetime.utcnow().isoformat() + 'Z'
+                'created_at': now_str
             }
             db.collection(Collections.RESPONSES).add(response_data)
+        
+        # Send initial reminders immediately to all group members who haven't responded
+        print(f"📧 Sending initial reminders to non-responders...")
+        responded_emails = set(r.get('respondent_email', '').lower() for r in responses)
+        initial_sent = 0
+        
+        for member in group.members:
+            member_email = member.get('email', '') if isinstance(member, dict) else member
+            if member_email and member_email.lower() not in responded_emails:
+                result = EmailService.send_reminder(
+                    request_id=doc_ref.id,
+                    form_title=metadata.get('title', 'Form'),
+                    form_url=form_url,
+                    recipient_email=member_email,
+                    skip_rate_limit=True  # Skip rate limit for initial send
+                )
+                if result.get('success'):
+                    initial_sent += 1
         
         print(f"✅ Form request created with ID: {doc_ref.id}")
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
+        print(f"   Initial reminders sent: {initial_sent}")
+        print(f"   Schedule: Every {schedule_interval} days until {end_date_str}")
         
         return jsonify({
             "success": True,
             "id": doc_ref.id,
+            "initial_reminders_sent": initial_sent,
             "form_request": {
                 "id": doc_ref.id,
                 **form_request_data
@@ -1336,8 +1385,38 @@ def send_bulk_reminders(request_id: str):
         }), 500
 
 
+# Manual scheduler trigger (for testing)
+@app.post("/api/scheduler/run")
+def run_scheduler_manually():
+    """Manually trigger the reminder scheduler (for testing)"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        from utils.scheduler import ReminderScheduler
+        scheduler = ReminderScheduler.get_instance()
+        scheduler.run_now()
+        
+        return jsonify({
+            "success": True,
+            "message": "Scheduler run triggered"
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to run scheduler",
+            "details": str(e)
+        }), 500
+
+
 # 4. Run the Server
 if __name__ == '__main__':
+    # Start the background reminder scheduler
+    scheduler = init_scheduler(app)
+    
     port = int(os.environ.get('PORT', 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
     

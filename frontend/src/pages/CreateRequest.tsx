@@ -1,14 +1,26 @@
 import { useState, useEffect } from 'react';
-import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, FormControl, InputLabel } from '@mui/material';
+import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, FormControl, InputLabel, ToggleButton, ToggleButtonGroup, Divider } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 
 const API_URL = 'http://localhost:5000';
+
+// Schedule presets
+const SCHEDULE_PRESETS = {
+  quick: { label: 'Quick (Every 2 days)', days: 2 },
+  medium: { label: 'Medium (Every 4 days)', days: 4 },
+  relaxed: { label: 'Relaxed (Weekly)', days: 7 },
+};
 
 interface Group {
   id: string;
   name: string;
   member_count: number;
 }
+
+// Helper to format date for input
+const formatDateForInput = (date: Date): string => {
+  return date.toISOString().split('T')[0];
+};
 
 export default function CreateRequest() {
   const navigate = useNavigate();
@@ -19,6 +31,14 @@ export default function CreateRequest() {
   const [error, setError] = useState<string | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [needsGoogleAuth, setNeedsGoogleAuth] = useState(false);
+  
+  // Schedule state
+  const [schedulePreset, setSchedulePreset] = useState<'quick' | 'medium' | 'relaxed'>('medium');
+  const [endDate, setEndDate] = useState<string>(() => {
+    const defaultEnd = new Date();
+    defaultEnd.setDate(defaultEnd.getDate() + 30);
+    return formatDateForInput(defaultEnd);
+  });
 
   // Check Google auth status and load groups on mount
   useEffect(() => {
@@ -95,7 +115,11 @@ export default function CreateRequest() {
     setError(null);
     
     try {
+      const intervalDays = SCHEDULE_PRESETS[schedulePreset].days;
+      const endDateISO = new Date(endDate + 'T23:59:59Z').toISOString();
+      
       console.log('Creating form request for URL:', formUrl, 'with group:', groupId);
+      console.log('Schedule:', intervalDays, 'days, ends:', endDateISO);
       
       const response = await fetch(`${API_URL}/api/form-requests`, {
         method: 'POST',
@@ -105,7 +129,9 @@ export default function CreateRequest() {
         credentials: 'include',
         body: JSON.stringify({
           form_url: formUrl,
-          group_id: groupId
+          group_id: groupId,
+          schedule_interval_days: intervalDays,
+          schedule_end_date: endDateISO
         })
       });
       
@@ -220,6 +246,50 @@ export default function CreateRequest() {
             required
             disabled={loading}
             helperText="Example: https://docs.google.com/forms/d/1a2b3c4d5e6f7g8h9/edit"
+          />
+          
+          <Divider sx={{ my: 3 }} />
+          
+          <Typography variant="h6" gutterBottom>
+            Reminder Schedule
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            First reminder is sent immediately. Choose how often to send follow-up reminders.
+          </Typography>
+          
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Reminder Frequency
+            </Typography>
+            <ToggleButtonGroup
+              value={schedulePreset}
+              exclusive
+              onChange={(_, value) => value && setSchedulePreset(value)}
+              fullWidth
+              disabled={loading}
+            >
+              <ToggleButton value="quick" color="primary">
+                Quick<br />(Every 2 days)
+              </ToggleButton>
+              <ToggleButton value="medium" color="primary">
+                Medium<br />(Every 4 days)
+              </ToggleButton>
+              <ToggleButton value="relaxed" color="primary">
+                Relaxed<br />(Weekly)
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          
+          <TextField
+            fullWidth
+            label="Stop Reminders After"
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            disabled={loading}
+            InputLabelProps={{ shrink: true }}
+            helperText="Automatic reminders will stop after this date"
+            sx={{ mb: 2 }}
           />
           
           <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
