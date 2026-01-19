@@ -6,7 +6,7 @@ from flask_cors import CORS
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models.database import get_db
+from models.database import get_db, FirestoreDB
 from models.user import User
 from models.group import Group
 from config import settings
@@ -22,6 +22,17 @@ CORS(app,
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+# Initialize database at startup
+try:
+    print("Initializing database connection...")
+    FirestoreDB.initialize()
+    print("Database initialized successfully")
+except Exception as e:
+    print(f"WARNING: Database initialization failed at startup: {e}")
+    import traceback
+    traceback.print_exc()
+    print("Database will be initialized on first use")
 
 # Debug middleware to check sessions
 @app.before_request
