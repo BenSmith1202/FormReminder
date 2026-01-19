@@ -109,6 +109,13 @@ function Login() {
                 Register here
               </Link>
             </Typography>
+
+            <Typography variant="body2" align="center">
+              Forgot your password?{' '}
+              <Link to="/reset" style={{ color: '#1976d2' }}>
+                Click here to reset
+              </Link>
+            </Typography>
           </form>
         </Paper>
       </Box>

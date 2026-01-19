@@ -107,6 +107,46 @@ class User:
             return None
     
     @staticmethod
+    def reset_password(username: str, password: str) -> Optional['User']:
+        """Reset a given user's password"""
+        try:
+            db = get_db()
+            users_ref = db.collection(Collections.USERS)
+            thisUser: Optional[User] = User.get_by_username(username)
+
+            newPwdHash = User.hash_password(password)
+            
+            user_data = {
+                'username': thisUser.username,
+                'email': thisUser.email,
+                'password_hash': newPwdHash,
+                'google_access_token': None,
+                'google_refresh_token': None,
+                'token_expiry': None,
+                'created_at': datetime.utcnow().isoformat() + 'Z'
+            }
+
+            # Add to database
+            doc_ref = users_ref.document()
+            doc_ref.set(user_data)
+            
+            print(f"Password reset successfully: {doc_ref.id}")
+            return User(
+                user_id=doc_ref.id,
+                username=username,
+                email = thisUser.email,
+                password_hash=newPwdHash
+            )
+
+
+        except Exception as e:
+            print(f"Error reseting password: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+
+    @staticmethod
     def get_by_username(username: str) -> Optional['User']:
         """Find a user by username"""
         try:
