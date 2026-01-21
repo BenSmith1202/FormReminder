@@ -139,6 +139,70 @@ class ReminderScheduler:
         return False
     
     @staticmethod
+    def should_send_scheduled_first_reminder(form_request: dict) -> bool:
+        """
+        Check if the scheduled first reminder should be sent.
+        This handles the case where first_reminder_timing is 'scheduled'.
+        """
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        # Check if schedule is enabled
+        if not form_request.get('schedule_enabled', True):
+            return False
+        
+        # Check if form is active
+        if not form_request.get('is_active', True):
+            return False
+        
+        # Check if first reminder was already sent
+        if form_request.get('first_reminder_sent', False):
+            return False
+        
+        # Get first reminder timing config
+        first_reminder_timing = form_request.get('first_reminder_timing', {})
+        if isinstance(first_reminder_timing, str):
+            # Legacy format or 'immediate' - skip (handled at creation)
+            return False
+        
+        timing_type = first_reminder_timing.get('timing_type')
+        if timing_type != 'scheduled':
+            return False
+        
+        # Get the scheduled date
+        scheduled_date_str = first_reminder_timing.get('scheduled_date')
+        if not scheduled_date_str:
+            return False
+        
+        try:
+            scheduled_date = datetime.fromisoformat(scheduled_date_str.replace('Z', '+00:00'))
+            
+            # Check if it's time to send (current time >= scheduled time)
+            if now >= scheduled_date:
+                return True
+                
+        except (ValueError, AttributeError) as e:
+            print(f"  Error parsing scheduled_date: {e}")
+        
+        return False
+    
+    @staticmethod
+    def mark_first_reminder_sent(request_id: str):
+        """Mark the first reminder as sent for a form request"""
+        try:
+            db = get_db()
+            
+            db.collection(Collections.FORM_REQUESTS).document(request_id).update({
+                'first_reminder_sent': True,
+                'first_reminder_sent_at': datetime.utcnow().isoformat() + 'Z'
+            })
+            
+            print(f"  ✅ Marked first reminder as sent")
+            
+        except Exception as e:
+            print(f"  ❌ Error marking first reminder as sent: {e}")
+    
+    @staticmethod
     def should_send_reminder_simple(form_request: dict) -> bool:
         """
         Check if a reminder should be sent for a simple interval mode form request.
@@ -275,8 +339,15 @@ class ReminderScheduler:
                 
                 should_send = False
                 mode = None
+                is_first_reminder = False
                 
-                if is_advanced_mode:
+                # First, check if scheduled first reminder should be sent
+                if ReminderScheduler.should_send_scheduled_first_reminder(form_request):
+                    mode = "scheduled_first"
+                    should_send = True
+                    is_first_reminder = True
+                    print(f"  📅 Scheduled first reminder is due!")
+                elif is_advanced_mode:
                     mode = "advanced"
                     should_send = ReminderScheduler.should_send_reminder_advanced(form_request)
                     
@@ -356,10 +427,12 @@ class ReminderScheduler:
                         print(f"  ❌ Failed: {result.get('error', 'Unknown error')}")
                 
                 # Update scheduling info after sending
-                if is_simple_mode:
+                if is_first_reminder:
+                    # Mark the scheduled first reminder as sent
+                    ReminderScheduler.mark_first_reminder_sent(request_id)
+                elif is_simple_mode:
                     interval_days = form_request.get('schedule_interval_days', 1)
                     ReminderScheduler.update_next_send_time(request_id, interval_days)
-                
                 elif is_advanced_mode:
                     # Mark today's reminder date as sent
                     today_iso = datetime.utcnow().isoformat() + 'Z'

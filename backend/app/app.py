@@ -901,10 +901,51 @@ def create_form_request():
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
+        # Send initial email if timing is 'immediate'
+        initial_emails_sent = 0
+        initial_emails_failed = 0
+        if first_reminder_timing == 'immediate':
+            print(f"📧 Sending immediate initial emails to {len(group.members)} group members...")
+            from utils.email_service import EmailService
+            
+            # Get list of respondent emails to exclude
+            respondent_emails = {r.get('respondent_email', '').lower() for r in responses if r.get('respondent_email')}
+            
+            for member in group.members:
+                member_email = member.get('email', '').lower()
+                if not member_email:
+                    continue
+                    
+                # Skip if already responded
+                if member_email in respondent_emails:
+                    print(f"  ⏭️ Skipping {member_email} - already responded")
+                    continue
+                
+                # Send reminder (skip rate limit for initial email)
+                result = EmailService.send_reminder(
+                    request_id=doc_ref.id,
+                    form_title=form_request_data['title'],
+                    form_url=form_url,
+                    recipient_email=member_email,
+                    skip_rate_limit=True
+                )
+                
+                if result.get('success'):
+                    initial_emails_sent += 1
+                    print(f"  ✅ Sent initial email to {member_email}")
+                else:
+                    initial_emails_failed += 1
+                    print(f"  ❌ Failed to send to {member_email}: {result.get('error')}")
+            
+            print(f"📧 Initial emails complete: {initial_emails_sent} sent, {initial_emails_failed} failed")
+        else:
+            print(f"📧 Initial email timing is '{first_reminder_timing}' - will be sent at scheduled time")
+        
         print(f"✅ Form request created with ID: {doc_ref.id}")
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
+        print(f"   Initial emails sent: {initial_emails_sent}")
         
         return jsonify({
             "success": True,
@@ -912,6 +953,12 @@ def create_form_request():
             "form_request": {
                 "id": doc_ref.id,
                 **form_request_data
+            },
+            "initial_emails": {
+                "timing": first_reminder_timing,
+                "sent": initial_emails_sent,
+                "failed": initial_emails_failed,
+                "total_recipients": len(group.members)
             }
         }), 201
         
