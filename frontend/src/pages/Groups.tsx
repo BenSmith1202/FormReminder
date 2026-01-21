@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Paper, Typography, Button, Box, CircularProgress, Alert, Card, CardContent, CardActions, Grid } from '@mui/material';
+import { Paper, Typography, Button, Box, CircularProgress, Alert, Card, CardContent, CardActions } from '@mui/material';
+import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
 import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
@@ -95,7 +96,7 @@ export default function Groups() {
       ) : (
         <Grid container spacing={3}>
           {groups.map((group) => (
-            <Grid item xs={12} md={6} lg={4} key={group.id}>
+            <Grid size={{ xs: 12, md: 6, lg: 4 }} key={group.id}>
               <Card>
                 <CardContent>
                   <Box display="flex" alignItems="center" mb={1}>
