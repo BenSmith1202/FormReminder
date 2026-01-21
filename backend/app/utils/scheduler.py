@@ -9,7 +9,7 @@ import atexit
 # ========== TEST MODE ==========
 # Set to True for testing (1 minute interval, skip rate limits)
 # Set to False for production (1 hour interval, respect rate limits)
-TEST_MODE = True
+TEST_MODE = False
 # ===============================
 
 
