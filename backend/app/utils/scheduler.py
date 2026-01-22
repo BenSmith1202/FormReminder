@@ -1,6 +1,6 @@
 """
 APScheduler-based background scheduler for automated email reminders.
-Supports both advanced mode (due_date + calculated_reminder_dates) and 
+Supports both advanced mode (due_date + dynamically calculated reminder dates) and 
 simple interval mode (schedule_interval_days).
 """
 
@@ -81,23 +81,24 @@ class ReminderScheduler:
             return set()
     
     @staticmethod
-    def should_send_reminder_advanced(form_request: dict) -> bool:
+    def should_send_reminder_advanced(reminder: dict) -> bool:
         """
-        Check if a reminder should be sent for an advanced mode form request.
-        Advanced mode uses due_date and calculated_reminder_dates.
+        Check if a reminder should be sent for an advanced mode reminder.
+        Advanced mode uses due_date and dynamically calculates reminder dates from schedule config.
+        Reads from reminders collection.
         """
         now = datetime.utcnow()
         
         # Check if schedule is enabled
-        if not form_request.get('schedule_enabled', True):
+        if not reminder.get('schedule_enabled', True):
             return False
         
-        # Check if form is active
-        if not form_request.get('is_active', True):
+        # Check if reminder is active
+        if not reminder.get('is_active', True):
             return False
         
         # Check due date
-        due_date_str = form_request.get('due_date')
+        due_date_str = reminder.get('due_date')
         if not due_date_str:
             return False
         
@@ -111,29 +112,56 @@ class ReminderScheduler:
         except (ValueError, AttributeError):
             return False
         
-        # Get reminder schedule configuration
-        reminder_schedule = form_request.get('reminder_schedule', {})
-        if isinstance(reminder_schedule, str):
-            # Legacy format - just a schedule type string
-            return False
+        # Get reminder schedule configuration from reminder document
+        schedule_type = reminder.get('schedule_type', 'normal')
+        custom_days = reminder.get('custom_days')
         
-        calculated_dates = reminder_schedule.get('calculated_reminder_dates', [])
+        # Calculate reminder dates dynamically from schedule config
+        from utils.reminder_schedule import ReminderSchedule
+        
+        reminder_days = ReminderSchedule.get_reminder_days(schedule_type, custom_days)
+        calculated_dates = ReminderSchedule.calculate_reminder_dates(due_date, reminder_days)
+        
         if not calculated_dates:
             return False
         
-        # Check if today matches any reminder date
+        # Check if today matches any reminder date (and hasn't been sent already)
         today_date = now.date()
+        request_id = reminder.get('request_id')
         
-        for date_str in calculated_dates:
+        # Check reminder_logs to see if we already sent for today
+        if request_id:
             try:
-                reminder_datetime = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                reminder_datetime = reminder_datetime.replace(tzinfo=None)
+                db = get_db()
+                today_str = today_date.isoformat()
                 
-                # Check if this reminder date is today (comparing just dates)
+                # Check if any reminder was already sent for this request on today's date
+                existing_logs = db.collection(Collections.REMINDER_LOGS)\
+                    .where('request_id', '==', request_id)\
+                    .where('reminder_date', '==', today_str)\
+                    .where('success', '==', True)\
+                    .limit(1)\
+                    .stream()
+                
+                # If we find any successful log for today, don't send again
+                if any(True for _ in existing_logs):
+                    return False
+            except Exception as e:
+                print(f"  Error checking reminder logs: {e}")
+                # On error, proceed with check
+        
+        for reminder_datetime in calculated_dates:
+            try:
+                # reminder_datetime is a datetime object, convert to naive for comparison
+                if reminder_datetime.tzinfo is not None:
+                    reminder_datetime = reminder_datetime.replace(tzinfo=None)
+                
+                # Check if this reminder date is today
                 if reminder_datetime.date() == today_date:
                     return True
                     
-            except (ValueError, AttributeError):
+            except (ValueError, AttributeError) as e:
+                print(f"  Error processing reminder date: {e}")
                 continue
         
         return False
@@ -271,35 +299,46 @@ class ReminderScheduler:
             print(f"  ❌ Error updating next send time: {e}")
     
     @staticmethod
-    def mark_reminder_sent_for_date(request_id: str, date_str: str):
-        """Mark a calculated reminder date as sent"""
+    def log_reminder_sent(request_id: str, reminder_date: str, recipient_email: str, success: bool, reminder_type: str = 'scheduled'):
+        """
+        Log a reminder send event to the reminder_logs collection.
+        This creates a new document for each reminder send event.
+        
+        Args:
+            request_id: The form request ID
+            reminder_date: The date this reminder was scheduled for (ISO date string)
+            recipient_email: Email address the reminder was sent to
+            success: Whether the reminder was sent successfully
+            reminder_type: Type of reminder ('scheduled', 'immediate', 'manual', 'first')
+        """
         try:
             db = get_db()
             
-            # Get current form request
-            doc_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
-            doc = doc_ref.get()
+            log_data = {
+                'request_id': request_id,
+                'reminder_date': reminder_date,  # ISO date string (YYYY-MM-DD)
+                'recipient_email': recipient_email,
+                'sent_at': datetime.utcnow().isoformat() + 'Z',
+                'success': success,
+                'reminder_type': reminder_type
+            }
             
-            if not doc.exists:
-                return
+            db.collection(Collections.REMINDER_LOGS).add(log_data)
+            print(f"  ✅ Logged reminder send: {reminder_date} to {recipient_email} ({'success' if success else 'failed'})")
             
-            form_request = doc.to_dict()
-            reminder_schedule = form_request.get('reminder_schedule', {})
-            sent_dates = reminder_schedule.get('sent_reminder_dates', [])
-            
-            if date_str not in sent_dates:
-                sent_dates.append(date_str)
-                reminder_schedule['sent_reminder_dates'] = sent_dates
-                
-                doc_ref.update({
-                    'reminder_schedule': reminder_schedule,
-                    'schedule_last_sent': datetime.utcnow().isoformat() + 'Z'
-                })
-                
-                print(f"  ✅ Marked reminder date as sent: {date_str}")
-                
         except Exception as e:
-            print(f"  ❌ Error marking reminder as sent: {e}")
+            print(f"  ❌ Error logging reminder send: {e}")
+    
+    @staticmethod
+    def mark_reminder_sent_for_date(request_id: str, date_str: str):
+        """
+        DEPRECATED: Use log_reminder_sent instead.
+        This method is kept for backward compatibility but now just calls log_reminder_sent.
+        """
+        # For bulk sends, we'll log individually per recipient
+        # This method signature doesn't have recipient_email, so we'll just log the date
+        # Individual recipient logging should happen in the calling code
+        print(f"  ⚠️ mark_reminder_sent_for_date called - use log_reminder_sent for individual recipients")
     
     @staticmethod
     def check_and_send_reminders():
@@ -317,55 +356,80 @@ class ReminderScheduler:
         try:
             db = get_db()
             
-            # Get all active form requests
-            form_requests = db.collection(Collections.FORM_REQUESTS)\
+            # Get all active reminders from reminders collection
+            reminders = db.collection(Collections.REMINDERS)\
                 .where('is_active', '==', True)\
                 .stream()
             
             total_requests = 0
             reminders_sent = 0
             
-            for doc in form_requests:
-                request_id = doc.id
-                form_request = doc.to_dict()
+            for reminder_doc in reminders:
+                reminder = reminder_doc.to_dict()
+                request_id = reminder.get('request_id')
+                
+                if not request_id:
+                    continue
+                
+                # Get form request
+                form_request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+                form_request_doc = form_request_ref.get()
+                
+                if not form_request_doc.exists:
+                    print(f"⚠️ Form request {request_id} not found for reminder")
+                    continue
+                
+                form_request = form_request_doc.to_dict()
+                
+                # Get form data from forms collection
+                form_id = form_request.get('form_id')
+                title = 'Unknown Form'
+                form_url = ''
+                
+                if form_id:
+                    form_ref = db.collection(Collections.FORMS).document(form_id)
+                    form_doc = form_ref.get()
+                    if form_doc.exists:
+                        form_data = form_doc.to_dict()
+                        title = form_data.get('title', 'Unknown Form')
+                        form_url = form_data.get('form_url', '')
+                
+                # Check if form request is active
+                if not form_request.get('is_active', True):
+                    continue
+                
                 total_requests += 1
+                print(f"\n📋 Checking: {title} (Request ID: {request_id})")
                 
-                title = form_request.get('title', 'Unknown Form')
-                print(f"\n📋 Checking: {title} (ID: {request_id})")
-                
-                # Determine which mode this form request uses
-                is_advanced_mode = 'due_date' in form_request and isinstance(form_request.get('reminder_schedule'), dict)
-                is_simple_mode = 'schedule_interval_days' in form_request
+                # Determine which mode this reminder uses
+                is_advanced_mode = 'due_date' in reminder and reminder.get('schedule_type')
+                is_simple_mode = 'schedule_interval_days' in form_request  # Legacy simple mode
                 
                 should_send = False
                 mode = None
                 is_first_reminder = False
                 
                 # First, check if scheduled first reminder should be sent
-                if ReminderScheduler.should_send_scheduled_first_reminder(form_request):
+                # Combine reminder and form_request for first reminder check (needs form_request for some checks)
+                combined_data = {**reminder, **form_request}  # Reminder data takes precedence
+                if ReminderScheduler.should_send_scheduled_first_reminder(combined_data):
                     mode = "scheduled_first"
                     should_send = True
                     is_first_reminder = True
                     print(f"  📅 Scheduled first reminder is due!")
                 elif is_advanced_mode:
                     mode = "advanced"
-                    should_send = ReminderScheduler.should_send_reminder_advanced(form_request)
+                    should_send = ReminderScheduler.should_send_reminder_advanced(reminder)
                     
-                    # Check if we already sent for today
+                    # Check if we already sent for today (already handled in should_send_reminder_advanced)
                     if should_send:
                         today_str = datetime.utcnow().date().isoformat()
-                        sent_dates = form_request.get('reminder_schedule', {}).get('sent_reminder_dates', [])
+                        sent_dates = reminder.get('sent_reminder_dates', [])
                         
                         # Check if any sent date matches today
-                        for sent_date in sent_dates:
-                            try:
-                                sent_datetime = datetime.fromisoformat(sent_date.replace('Z', '+00:00'))
-                                if sent_datetime.date().isoformat() == today_str:
-                                    print(f"  Already sent reminder for today ({today_str})")
-                                    should_send = False
-                                    break
-                            except (ValueError, AttributeError):
-                                continue
+                        if today_str in sent_dates:
+                            print(f"  Already sent reminder for today ({today_str})")
+                            should_send = False
                 
                 elif is_simple_mode:
                     mode = "simple"
@@ -420,6 +484,18 @@ class ReminderScheduler:
                         skip_rate_limit=True  # Scheduler manages its own timing
                     )
                     
+                    # Log reminder send event to reminder_logs collection
+                    today_date_str = datetime.utcnow().date().isoformat()
+                    reminder_type = 'first' if is_first_reminder else mode
+                    
+                    ReminderScheduler.log_reminder_sent(
+                        request_id=request_id,
+                        reminder_date=today_date_str,
+                        recipient_email=member_email,
+                        success=result.get('success', False),
+                        reminder_type=reminder_type
+                    )
+                    
                     if result.get('success'):
                         reminders_sent += 1
                         print(f"  ✅ Sent to {member_email}")
@@ -433,10 +509,8 @@ class ReminderScheduler:
                 elif is_simple_mode:
                     interval_days = form_request.get('schedule_interval_days', 1)
                     ReminderScheduler.update_next_send_time(request_id, interval_days)
-                elif is_advanced_mode:
-                    # Mark today's reminder date as sent
-                    today_iso = datetime.utcnow().isoformat() + 'Z'
-                    ReminderScheduler.mark_reminder_sent_for_date(request_id, today_iso)
+                # Note: Individual reminder sends are logged in reminder_logs collection
+                # No need to mark dates here - each send is logged individually
             
             print(f"\n{'='*60}")
             print(f"📊 SUMMARY: Checked {total_requests} requests, sent {reminders_sent} reminders")

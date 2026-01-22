@@ -295,7 +295,16 @@ export default function ViewRequest() {
       {/* Warnings */}
       {formRequest.warnings && formRequest.warnings.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          {formRequest.warnings.join(', ')}
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            Important Notices:
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2 }}>
+            {formRequest.warnings.map((warning, index) => (
+              <li key={index}>
+                <Typography variant="body2">{warning}</Typography>
+              </li>
+            ))}
+          </Box>
         </Alert>
       )}
 

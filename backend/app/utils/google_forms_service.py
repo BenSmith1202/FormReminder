@@ -254,6 +254,20 @@ class GoogleFormsService:
             return None
     
     @staticmethod
+    def verify_form_access(credentials: Credentials, form_id: str) -> bool:
+        """Verify if the credentials have access to the form"""
+        try:
+            service = build('forms', 'v1', credentials=credentials)
+            # Try to get the form - if this succeeds, we have access
+            form = service.forms().get(formId=form_id).execute()
+            return True
+        except Exception as e:
+            error_str = str(e)
+            if '404' in error_str:
+                return False
+            raise
+    
+    @staticmethod
     def get_form_metadata(credentials: Credentials, form_id: str) -> Dict:
         """Fetch form metadata from Google Forms API"""
         try:
@@ -265,6 +279,7 @@ class GoogleFormsService:
             # Try to get the form
             try:
                 form = service.forms().get(formId=form_id).execute()
+                print(f"✅ Successfully accessed form: {form.get('info', {}).get('title', 'Unknown')}")
             except Exception as api_error:
                 error_str = str(api_error)
                 if '404' in error_str or 'not found' in error_str.lower():
@@ -274,6 +289,12 @@ class GoogleFormsService:
                     print(f"  2. The Google account doesn't have access to this form")
                     print(f"  3. The form ID format is incorrect")
                     print(f"  4. The form might be in a different Google Workspace")
+                    print(f"  5. The form might require the account to be added as an editor")
+                    print(f"\nTroubleshooting steps:")
+                    print(f"  - Open the form in your browser while logged into the connected Google account")
+                    print(f"  - Make sure you can EDIT the form (not just view it)")
+                    print(f"  - Check if the form is shared with your Google account")
+                    print(f"  - Try creating a new form with your account and use that URL")
                     raise
                 else:
                     raise
@@ -312,31 +333,117 @@ class GoogleFormsService:
     
     @staticmethod
     def get_form_responses(credentials: Credentials, form_id: str) -> List[Dict]:
-        """Fetch all responses for a form"""
+        """Fetch all responses for a form with full answer data"""
         try:
             print(f"Fetching responses for form: {form_id}")
             
             service = build('forms', 'v1', credentials=credentials)
-            result = service.forms().responses().list(formId=form_id).execute()
             
-            responses = result.get('responses', [])
+            # Fetch all responses (handle pagination if needed)
+            all_responses = []
+            page_token = None
             
-            # Extract respondent emails and response data
+            while True:
+                # Build request parameters
+                request_params = {'formId': form_id}
+                if page_token:
+                    request_params['pageToken'] = page_token
+                
+                result = service.forms().responses().list(**request_params).execute()
+                responses = result.get('responses', [])
+                all_responses.extend(responses)
+                
+                # Check if there are more pages
+                page_token = result.get('nextPageToken')
+                if not page_token:
+                    break
+                
+                print(f"Fetched {len(responses)} responses (total so far: {len(all_responses)})")
+            
+            print(f"Total responses found: {len(all_responses)}")
+            
+            # Process responses to extract all data
             processed_responses = []
-            for response in responses:
+            for response in all_responses:
                 respondent_email = response.get('respondentEmail', '')
                 response_id = response.get('responseId', '')
                 create_time = response.get('createTime', '')
+                last_submitted_time = response.get('lastSubmittedTime', '')
+                total_score = response.get('totalScore')
+                answers = response.get('answers', {})
+                
+                # Process answers - convert to a more usable format
+                processed_answers = {}
+                for question_id, answer_data in answers.items():
+                    # Extract the actual answer value(s)
+                    answer_value = None
+                    answer_text = None
+                    
+                    # Handle different answer types
+                    if 'textAnswers' in answer_data:
+                        # Text answer
+                        text_answers = answer_data['textAnswers'].get('answers', [])
+                        if text_answers:
+                            answer_value = text_answers[0].get('value', '')
+                            answer_text = answer_value
+                    elif 'choiceAnswers' in answer_data:
+                        # Multiple choice, checkbox, etc.
+                        choice_answers = answer_data['choiceAnswers'].get('answers', [])
+                        if choice_answers:
+                            answer_value = [choice.get('value', '') for choice in choice_answers]
+                            answer_text = ', '.join(answer_value) if isinstance(answer_value, list) else answer_value
+                    elif 'fileUploadAnswers' in answer_data:
+                        # File upload
+                        file_answers = answer_data['fileUploadAnswers'].get('answers', [])
+                        if file_answers:
+                            answer_value = [file.get('fileId', '') for file in file_answers]
+                            answer_text = f"{len(answer_value)} file(s) uploaded"
+                    elif 'scaleAnswers' in answer_data:
+                        # Scale/rating
+                        scale_answers = answer_data['scaleAnswers'].get('answers', [])
+                        if scale_answers:
+                            answer_value = scale_answers[0].get('value', '')
+                            answer_text = str(answer_value)
+                    elif 'dateAnswers' in answer_data:
+                        # Date
+                        date_answers = answer_data['dateAnswers'].get('answers', [])
+                        if date_answers:
+                            date_obj = date_answers[0].get('value', {})
+                            year = date_obj.get('year', '')
+                            month = date_obj.get('month', '')
+                            day = date_obj.get('day', '')
+                            answer_value = f"{year}-{month:02d}-{day:02d}" if year and month and day else None
+                            answer_text = answer_value
+                    elif 'timeAnswers' in answer_data:
+                        # Time
+                        time_answers = answer_data['timeAnswers'].get('answers', [])
+                        if time_answers:
+                            time_obj = time_answers[0].get('value', {})
+                            hours = time_obj.get('hours', '')
+                            minutes = time_obj.get('minutes', '')
+                            answer_value = f"{hours:02d}:{minutes:02d}" if hours is not None and minutes is not None else None
+                            answer_text = answer_value
+                    
+                    processed_answers[question_id] = {
+                        'value': answer_value,
+                        'text': answer_text,
+                        'raw': answer_data  # Keep raw data for reference
+                    }
                 
                 processed_responses.append({
                     'respondent_email': respondent_email,
                     'response_id': response_id,
-                    'submitted_at': create_time
+                    'submitted_at': create_time,
+                    'last_submitted_at': last_submitted_time,
+                    'total_score': total_score,
+                    'answers': processed_answers,
+                    'answer_count': len(processed_answers)
                 })
             
-            print(f"Found {len(processed_responses)} responses")
+            print(f"Processed {len(processed_responses)} responses")
             if processed_responses:
-                print(f"Sample response: {processed_responses[0]}")
+                sample = processed_responses[0]
+                print(f"Sample response - Email: {sample.get('respondent_email')}, Answers: {sample.get('answer_count')} questions")
             
             return processed_responses
             

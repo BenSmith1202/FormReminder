@@ -145,6 +145,7 @@ class Collections:
     FORM_REQUESTS = "form_requests"
     RESPONSES = "responses"
     REMINDERS = "reminders"
+    REMINDER_LOGS = "reminder_logs"  # Individual reminder send events
     ANALYTICS = "analytics"
     NOTIFICATIONS = "notifications"
     SETTINGS = "settings"
