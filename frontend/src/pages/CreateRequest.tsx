@@ -188,30 +188,101 @@ export default function CreateRequest() {
   const connectGoogleAccount = async () => {
     try {
       setConnectingGoogle(true);
+      setError(null);
+      
       const response = await fetch(`${API_URL}/login/google`, {
         credentials: 'include',
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to initiate Google login');
+      }
+      
       const data = await response.json();
       
-      if (data.authorization_url) {
-        // Open OAuth in new window
-        const authWindow = window.open(data.authorization_url, 'Google Auth', 'width=500,height=600');
-        
-        // Poll to check when the window is closed
-        const pollTimer = setInterval(() => {
-          if (authWindow?.closed) {
+      if (!data.authorization_url) {
+        throw new Error('No authorization URL received from server');
+      }
+      
+      // Ensure the URL is a valid string (not markdown formatted)
+      let authUrl = typeof data.authorization_url === 'string' 
+        ? data.authorization_url 
+        : String(data.authorization_url);
+      
+      // Remove any markdown formatting if present (shouldn't happen, but just in case)
+      authUrl = authUrl.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$2'); // Remove markdown links
+      
+      // Validate URL format
+      try {
+        new URL(authUrl); // This will throw if invalid
+      } catch (urlError) {
+        console.error('Invalid authorization URL:', authUrl);
+        throw new Error('Invalid authorization URL received from server');
+      }
+      
+      console.log('Opening OAuth window with URL:', authUrl.substring(0, 100) + '...');
+      
+      // Open OAuth in new window - use _blank to ensure it opens in a new tab/window
+      const authWindow = window.open(
+        authUrl, 
+        '_blank',
+        'width=600,height=700,scrollbars=yes,resizable=yes,location=yes,menubar=no,toolbar=no'
+      );
+      
+      if (!authWindow) {
+        throw new Error('Popup blocked. Please allow popups for this site and try again.');
+      }
+      
+      // Poll to check when the window is closed or navigated
+      const pollTimer = setInterval(() => {
+        try {
+          // Check if window was closed
+          if (authWindow.closed) {
             clearInterval(pollTimer);
             // Re-check auth status after window closes
             setTimeout(() => {
               checkGoogleAuthStatus();
               setConnectingGoogle(false);
             }, 1000);
+            return;
           }
-        }, 500);
-      }
+          
+          // Check if window navigated to callback URL (success)
+          try {
+            // This will throw if cross-origin, which is expected
+            const currentUrl = authWindow.location.href;
+            if (currentUrl.includes('/oauth/callback')) {
+              clearInterval(pollTimer);
+              // Wait a bit for the callback to complete
+              setTimeout(() => {
+                checkGoogleAuthStatus();
+                setConnectingGoogle(false);
+                authWindow.close();
+              }, 2000);
+            }
+          } catch (e) {
+            // Cross-origin error is expected - window is on Google's domain
+            // Just continue polling
+          }
+        } catch (error) {
+          console.error('Error polling auth window:', error);
+        }
+      }, 500);
+      
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        if (!authWindow.closed) {
+          clearInterval(pollTimer);
+          authWindow.close();
+          setConnectingGoogle(false);
+          setError('OAuth flow timed out. Please try again.');
+        }
+      }, 300000); // 5 minutes
+      
     } catch (error) {
       console.error('Failed to initiate Google login:', error);
-      setError('Failed to connect Google account. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to connect Google account. Please try again.');
       setConnectingGoogle(false);
     }
   };

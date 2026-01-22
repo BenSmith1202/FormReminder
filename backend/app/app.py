@@ -208,16 +208,39 @@ def google_login():
         state = secrets.token_urlsafe(32)
         session['oauth_state'] = state
         
+        print(f"User {user_id} initiating Google OAuth")
+        print(f"OAuth state token generated: {state[:20]}...")
+        
         # Get authorization URL
         authorization_url = GoogleFormsService.get_authorization_url(state)
         
-        print(f"User {user_id} initiating Google OAuth")
-        print(f"Authorization URL: {authorization_url}")
+        print(f"Authorization URL generated successfully")
+        print(f"Authorization URL: {authorization_url[:100]}...")
         
         return jsonify({
             "authorization_url": authorization_url
         }), 200
         
+    except FileNotFoundError as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"FileNotFoundError initiating Google login: {error_msg}")
+        return jsonify({
+            "error": "Google OAuth credentials not found",
+            "details": error_msg,
+            "help": "Please download client_secret.json from Google Cloud Console and place it in the backend directory"
+        }), 500
+    except ValueError as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"ValueError initiating Google login: {error_msg}")
+        return jsonify({
+            "error": "Invalid OAuth configuration",
+            "details": error_msg,
+            "help": "Please check your GOOGLE_REDIRECT_URI and client_secret.json configuration"
+        }), 500
     except Exception as e:
         import traceback
         error_msg = str(e)
@@ -789,11 +812,27 @@ def create_form_request():
         print(f"Creating form request for URL: {form_url} with group: {group.name}")
         
         # Extract form ID
-        form_id = GoogleFormsService.extract_form_id(form_url)
-        if not form_id:
-            return jsonify({"error": "Invalid Google Form URL"}), 400
-        
-        print(f"Extracted form ID: {form_id}")
+        try:
+            form_id = GoogleFormsService.extract_form_id(form_url)
+            if not form_id:
+                print(f"ERROR: Could not extract form ID from URL: {form_url}")
+                return jsonify({
+                    "error": "Invalid Google Form URL",
+                    "details": f"Could not extract form ID from the provided URL. Please make sure it's a valid Google Forms URL.",
+                    "url_provided": form_url
+                }), 400
+            
+            print(f"✅ Extracted form ID: {form_id}")
+            print(f"   Form ID length: {len(form_id)} characters")
+        except Exception as extract_error:
+            print(f"ERROR extracting form ID: {extract_error}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                "error": "Failed to extract form ID",
+                "details": str(extract_error),
+                "url_provided": form_url
+            }), 400
         
         # Get user's Google credentials
         try:
@@ -819,13 +858,59 @@ def create_form_request():
             metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
         except Exception as form_error:
             error_str = str(form_error)
-            if '403' in error_str or 'permission' in error_str.lower():
+            error_type = type(form_error).__name__
+            
+            # Handle 404 errors specifically
+            if '404' in error_str or 'not found' in error_str.lower():
+                print(f"Form not found with ID: {form_id}")
+                print(f"Original URL: {form_url}")
+                
+                # Try to get edit URL to extract form ID differently
+                edit_url = form_url.replace('/viewform', '/edit').replace('/d/e/', '/d/')
+                print(f"Trying alternative extraction from edit URL format...")
+                
+                # Try extracting from edit URL format
+                alt_form_id = GoogleFormsService.extract_form_id(edit_url)
+                if alt_form_id and alt_form_id != form_id:
+                    print(f"Found alternative form ID: {alt_form_id}")
+                    try:
+                        metadata = GoogleFormsService.get_form_metadata(credentials, alt_form_id)
+                        form_id = alt_form_id  # Use the alternative form ID
+                        print(f"Successfully accessed form with alternative ID")
+                    except Exception as alt_error:
+                        print(f"Alternative form ID also failed: {alt_error}")
+                        return jsonify({
+                            "error": "Form not found or inaccessible",
+                            "message": "The form could not be accessed. This might be because:",
+                            "details": [
+                                "The form doesn't exist or was deleted",
+                                "The Google account you connected doesn't have access to this form",
+                                "The form URL format is not supported",
+                                f"Form ID attempted: {form_id}"
+                            ],
+                            "help": "Make sure you own the form or have edit access, and that you authenticated with the correct Google account. Try using a form you created."
+                        }), 404
+                else:
+                    return jsonify({
+                        "error": "Form not found or inaccessible",
+                        "message": "The form could not be accessed. This might be because:",
+                        "details": [
+                            "The form doesn't exist or was deleted",
+                            "The Google account you connected doesn't have access to this form",
+                            "The form URL format is not supported",
+                            f"Form ID attempted: {form_id}"
+                        ],
+                        "help": "Make sure you own the form or have edit access, and that you authenticated with the correct Google account. Try using a form you created."
+                    }), 404
+            elif '403' in error_str or 'permission' in error_str.lower():
                 return jsonify({
                     "error": "Cannot access this Google Form",
                     "message": "You don't have permission to access this form. Make sure you own the form or have edit access, and that you authenticated with the correct Google account.",
                     "details": "The Google account you connected might not have access to this form. Try using a form you created, or reconnect with a different Google account."
                 }), 403
-            raise  # Re-raise other errors
+            else:
+                # Re-raise other errors
+                raise
         
         # Check email collection (optional for now, just warn)
         print("Checking email collection...")
@@ -965,12 +1050,31 @@ def create_form_request():
     except Exception as e:
         import traceback
         error_msg = str(e)
+        error_type = type(e).__name__
         traceback.print_exc()
-        print(f"❌ Error creating form request: {error_msg}")
-        return jsonify({
-            "error": "Failed to create form request",
-            "details": error_msg
-        }), 500
+        print(f"❌ Error creating form request: {error_type}: {error_msg}")
+        print(f"Full traceback:")
+        traceback.print_exc()
+        
+        # Provide more specific error messages based on error type
+        if 'HttpError' in error_type or '404' in error_msg:
+            return jsonify({
+                "error": "Form not found or inaccessible",
+                "details": error_msg,
+                "help": "Make sure the form URL is correct and you have access to the form with your connected Google account"
+            }), 404
+        elif '403' in error_msg or 'permission' in error_msg.lower():
+            return jsonify({
+                "error": "Permission denied",
+                "details": error_msg,
+                "help": "You don't have permission to access this form. Make sure you own the form or have edit access."
+            }), 403
+        else:
+            return jsonify({
+                "error": "Failed to create form request",
+                "error_type": error_type,
+                "details": error_msg
+            }), 500
 
 
 @app.post("/api/form-requests/custom-schedule")
