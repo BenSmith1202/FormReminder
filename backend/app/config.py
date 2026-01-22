@@ -4,7 +4,7 @@
 # Last edited 11/30/2025
 """This class should inherit from base settings. This is used for automatic loading of env variable loading  """
 
-# import os
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings
 
@@ -29,8 +29,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000"]
     
     class Config:
-        env_file = ".env" # loads settings from an env file (temporary)
+        # Look for .env file in backend directory (one level up from app/)
+        # Also check current directory and project root
+        env_file = [
+            os.path.join(os.path.dirname(__file__), '..', '.env'),  # backend/.env
+            '.env',  # Current directory (backend/app/.env)
+            os.path.join(os.path.dirname(__file__), '..', '..', '.env'),  # Project root/.env
+        ]
         case_sensitive = True # Makes sure the env variables are case-sensitive
+        env_file_encoding = 'utf-8'
 
 
 settings = Settings() # Creates a global settings instance
