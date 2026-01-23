@@ -105,7 +105,7 @@ def reset():
         
         # Validate input
         if not username or not password:
-            return jsonify({"error": "Username, email, and password are required"}), 400
+            return jsonify({"error": "Username and password are required"}), 400
         
         if len(password) < 6:
             return jsonify({"error": "Password must be at least 6 characters"}), 400

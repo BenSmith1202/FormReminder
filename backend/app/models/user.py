@@ -112,27 +112,19 @@ class User:
         try:
             db = get_db()
             users_ref = db.collection(Collections.USERS)
-            thisUser: Optional[User] = User.get_by_username(username)
+            thisUser = User.get_by_username(username)
+            thisUserDoc = users_ref.document(thisUser.id)
+            
 
             newPwdHash = User.hash_password(password)
-            
-            user_data = {
-                'username': thisUser.username,
-                'email': thisUser.email,
-                'password_hash': newPwdHash,
-                'google_access_token': None,
-                'google_refresh_token': None,
-                'token_expiry': None,
-                'created_at': datetime.utcnow().isoformat() + 'Z'
-            }
 
-            # Add to database
-            doc_ref = users_ref.document()
-            doc_ref.set(user_data)
+            # Update database entry
+            thisUserDoc.update({"password_hash" : newPwdHash})
             
-            print(f"Password reset successfully: {doc_ref.id}")
+            
+            print(f"Password reset successfully: {thisUser.id}")
             return User(
-                user_id=doc_ref.id,
+                user_id=thisUser.id,
                 username=username,
                 email = thisUser.email,
                 password_hash=newPwdHash
