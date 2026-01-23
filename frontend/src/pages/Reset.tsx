@@ -53,8 +53,8 @@ function Reset() {
         console.log('Reset successful')
         // Store user info in localStorage
         localStorage.setItem('user', JSON.stringify(data.user));
-        // Redirect to dashboard
-        navigate('/');
+        // Redirect to user login
+        navigate('/login');
       } else {
         setError(data.error || 'Reset failed');
       }

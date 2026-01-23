@@ -123,7 +123,7 @@ def reset():
         
         return jsonify({
             "success": True,
-            "message": "User registered successfully",
+            "message": "Password reset successfully",
             "user": user.to_safe_dict()
         }), 201
         
