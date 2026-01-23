@@ -370,6 +370,35 @@ def google_auth_status():
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/api/google-disconnect")
+def google_disconnect():
+    """Disconnect Google account (clear tokens) so user can re-authenticate"""
+    try:
+        user_id = session.get('user_id')
+        
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        user = User.get_by_id(user_id)
+        
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Clear Google tokens
+        success = user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+        
+        if success:
+            print(f"✅ Cleared Google tokens for user {user_id}")
+            return jsonify({
+                "success": True,
+                "message": "Google account disconnected. You can now reconnect."
+            }), 200
+        else:
+            return jsonify({"error": "Failed to disconnect"}), 500
+        
+    except Exception as e:
+        print(f"Error disconnecting Google: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/api/data")
@@ -831,7 +860,17 @@ def create_form_request():
         
         # Fetch form metadata
         print("Fetching form metadata...")
-        metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+        try:
+            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+        except Exception as form_error:
+            error_str = str(form_error)
+            if '403' in error_str or 'permission' in error_str.lower():
+                return jsonify({
+                    "error": "Cannot access this Google Form",
+                    "message": "You don't have permission to access this form. Make sure you own the form or have edit access, and that you authenticated with the correct Google account.",
+                    "details": "The Google account you connected might not have access to this form. Try using a form you created, or reconnect with a different Google account."
+                }), 403
+            raise  # Re-raise other errors
         
         # Check email collection (optional for now, just warn)
         print("Checking email collection...")
@@ -864,6 +903,8 @@ def create_form_request():
             'created_at': datetime.utcnow().isoformat() + 'Z',
             'status': 'Active',
             'is_active': True,
+            # Scheduler configuration
+            'schedule_enabled': True,  # Enable automated reminders by default
             # Reminder schedule configuration
             'due_date': due_date.isoformat() + 'Z',
             'reminder_schedule': {
@@ -905,10 +946,51 @@ def create_form_request():
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
+        # Send initial email if timing is 'immediate'
+        initial_emails_sent = 0
+        initial_emails_failed = 0
+        if first_reminder_timing == 'immediate':
+            print(f"📧 Sending immediate initial emails to {len(group.members)} group members...")
+            from utils.email_service import EmailService
+            
+            # Get list of respondent emails to exclude
+            respondent_emails = {r.get('respondent_email', '').lower() for r in responses if r.get('respondent_email')}
+            
+            for member in group.members:
+                member_email = member.get('email', '').lower()
+                if not member_email:
+                    continue
+                    
+                # Skip if already responded
+                if member_email in respondent_emails:
+                    print(f"  ⏭️ Skipping {member_email} - already responded")
+                    continue
+                
+                # Send reminder (skip rate limit for initial email)
+                result = EmailService.send_reminder(
+                    request_id=doc_ref.id,
+                    form_title=form_request_data['title'],
+                    form_url=form_url,
+                    recipient_email=member_email,
+                    skip_rate_limit=True
+                )
+                
+                if result.get('success'):
+                    initial_emails_sent += 1
+                    print(f"  ✅ Sent initial email to {member_email}")
+                else:
+                    initial_emails_failed += 1
+                    print(f"  ❌ Failed to send to {member_email}: {result.get('error')}")
+            
+            print(f"📧 Initial emails complete: {initial_emails_sent} sent, {initial_emails_failed} failed")
+        else:
+            print(f"📧 Initial email timing is '{first_reminder_timing}' - will be sent at scheduled time")
+        
         print(f"✅ Form request created with ID: {doc_ref.id}")
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
+        print(f"   Initial emails sent: {initial_emails_sent}")
         
         return jsonify({
             "success": True,
@@ -916,6 +998,12 @@ def create_form_request():
             "form_request": {
                 "id": doc_ref.id,
                 **form_request_data
+            },
+            "initial_emails": {
+                "timing": first_reminder_timing,
+                "sent": initial_emails_sent,
+                "failed": initial_emails_failed,
+                "total_recipients": len(group.members)
             }
         }), 201
         
@@ -1489,7 +1577,12 @@ def send_bulk_reminders(request_id: str):
         }), 500
 
 
-# 4. Run the Server
+# 4. Initialize Scheduler for Automated Reminders
+from utils.scheduler import init_scheduler
+reminder_scheduler = init_scheduler(app)
+
+
+# 5. Run the Server
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
