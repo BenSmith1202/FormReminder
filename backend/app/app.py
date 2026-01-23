@@ -2,6 +2,8 @@ import os
 import sys
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +24,26 @@ CORS(app,
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+# ============= RATE LIMITING =============
+# Initialize rate limiter (in-memory storage, works for single server)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,  # Rate limit by client IP address
+    default_limits=["200 per day", "50 per hour"],  # Default for all endpoints
+    storage_uri="memory://",  # In-memory storage (simple, resets on restart)
+)
+
+# Custom error handler for rate limit exceeded
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """Handle rate limit exceeded errors"""
+    print(f"⚠️ RATE LIMIT EXCEEDED: {request.remote_addr} hit {request.path}")
+    return jsonify({
+        "error": "Rate limit exceeded",
+        "message": str(e.description),
+        "retry_after": e.description
+    }), 429
 
 # Debug middleware to check sessions
 @app.before_request
@@ -45,6 +67,7 @@ def root():
 # AUTHENTICATION ROUTES
 
 @app.post("/api/register")
+@limiter.limit("5 per minute")  # Strict: prevent spam registrations
 def register():
     """Register a new user"""
     try:
@@ -93,6 +116,7 @@ def register():
 
 
 @app.post("/api/login")
+@limiter.limit("10 per minute")  # Strict: prevent brute force attacks
 def login():
     """Login an existing user"""
     try:
@@ -1310,6 +1334,7 @@ def get_group_by_token(invite_token: str):
 
 
 @app.post("/api/groups/join/<invite_token>")
+@limiter.limit("10 per minute")  # Prevent abuse of public join endpoint
 def join_group(invite_token: str):
     """PUBLIC: Join a group via invite link (no auth required)"""
     try:
@@ -1378,6 +1403,7 @@ def get_current_time():
 # ============= EMAIL REMINDER ROUTES =============
 
 @app.post("/api/form-requests/<request_id>/send-reminder/<email>")
+@limiter.limit("20 per hour")  # Prevent email spam
 def send_single_reminder(request_id: str, email: str):
     """Send a reminder email to a single recipient"""
     from models.database import Collections
@@ -1428,6 +1454,7 @@ def send_single_reminder(request_id: str, email: str):
 
 
 @app.post("/api/form-requests/<request_id>/send-reminders")
+@limiter.limit("5 per hour")  # Bulk sends are expensive, limit heavily
 def send_bulk_reminders(request_id: str):
     """Send reminders to all non-responders (excluding recently sent)"""
     from models.database import Collections
