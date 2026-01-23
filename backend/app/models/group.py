@@ -273,3 +273,31 @@ class Group:
             import traceback
             traceback.print_exc()
             return False
+        
+    def update_details(self, name: str, description: str) -> bool:
+        """Update group name and description"""
+        try:
+            db = get_db()
+            group_ref = db.collection(Collections.GROUPS).document(self.id)
+            
+            updates = {
+                'name': name,
+                'description': description,
+                'updated_at': datetime.utcnow().isoformat() + 'Z'
+            }
+            
+            group_ref.update(updates)
+            
+            # Update local instance
+            self.name = name
+            self.description = description
+            self.updated_at = updates['updated_at']
+            
+            print(f"✅ Group details updated: {self.id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating group details: {e}")
+            import traceback
+            traceback.print_exc()
+            return False

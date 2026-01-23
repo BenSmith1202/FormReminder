@@ -971,7 +971,193 @@ def create_form_request():
             "error": "Failed to create form request",
             "details": error_msg
         }), 500
+    
 
+# Update an existing form request
+@app.put("/api/form-requests/<request_id>")
+def update_form_request(request_id):
+    """Update an existing form request configuration"""
+    from datetime import datetime
+    from models.database import Collections, get_db
+    # Import necessary utilities (matching your existing imports)
+    from utils.reminder_schedule import ReminderSchedule
+    
+    try:
+        # 1. Auth Check
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+            
+        # 2. Get existing request
+        db = get_db()
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        doc = request_ref.get()
+        
+        if not doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+            
+        existing_data = doc.to_dict()
+        
+        # 3. Ownership Check
+        if existing_data.get('owner_id') != user_id:
+            return jsonify({"error": "You don't have permission to edit this request"}), 403
+
+        # 4. Parse Input
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        updates = {
+            'updated_at': datetime.utcnow().isoformat() + 'Z'
+        }
+
+        # --- Handle Basic Fields ---
+        if 'title' in data:
+            updates['title'] = data['title']
+            
+        if 'description' in data:
+            updates['description'] = data['description']
+
+        if 'form_url' in data and data['form_url'] != existing_data.get('form_url'):
+            # Note: Changing URL might invalidate existing responses, but we allow the config change
+            updates['form_url'] = data['form_url']
+            # Optionally extract new ID if needed, but usually we just update the link reference
+            #TODO: Consider implications of changing form ID on existing responses !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # from services.google_forms import GoogleFormsService
+            # new_form_id = GoogleFormsService.extract_form_id(data['form_url'])
+            # if new_form_id:
+            #     updates['google_form_id'] = new_form_id
+
+        # --- Handle Group Changes ---
+        if 'group_id' in data and data['group_id'] != existing_data.get('group_id'):
+            new_group_id = data['group_id']
+            # Verify new group ownership
+            group = Group.get_by_id(new_group_id)
+            if not group:
+                return jsonify({"error": "New group not found"}), 404
+            if group.owner_id != user_id:
+                return jsonify({"error": "You don't own the selected group"}), 403
+            
+            updates['group_id'] = new_group_id
+            updates['total_recipients'] = len(group.members)
+
+        # --- Handle Schedule & Date Logic ---
+        # We need to determine if we need to recalculate dates
+        needs_reschedule = False
+        
+        # Get current or new values
+        current_due_date_str = existing_data.get('due_date')
+        new_due_date_str = data.get('due_date')
+        
+        current_schedule_config = existing_data.get('reminder_schedule', {})
+        current_schedule_type = current_schedule_config.get('schedule_type')
+
+        raw_schedule_input = data.get('reminder_schedule')
+        
+        # If the frontend sent the whole object (dict), extract just the type string
+        if isinstance(raw_schedule_input, dict):
+            new_schedule_type = raw_schedule_input.get('schedule_type')
+        else:
+            new_schedule_type = raw_schedule_input
+        
+        # Check if due date changed
+        final_due_date_obj = None
+        if new_due_date_str:
+            try:
+                if isinstance(new_due_date_str, str):
+                    final_due_date_obj = datetime.fromisoformat(new_due_date_str.replace('Z', '+00:00'))
+                    updates['due_date'] = final_due_date_obj.isoformat() + 'Z'
+                    if new_due_date_str != current_due_date_str:
+                        needs_reschedule = True
+                else:
+                    return jsonify({"error": "Invalid due_date format"}), 400
+            except ValueError as e:
+                return jsonify({"error": f"Invalid due_date: {str(e)}"}), 400
+        elif current_due_date_str:
+             # Parse existing due date for calculation
+             final_due_date_obj = datetime.fromisoformat(current_due_date_str.replace('Z', '+00:00'))
+
+        # Check if schedule config changed
+        final_schedule_type = new_schedule_type or current_schedule_type
+        final_custom_days = data.get('custom_days') or current_schedule_config.get('custom_days')
+
+        if new_schedule_type and new_schedule_type != current_schedule_type:
+            needs_reschedule = True
+        
+        if final_schedule_type == 'custom' and data.get('custom_days'):
+            # If providing new custom days, we definitely reschedule
+            needs_reschedule = True
+            # Validate custom days
+            is_valid, error_msg = ReminderSchedule.validate_custom_schedule(final_custom_days)
+            if not is_valid:
+                return jsonify({"error": error_msg}), 400
+
+        # --- Execute Recalculation if needed ---
+        if needs_reschedule and final_due_date_obj:
+            print(f"Recalculating schedule for request {request_id}")
+            
+            # Get config
+            schedule_config = ReminderSchedule.get_schedule_config(final_schedule_type, final_custom_days)
+            
+            # Calculate new dates
+            reminder_days = schedule_config['reminder_days']
+            reminder_dates = ReminderSchedule.calculate_reminder_dates(final_due_date_obj, reminder_days)
+            
+            # Update structure
+            updates['reminder_schedule'] = {
+                'schedule_type': final_schedule_type,
+                'reminder_days': reminder_days,
+                'is_custom': schedule_config['is_custom'],
+                'custom_days': final_custom_days if final_schedule_type == 'custom' else None,
+                'calculated_reminder_dates': [d.isoformat() + 'Z' for d in reminder_dates]
+            }
+
+        # --- Handle First Reminder Timing ---
+        # If timing changes, we update the config. 
+        # Note: We do NOT automatically send "immediate" emails on edit, 
+        # as that could spam users if you just wanted to fix a typo.
+        if 'first_reminder_timing' in data:
+            timing_type = data['first_reminder_timing']
+            
+            timing_update = {
+                'timing_type': timing_type,
+                'scheduled_date': None,
+                'scheduled_time': None
+            }
+            
+            if timing_type == 'scheduled':
+                # Parse date
+                if data.get('scheduled_date'):
+                    timing_update['scheduled_date'] = data['scheduled_date'] # Assume ISO from frontend
+                elif existing_data.get('first_reminder_timing', {}).get('scheduled_date'):
+                    timing_update['scheduled_date'] = existing_data['first_reminder_timing']['scheduled_date']
+                    
+                # Parse time
+                if data.get('scheduled_time'):
+                    timing_update['scheduled_time'] = data['scheduled_time'] # Assume ISO from frontend
+                elif existing_data.get('first_reminder_timing', {}).get('scheduled_time'):
+                    timing_update['scheduled_time'] = existing_data['first_reminder_timing']['scheduled_time']
+            
+            updates['first_reminder_timing'] = timing_update
+
+        # 5. Apply Updates to DB
+        request_ref.update(updates)
+        
+        # 6. Return updated object
+        updated_doc = request_ref.get()
+        return jsonify({
+            "success": True,
+            "message": "Request updated successfully",
+            "form_request": updated_doc.to_dict()
+        }), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to update form request", 
+            "details": str(e)
+        }), 500
 
 @app.post("/api/form-requests/custom-schedule")
 def create_custom_schedule():
@@ -1361,6 +1547,67 @@ def join_group(invite_token: str):
             "details": error_msg
         }), 500
 
+@app.put("/api/groups/<group_id>")
+def update_group(group_id):
+    """Update group details (name and description)"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        name = data.get('name')
+        description = data.get('description')
+        
+        if not name:
+            return jsonify({"error": "Group name is required"}), 400
+            
+        # Get existing group
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+            
+        # Verify ownership
+        if group.owner_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+            
+        # Update details using the method added to the model
+        # Ensure your Group model has the update_details method or use the db logic directly:
+        from models.database import get_db, Collections
+        from datetime import datetime
+        
+        db = get_db()
+        group_ref = db.collection(Collections.GROUPS).document(group_id)
+        
+        updates = {
+            'name': name,
+            'description': description,
+            'updated_at': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        group_ref.update(updates)
+        
+        # Return updated group
+        # We can update the local object to return it, or just return the updates
+        group.name = name
+        group.description = description
+        
+        return jsonify({
+            "success": True,
+            "message": "Group updated successfully",
+            "group": group.to_dict()
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to update group", 
+            "details": str(e)
+        }), 500
 
 # ============= END GROUPS ROUTES =============
 
