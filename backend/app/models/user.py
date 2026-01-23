@@ -107,6 +107,38 @@ class User:
             return None
     
     @staticmethod
+    def reset_password(username: str, password: str) -> Optional['User']:
+        """Reset a given user's password"""
+        try:
+            db = get_db()
+            users_ref = db.collection(Collections.USERS)
+            thisUser = User.get_by_username(username)
+            thisUserDoc = users_ref.document(thisUser.id)
+            
+
+            newPwdHash = User.hash_password(password)
+
+            # Update database entry
+            thisUserDoc.update({"password_hash" : newPwdHash})
+            
+            
+            print(f"Password reset successfully: {thisUser.id}")
+            return User(
+                user_id=thisUser.id,
+                username=username,
+                email = thisUser.email,
+                password_hash=newPwdHash
+            )
+
+
+        except Exception as e:
+            print(f"Error reseting password: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+
+    @staticmethod
     def get_by_username(username: str) -> Optional['User']:
         """Find a user by username"""
         try:
@@ -163,6 +195,24 @@ class User:
             import traceback
             traceback.print_exc()
             return None
+    
+    @staticmethod
+    def delete_user(user_id: str):
+        """Delete's a user, given their id. This method should never be called without 
+        first having the user enter their password to confirm they want to delete their account."""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(user_id)
+            user_ref.delete()
+            print(f"User associated with id {user_id} deleted")
+            
+        except Exception as e:
+            print(f"Error deleting: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
     
     def update_google_tokens(self, access_token: str, refresh_token: str, expiry: str):
         """Update user's Google OAuth tokens"""

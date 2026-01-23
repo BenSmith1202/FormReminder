@@ -91,6 +91,51 @@ def register():
             "details": error_msg
         }), 500
 
+@app.post("/api/reset")
+def reset():
+    """Reset a user's password"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        password = data.get('password')
+        
+        # Validate input
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        print(f"Attempting to reset password for user: {username}")
+        
+        user = User.reset_password(username, password)
+        
+        if not user:
+            return jsonify({"error": "Password reset failed"}), 409
+        
+        session['user_id'] = user.id
+        
+        print(f"User password reset: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Password reset successfully",
+            "user": user.to_safe_dict()
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during registration: {error_msg}")
+        return jsonify({
+            "error": "Password reset failed",
+            "details": error_msg
+        }), 500
 
 @app.post("/api/login")
 def login():
