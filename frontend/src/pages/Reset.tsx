@@ -14,56 +14,57 @@ import {
 const API_URL = 'http://localhost:5000';
 
 function Reset() {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [error, setError] = useState('');
-    const [loading, setLoading] = useState(false);
-    const navigate = useNavigate();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError('');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
 
-        if (password !== confirmPassword) {
-            setError('Passwords do not match')
-        }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
+      return;
+    }
 
-        if (password.length < 6) {
-            setError('Password must be at least 6 characters');
-            return;
-        }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
 
     setLoading(true);
 
     try {
-        const response = await fetch(`${API_URL}/api/reset`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            credentials: 'include',
-            body: JSON.stringify({username, password})
-        });
+      const response = await fetch(`${API_URL}/api/reset`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({username, password})
+      });
 
-        const data = await response.json();
+      const data = await response.json();
 
-        if (response.ok && data.success) {
-            console.log('Reset successful')
-            // Store user info in localStorage
-            localStorage.setItem('user', JSON.stringify(data.user));
-            // Redirect to dashboard
-            navigate('/');
-        } else {
-            setError(data.error || 'Reset failed');
-        }
-        } catch (err) {
-        console.error('Reset error:', err);
-        setError('Failed to connect to server');
-        } finally {
-        setLoading(false);
-        }
+      if (response.ok && data.success) {
+        console.log('Reset successful')
+        // Store user info in localStorage
+        localStorage.setItem('user', JSON.stringify(data.user));
+        // Redirect to dashboard
+        navigate('/');
+      } else {
+        setError(data.error || 'Reset failed');
+      }
+    } catch (err) {
+      console.error('Reset error:', err);
+      setError('Failed to connect to server');
+    } finally {
+      setLoading(false);
     }
+  }
 
   return (
     <Container maxWidth="sm">
