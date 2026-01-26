@@ -20,6 +20,7 @@ backend/.env
 frontend/.env
 
 # Google Cloud & Firebase Keys
+firestore-credentials.json
 service-account.json
 client_secret.json
 *.key.json

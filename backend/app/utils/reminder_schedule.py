@@ -4,7 +4,7 @@ Supports predefined schedules (gentle, normal, frequent) and custom schedules
 """
 
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 
 class ReminderSchedule:
@@ -51,15 +51,23 @@ class ReminderSchedule:
         Returns:
             List of datetime objects for when reminders should be sent, sorted chronologically
         """
+        from datetime import timezone
+        
         reminder_dates = []
+        # Get current time in UTC, timezone-aware
+        now = datetime.now(timezone.utc)
+        
+        # Make sure due_date is timezone-aware (UTC)
+        if due_date.tzinfo is None:
+            # If naive, assume it's UTC
+            due_date = due_date.replace(tzinfo=timezone.utc)
+        else:
+            # If aware, convert to UTC
+            due_date = due_date.astimezone(timezone.utc)
+        
         for days_before in reminder_days:
             reminder_date = due_date - timedelta(days=days_before)
-            # Only include future dates
-            # Use timezone-aware UTC time for comparison
-            now = datetime.now(timezone.utc)
-            # Make reminder_date timezone-aware if it's naive
-            if reminder_date.tzinfo is None:
-                reminder_date = reminder_date.replace(tzinfo=timezone.utc)
+            # Only include future dates (both are now timezone-aware)
             if reminder_date > now:
                 reminder_dates.append(reminder_date)
         

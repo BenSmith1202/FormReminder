@@ -6,7 +6,7 @@ from flask_cors import CORS
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models.database import get_db
+from models.database import get_db, FirestoreDB
 from models.user import User
 from models.group import Group
 from config import settings
@@ -22,6 +22,17 @@ CORS(app,
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+# Initialize database at startup
+try:
+    print("Initializing database connection...")
+    FirestoreDB.initialize()
+    print("Database initialized successfully")
+except Exception as e:
+    print(f"WARNING: Database initialization failed at startup: {e}")
+    import traceback
+    traceback.print_exc()
+    print("Database will be initialized on first use")
 
 # Debug middleware to check sessions
 @app.before_request
@@ -370,35 +381,6 @@ def google_auth_status():
         return jsonify({"error": str(e)}), 500
 
 
-@app.post("/api/google-disconnect")
-def google_disconnect():
-    """Disconnect Google account (clear tokens) so user can re-authenticate"""
-    try:
-        user_id = session.get('user_id')
-        
-        if not user_id:
-            return jsonify({"error": "Must be logged in"}), 401
-        
-        user = User.get_by_id(user_id)
-        
-        if not user:
-            return jsonify({"error": "User not found"}), 404
-        
-        # Clear Google tokens
-        success = user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
-        
-        if success:
-            print(f"✅ Cleared Google tokens for user {user_id}")
-            return jsonify({
-                "success": True,
-                "message": "Google account disconnected. You can now reconnect."
-            }), 200
-        else:
-            return jsonify({"error": "Failed to disconnect"}), 500
-        
-    except Exception as e:
-        print(f"Error disconnecting Google: {e}")
-        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/api/data")
@@ -501,6 +483,22 @@ def get_form_requests():
         for req in form_requests:
             request_data = req.to_dict()
             
+            # Get form data from forms collection to include last_synced_at, title, form_url, etc.
+            form_id = request_data.get('form_id')
+            if not form_id:
+                # Fallback: try using google_form_id for older form requests
+                form_id = request_data.get('google_form_id')
+            
+            form_data = {}
+            if form_id:
+                form_ref = db.collection(Collections.FORMS).document(form_id)
+                form_doc = form_ref.get()
+                if form_doc.exists:
+                    form_data = form_doc.to_dict()
+            
+            # Don't use created_at as fallback for last_synced_at - they should be different
+            # last_synced_at should only exist if the form has been synced
+            
             # Get group to calculate total_recipients
             group_id = request_data.get('group_id')
             total_recipients = 0
@@ -509,10 +507,37 @@ def get_form_requests():
                 if group:
                     total_recipients = len(group.members)
             
+            # Calculate response_count dynamically from responses collection
+            response_count = 0
+            responses_query = db.collection(Collections.RESPONSES)\
+                .where('request_id', '==', req.id)\
+                .stream()
+            response_count = sum(1 for _ in responses_query)
+            
+            # Calculate warnings dynamically
+            warnings = []
+            form_settings = form_data.get('form_settings', {})
+            email_collection_enabled = form_settings.get('email_collection_enabled', True)
+            api_access_available = form_data.get('api_access_available', True)
+            
+            if not email_collection_enabled:
+                warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+            
+            if not api_access_available:
+                warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+            
+            # Merge form data into request_data
+            merged_data = {
+                **request_data,
+                **form_data,  # Merge form data (form_url, title, description, last_synced_at, etc.)
+                "response_count": response_count,  # Include dynamically calculated response_count
+                "total_recipients": total_recipients,  # Always include fresh count
+                "warnings": warnings  # Include dynamically calculated warnings
+            }
+            
             requests_list.append({
                 "id": req.id,
-                **request_data,
-                "total_recipients": total_recipients  # Always include fresh count
+                **merged_data
             })
         
         print(f"Retrieved {len(requests_list)} form requests for user {user_id}")
@@ -555,6 +580,15 @@ def get_form_request_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
+        # Get form data from forms collection
+        form_id = request_data.get('form_id')
+        form_data = {}
+        if form_id:
+            form_ref = db.collection(Collections.FORMS).document(form_id)
+            form_doc = form_ref.get()
+            if form_doc.exists:
+                form_data = form_doc.to_dict()
+        
         # Get the group
         group_id = request_data.get('group_id')
         group = None
@@ -573,9 +607,10 @@ def get_form_request_responses(request_id: str):
         responses_list = []
         non_member_responses = []
         
+        # Normalize all response emails for matching
         for response in responses:
             response_data = response.to_dict()
-            response_email = response_data.get('respondent_email', '').lower()
+            response_email = response_data.get('respondent_email', '').strip().lower()
             
             response_obj = {
                 "id": response.id,
@@ -588,33 +623,71 @@ def get_form_request_responses(request_id: str):
             else:
                 responses_list.append(response_obj)
         
-        # Create member status list
+        # Create member status list - match by normalized email
         member_status = []
         if group:
+            # Create a map of normalized emails to responses for quick lookup
+            response_map = {}
+            for r in responses_list:
+                email_key = r.get('respondent_email', '').strip().lower()
+                if email_key:
+                    response_map[email_key] = r
+            
             for member in group.members:
-                member_email = member['email'].lower()
-                has_responded = any(r['respondent_email'].lower() == member_email for r in responses_list)
+                member_email = member.get('email', '').strip().lower()
+                member_email_original = member.get('email', '')  # Keep original for display
+                
+                # Check if this member has responded
+                matching_response = response_map.get(member_email)
+                has_responded = matching_response is not None
+                
                 member_status.append({
-                    "email": member['email'],
+                    "email": member_email_original,
                     "status": "responded" if has_responded else "not_responded",
-                    "submitted_at": next((r['submitted_at'] for r in responses_list if r['respondent_email'].lower() == member_email), None)
+                    "submitted_at": matching_response.get('submitted_at') if matching_response else None
                 })
+                
+                if has_responded:
+                    print(f"  Member {member_email_original} has responded")
+                else:
+                    print(f"  Member {member_email_original} has not responded")
         
         print(f"Retrieved {len(responses_list)} member responses and {len(non_member_responses)} non-member responses for request {request_id}")
         
         # Calculate fresh total_recipients from group
         total_recipients = len(group.members) if group else 0
+        response_count = len(responses_list)
+        
+        # Calculate warnings dynamically
+        warnings = []
+        form_settings = form_data.get('form_settings', {})
+        email_collection_enabled = form_settings.get('email_collection_enabled', True)
+        api_access_available = form_data.get('api_access_available', True)
+        
+        if not email_collection_enabled:
+            warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+        
+        if not api_access_available:
+            warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+        
+        # Merge form data into request_data for response
+        request_data_with_form = {
+            **request_data,
+            **form_data,  # Merge form data (form_url, title, description, etc.)
+            "warnings": warnings
+        }
         
         return jsonify({
             "form_request": {
                 "id": request_id,
-                **request_data,
+                **request_data_with_form,
+                "response_count": response_count,  # Include response_count in form_request
                 "total_recipients": total_recipients  # Override with fresh count from group
             },
             "responses": responses_list,
             "non_member_responses": non_member_responses,
             "member_status": member_status,
-            "response_count": len(responses_list),
+            "response_count": response_count,
             "non_member_count": len(non_member_responses),
             "total_recipients": total_recipients
         }), 200
@@ -686,46 +759,111 @@ def refresh_form_responses(request_id: str):
             }), 401
         
         # Fetch latest responses from Google
+        print(f"Fetching responses from Google Forms API for form {form_id}...")
         responses = GoogleFormsService.get_form_responses(credentials, form_id)
         
         print(f"Found {len(responses)} total responses from Google")
+        if responses:
+            # Log sample response emails for debugging
+            sample_emails = [r.get('respondent_email', 'no email') for r in responses[:3]]
+            print(f"   Sample respondent emails: {sample_emails}")
         
-        # Delete old responses for this request
+        # Get existing responses to check for duplicates by response_id
+        existing_responses = {}
         old_responses = db.collection(Collections.RESPONSES)\
             .where('request_id', '==', request_id)\
             .stream()
         
-        deleted_count = 0
         for old_response in old_responses:
-            old_response.reference.delete()
-            deleted_count += 1
+            old_data = old_response.to_dict()
+            response_id = old_data.get('response_id')
+            if response_id:
+                existing_responses[response_id] = old_response.reference
         
-        print(f"Deleted {deleted_count} old responses")
+        print(f"Found {len(existing_responses)} existing responses in database")
         
-        # Store new responses
+        # Store new/updated responses with full answer data
+        stored_count = 0
+        updated_count = 0
+        new_count = 0
+        
         for response in responses:
+            response_id = response.get('response_id', '')
             response_data = {
                 'request_id': request_id,
                 'form_id': form_id,
                 'respondent_email': response.get('respondent_email', ''),
-                'response_id': response.get('response_id', ''),
+                'response_id': response_id,
                 'submitted_at': response.get('submitted_at', ''),
+                'last_submitted_at': response.get('last_submitted_at', ''),
+                'total_score': response.get('total_score'),
+                'answers': response.get('answers', {}),  # Full answer data
+                'answer_count': response.get('answer_count', 0),
                 'created_at': datetime.utcnow().isoformat() + 'Z'
             }
-            db.collection(Collections.RESPONSES).add(response_data)
+            
+            # Update existing response or create new one
+            if response_id and response_id in existing_responses:
+                # Update existing response
+                existing_responses[response_id].set(response_data)
+                updated_count += 1
+                # Remove from dict so we know which ones to delete
+                del existing_responses[response_id]
+            else:
+                # Create new response
+                db.collection(Collections.RESPONSES).add(response_data)
+                new_count += 1
+            
+            stored_count += 1
         
-        # Update form request with new count and sync time
-        request_ref.update({
-            'response_count': len(responses),
-            'last_synced_at': datetime.utcnow().isoformat() + 'Z'
-        })
+        # Delete responses that no longer exist in Google Forms
+        deleted_count = 0
+        for response_id, response_ref in existing_responses.items():
+            response_ref.delete()
+            deleted_count += 1
         
-        print(f"✅ Refreshed {len(responses)} responses for request {request_id}")
+        print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
+        
+        # Update form document in forms collection with sync time
+        form_doc_id = request_data.get('form_id')
+        if not form_doc_id:
+            # Fallback: try using google_form_id for older form requests
+            form_doc_id = request_data.get('google_form_id')
+        
+        if form_doc_id:
+            form_ref = db.collection(Collections.FORMS).document(form_doc_id)
+            form_doc = form_ref.get()
+            sync_time = datetime.utcnow().isoformat() + 'Z'
+            if form_doc.exists:
+                form_ref.update({
+                    'last_synced_at': sync_time,
+                    'api_access_available': True,
+                    'updated_at': sync_time
+                })
+                print(f"Updated form document {form_doc_id} with sync time")
+            else:
+                # Create form document if it doesn't exist (for older form requests)
+                form_ref.set({
+                    'google_form_id': form_doc_id,
+                    'form_url': request_data.get('form_url', ''),
+                    'title': request_data.get('title', ''),
+                    'description': request_data.get('description', ''),
+                    'owner_id': request_data.get('owner_id'),
+                    'created_at': request_data.get('created_at', sync_time),
+                    'updated_at': sync_time,
+                    'is_active': True,
+                    'api_access_available': True,
+                    'last_synced_at': sync_time,
+                    'form_settings': request_data.get('form_settings', {})
+                })
+                print(f"Created form document {form_doc_id} with sync time")
+        
+        print(f"Refreshed {stored_count} responses for request {request_id}")
         
         return jsonify({
             "success": True,
             "message": "Responses refreshed successfully",
-            "response_count": len(responses),
+            "response_count": stored_count,
             "synced_at": datetime.utcnow().isoformat() + 'Z'
         }), 200
         
@@ -733,7 +871,7 @@ def refresh_form_responses(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error refreshing responses: {error_msg}")
+        print(f"Error refreshing responses: {error_msg}")
         return jsonify({
             "error": "Failed to refresh responses",
             "details": error_msg
@@ -858,33 +996,50 @@ def create_form_request():
                 "action_required": "reconnect_google"
             }), 401
         
-        # Fetch form metadata
+        # Fetch form metadata (handle errors gracefully)
         print("Fetching form metadata...")
+        metadata = {}
+        api_access_available = False
+        email_collection_enabled = False
+        
         try:
             metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
-        except Exception as form_error:
-            error_str = str(form_error)
-            if '403' in error_str or 'permission' in error_str.lower():
-                return jsonify({
-                    "error": "Cannot access this Google Form",
-                    "message": "You don't have permission to access this form. Make sure you own the form or have edit access, and that you authenticated with the correct Google account.",
-                    "details": "The Google account you connected might not have access to this form. Try using a form you created, or reconnect with a different Google account."
-                }), 403
-            raise  # Re-raise other errors
+            api_access_available = True
+            
+            # Check email collection (optional for now, just warn)
+            print("Checking email collection...")
+            try:
+                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+            except Exception as email_check_error:
+                print(f"Warning: Could not check email collection: {email_check_error}")
+                email_collection_enabled = False
+        except Exception as metadata_error:
+            print(f"Warning: Could not fetch form metadata: {metadata_error}")
+            print("This usually means you don't have edit access to the form.")
+            print("The form request will be created, but you'll need to grant edit access to sync responses.")
+            api_access_available = False
+            # Use default metadata
+            metadata = {
+                'title': data.get('title', f"Form {form_id[:8]}"),
+                'description': '',
+                'email_collection_enabled': False,
+                'email_collection_type': 'UNKNOWN'
+            }
         
-        # Check email collection (optional for now, just warn)
-        print("Checking email collection...")
-        email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+        # Get initial response count (only if API access is available)
+        responses = []
+        if api_access_available:
+            print("Fetching initial responses...")
+            try:
+                responses = GoogleFormsService.get_form_responses(credentials, form_id)
+            except Exception as responses_error:
+                print(f"Warning: Could not fetch initial responses: {responses_error}")
+                responses = []
+        else:
+            print("Skipping initial response fetch (API access not available)")
         
-        if not email_collection_enabled:
+        if not email_collection_enabled and api_access_available:
             print("WARNING: Email collection may not be enabled on this form")
-            # For testing, we'll allow it but warn
-            # In production, you might want to reject:
-            # return jsonify({"error": "Form must have email collection enabled"}), 400
-        
-        # Get initial response count
-        print("Fetching initial responses...")
-        responses = GoogleFormsService.get_form_responses(credentials, form_id)
         
         db = get_db()
         
@@ -892,19 +1047,52 @@ def create_form_request():
         reminder_days = schedule_config['reminder_days']
         reminder_dates = ReminderSchedule.calculate_reminder_dates(due_date, reminder_days)
         
-        # Create form request document with enhanced metadata
-        form_request_data = {
+        # Create or update form document in forms collection
+        now = datetime.utcnow().isoformat() + 'Z'
+        form_doc_id = form_id  # Use google_form_id as the document ID
+        
+        form_data = {
             'google_form_id': form_id,
             'form_url': form_url,
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
             'owner_id': user_id,
+            'created_at': now,
+            'updated_at': now,
+            'is_active': True,
+            'api_access_available': api_access_available,  # Set based on whether we could fetch metadata
+            # Don't set last_synced_at on creation - it will be set when first synced
+            'form_settings': {
+                'email_collection_enabled': email_collection_enabled,
+                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
+            }
+        }
+        
+        form_ref = db.collection(Collections.FORMS).document(form_doc_id)
+        form_doc = form_ref.get()
+        if form_doc.exists:
+            # Update existing form document (don't update last_synced_at unless syncing)
+            form_ref.update({
+                'form_url': form_url,
+                'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
+                'description': metadata.get('description', ''),
+                'updated_at': now,
+                'api_access_available': api_access_available,
+                'form_settings': form_data['form_settings']
+            })
+        else:
+            # Create new form document (without last_synced_at - will be set on first sync)
+            form_ref.set(form_data)
+        
+        # Create form request document with enhanced metadata
+        form_request_data = {
+            'form_id': form_doc_id,  # Reference to forms collection
+            'google_form_id': form_id,
+            'owner_id': user_id,
             'group_id': group_id,
-            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'created_at': now,
             'status': 'Active',
             'is_active': True,
-            # Scheduler configuration
-            'schedule_enabled': True,  # Enable automated reminders by default
             # Reminder schedule configuration
             'due_date': due_date.isoformat() + 'Z',
             'reminder_schedule': {
@@ -918,16 +1106,7 @@ def create_form_request():
                 'timing_type': first_reminder_timing,
                 'scheduled_date': scheduled_reminder_date.isoformat() + 'Z' if scheduled_reminder_date else None,
                 'scheduled_time': scheduled_reminder_time.isoformat() + 'Z' if scheduled_reminder_time else None,
-            },
-            # Google Forms specific data
-            'form_settings': {
-                'email_collection_enabled': email_collection_enabled,
-                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
-            },
-            'response_count': len(responses),
-            'total_recipients': len(group.members),  # Number of members in the group
-            'last_synced_at': datetime.utcnow().isoformat() + 'Z',
-            'warnings': [] if email_collection_enabled else ['Email collection may not be enabled']
+            }
         }
         
         # Add to form_requests collection
@@ -946,51 +1125,10 @@ def create_form_request():
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
-        # Send initial email if timing is 'immediate'
-        initial_emails_sent = 0
-        initial_emails_failed = 0
-        if first_reminder_timing == 'immediate':
-            print(f"📧 Sending immediate initial emails to {len(group.members)} group members...")
-            from utils.email_service import EmailService
-            
-            # Get list of respondent emails to exclude
-            respondent_emails = {r.get('respondent_email', '').lower() for r in responses if r.get('respondent_email')}
-            
-            for member in group.members:
-                member_email = member.get('email', '').lower()
-                if not member_email:
-                    continue
-                    
-                # Skip if already responded
-                if member_email in respondent_emails:
-                    print(f"  ⏭️ Skipping {member_email} - already responded")
-                    continue
-                
-                # Send reminder (skip rate limit for initial email)
-                result = EmailService.send_reminder(
-                    request_id=doc_ref.id,
-                    form_title=form_request_data['title'],
-                    form_url=form_url,
-                    recipient_email=member_email,
-                    skip_rate_limit=True
-                )
-                
-                if result.get('success'):
-                    initial_emails_sent += 1
-                    print(f"  ✅ Sent initial email to {member_email}")
-                else:
-                    initial_emails_failed += 1
-                    print(f"  ❌ Failed to send to {member_email}: {result.get('error')}")
-            
-            print(f"📧 Initial emails complete: {initial_emails_sent} sent, {initial_emails_failed} failed")
-        else:
-            print(f"📧 Initial email timing is '{first_reminder_timing}' - will be sent at scheduled time")
-        
-        print(f"✅ Form request created with ID: {doc_ref.id}")
+        print(f"Form request created with ID: {doc_ref.id}")
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
-        print(f"   Initial emails sent: {initial_emails_sent}")
         
         return jsonify({
             "success": True,
@@ -998,12 +1136,6 @@ def create_form_request():
             "form_request": {
                 "id": doc_ref.id,
                 **form_request_data
-            },
-            "initial_emails": {
-                "timing": first_reminder_timing,
-                "sent": initial_emails_sent,
-                "failed": initial_emails_failed,
-                "total_recipients": len(group.members)
             }
         }), 201
         
@@ -1011,7 +1143,7 @@ def create_form_request():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error creating form request: {error_msg}")
+        print(f"Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
             "details": error_msg
@@ -1096,7 +1228,7 @@ def delete_form_request(request_id: str):
         # Delete the form request
         request_ref.delete()
         
-        print(f"✅ Deleted form request {request_id} and {deleted_responses} responses")
+        print(f"Deleted form request {request_id} and {deleted_responses} responses")
         
         return jsonify({
             "success": True,
@@ -1108,7 +1240,7 @@ def delete_form_request(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error deleting form request: {error_msg}")
+        print(f"Error deleting form request: {error_msg}")
         return jsonify({
             "error": "Failed to delete form request",
             "details": error_msg
@@ -1156,7 +1288,7 @@ def create_group():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error creating group: {error_msg}")
+        print(f"Error creating group: {error_msg}")
         return jsonify({
             "error": "Failed to create group",
             "details": error_msg
@@ -1188,7 +1320,7 @@ def get_user_groups():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error fetching groups: {error_msg}")
+        print(f"Error fetching groups: {error_msg}")
         return jsonify({
             "error": "Failed to fetch groups",
             "details": error_msg
@@ -1220,7 +1352,7 @@ def get_group(group_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error fetching group: {error_msg}")
+        print(f"Error fetching group: {error_msg}")
         return jsonify({
             "error": "Failed to fetch group",
             "details": error_msg
@@ -1273,7 +1405,7 @@ def add_group_members(group_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error adding members: {error_msg}")
+        print(f"Error adding members: {error_msg}")
         return jsonify({
             "error": "Failed to add members",
             "details": error_msg
@@ -1315,7 +1447,7 @@ def remove_group_member(group_id: str, email: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error removing member: {error_msg}")
+        print(f"Error removing member: {error_msg}")
         return jsonify({
             "error": "Failed to remove member",
             "details": error_msg
@@ -1347,7 +1479,7 @@ def get_group_by_token(invite_token: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error getting group by token: {error_msg}")
+        print(f"Error getting group by token: {error_msg}")
         return jsonify({
             "error": "Failed to get group info",
             "details": error_msg
@@ -1400,7 +1532,7 @@ def join_group(invite_token: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error joining group: {error_msg}")
+        print(f"Error joining group: {error_msg}")
         return jsonify({
             "error": "Failed to join group",
             "details": error_msg
@@ -1465,7 +1597,7 @@ def send_single_reminder(request_id: str, email: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error sending reminder: {error_msg}")
+        print(f"Error sending reminder: {error_msg}")
         return jsonify({
             "error": "Failed to send reminder",
             "details": error_msg
@@ -1555,7 +1687,7 @@ def send_bulk_reminders(request_id: str):
             else:
                 failed += 1
         
-        print(f"✅ Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
+        print(f"Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
         
         return jsonify({
             "success": True,
@@ -1570,19 +1702,14 @@ def send_bulk_reminders(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error sending bulk reminders: {error_msg}")
+        print(f"Error sending bulk reminders: {error_msg}")
         return jsonify({
             "error": "Failed to send reminders",
             "details": error_msg
         }), 500
 
 
-# 4. Initialize Scheduler for Automated Reminders
-from utils.scheduler import init_scheduler
-reminder_scheduler = init_scheduler(app)
-
-
-# 5. Run the Server
+# 4. Run the Server
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
