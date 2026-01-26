@@ -35,7 +35,7 @@ interface FormRequest {
   response_count: number;
   total_recipients: number;
   created_at: string;
-  last_synced_at: string;
+  last_synced_at?: string;  // Optional - only set when form is synced
   status: string;
   warnings?: string[];
 }
@@ -67,6 +67,7 @@ export default function ViewRequest() {
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
   const [sendingEmail, setSendingEmail] = useState<string | null>(null);
   const [sendingBulk, setSendingBulk] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadFormRequestData = async () => {
     try {
@@ -382,7 +383,9 @@ export default function ViewRequest() {
                 Last Synced
               </Typography>
               <Typography variant="body1">
-                {new Date(formRequest.last_synced_at).toLocaleString()}
+                {formRequest.last_synced_at 
+                  ? new Date(formRequest.last_synced_at).toLocaleString()
+                  : 'Never synced'}
               </Typography>
             </Box>
 

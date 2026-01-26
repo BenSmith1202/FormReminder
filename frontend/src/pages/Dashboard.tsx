@@ -76,12 +76,40 @@ export default function Dashboard() {
       headerName: 'Last Synced', 
       width: 120,
       valueFormatter: (params: any) => {
-        if (!params) return '-';
+        if (!params || params === '-') {
+          // Fallback to created_at if last_synced_at is not available
+          return null; // Let renderCell handle it
+        }
         try {
           const date = new Date(params);
+          if (isNaN(date.getTime())) {
+            return null; // Invalid date, let renderCell handle it
+          }
           return date.toLocaleDateString();
         } catch {
-          return '-';
+          return null; // Let renderCell handle it
+        }
+      },
+      renderCell: (params: GridRenderCellParams) => {
+        let dateValue = params.value;
+        
+        // If last_synced_at is not available, try created_at as fallback
+        if (!dateValue || dateValue === '-') {
+          dateValue = params.row.created_at;
+        }
+        
+        if (!dateValue) {
+          return <Typography variant="body2" color="text.secondary">Never</Typography>;
+        }
+        
+        try {
+          const date = new Date(dateValue);
+          if (isNaN(date.getTime())) {
+            return <Typography variant="body2" color="text.secondary">Never</Typography>;
+          }
+          return <Typography variant="body2">{date.toLocaleDateString()}</Typography>;
+        } catch {
+          return <Typography variant="body2" color="text.secondary">Never</Typography>;
         }
       }
     },
