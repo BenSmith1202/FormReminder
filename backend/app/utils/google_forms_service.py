@@ -148,22 +148,43 @@ class GoogleFormsService:
     
     @staticmethod
     def extract_form_id(form_url: str) -> Optional[str]:
-        """Extract form ID from Google Form URL"""
+        """Extract form ID from Google Form URL
+        
+        Handles both URL formats:
+        - Old: https://docs.google.com/forms/d/FORM_ID/edit
+        - New: https://docs.google.com/forms/d/e/FORM_ID/viewform
+        """
         try:
             # Pattern: https://docs.google.com/forms/d/FORM_ID/edit or /viewform
+            # Or: https://docs.google.com/forms/d/e/FORM_ID/viewform
             parts = form_url.split("/")
             
             for i, part in enumerate(parts):
                 if part == 'd' and i + 1 < len(parts):
-                    form_id = parts[i + 1]
-                    print(f"Extracted form ID: {form_id}")
-                    return form_id
+                    next_part = parts[i + 1]
+                    # Check if next part is 'e' (new format)
+                    if next_part == 'e' and i + 2 < len(parts):
+                        # New format: /d/e/FORM_ID/
+                        form_id = parts[i + 2]
+                    else:
+                        # Old format: /d/FORM_ID/
+                        form_id = next_part
+                    
+                    # Validate form ID (should be a long alphanumeric string)
+                    if form_id and len(form_id) > 10:
+                        print(f"Extracted form ID: {form_id}")
+                        return form_id
+                    else:
+                        print(f"Invalid form ID extracted: {form_id}")
+                        return None
             
             print(f"Could not extract form ID from URL: {form_url}")
             return None
             
         except Exception as e:
             print(f"Error extracting form ID: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     @staticmethod

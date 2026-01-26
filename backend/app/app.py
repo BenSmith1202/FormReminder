@@ -951,23 +951,50 @@ def create_form_request():
                 "action_required": "reconnect_google"
             }), 401
         
-        # Fetch form metadata
+        # Fetch form metadata (handle errors gracefully)
         print("Fetching form metadata...")
-        metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+        metadata = {}
+        api_access_available = False
+        email_collection_enabled = False
         
-        # Check email collection (optional for now, just warn)
-        print("Checking email collection...")
-        email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+        try:
+            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+            api_access_available = True
+            
+            # Check email collection (optional for now, just warn)
+            print("Checking email collection...")
+            try:
+                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+            except Exception as email_check_error:
+                print(f"Warning: Could not check email collection: {email_check_error}")
+                email_collection_enabled = False
+        except Exception as metadata_error:
+            print(f"Warning: Could not fetch form metadata: {metadata_error}")
+            print("This usually means you don't have edit access to the form.")
+            print("The form request will be created, but you'll need to grant edit access to sync responses.")
+            api_access_available = False
+            # Use default metadata
+            metadata = {
+                'title': data.get('title', f"Form {form_id[:8]}"),
+                'description': '',
+                'email_collection_enabled': False,
+                'email_collection_type': 'UNKNOWN'
+            }
         
-        if not email_collection_enabled:
+        # Get initial response count (only if API access is available)
+        responses = []
+        if api_access_available:
+            print("Fetching initial responses...")
+            try:
+                responses = GoogleFormsService.get_form_responses(credentials, form_id)
+            except Exception as responses_error:
+                print(f"Warning: Could not fetch initial responses: {responses_error}")
+                responses = []
+        else:
+            print("Skipping initial response fetch (API access not available)")
+        
+        if not email_collection_enabled and api_access_available:
             print("WARNING: Email collection may not be enabled on this form")
-            # For testing, we'll allow it but warn
-            # In production, you might want to reject:
-            # return jsonify({"error": "Form must have email collection enabled"}), 400
-        
-        # Get initial response count
-        print("Fetching initial responses...")
-        responses = GoogleFormsService.get_form_responses(credentials, form_id)
         
         db = get_db()
         
@@ -988,7 +1015,7 @@ def create_form_request():
             'created_at': now,
             'updated_at': now,
             'is_active': True,
-            'api_access_available': True,
+            'api_access_available': api_access_available,  # Set based on whether we could fetch metadata
             # Don't set last_synced_at on creation - it will be set when first synced
             'form_settings': {
                 'email_collection_enabled': email_collection_enabled,
@@ -1005,7 +1032,7 @@ def create_form_request():
                 'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
                 'description': metadata.get('description', ''),
                 'updated_at': now,
-                'api_access_available': True,
+                'api_access_available': api_access_available,
                 'form_settings': form_data['form_settings']
             })
         else:
