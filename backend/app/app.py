@@ -510,9 +510,10 @@ def get_form_request_responses(request_id: str):
         responses_list = []
         non_member_responses = []
         
+        # Normalize all response emails for matching
         for response in responses:
             response_data = response.to_dict()
-            response_email = response_data.get('respondent_email', '').lower()
+            response_email = response_data.get('respondent_email', '').strip().lower()
             
             response_obj = {
                 "id": response.id,
@@ -525,17 +526,34 @@ def get_form_request_responses(request_id: str):
             else:
                 responses_list.append(response_obj)
         
-        # Create member status list
+        # Create member status list - match by normalized email
         member_status = []
         if group:
+            # Create a map of normalized emails to responses for quick lookup
+            response_map = {}
+            for r in responses_list:
+                email_key = r.get('respondent_email', '').strip().lower()
+                if email_key:
+                    response_map[email_key] = r
+            
             for member in group.members:
-                member_email = member['email'].lower()
-                has_responded = any(r['respondent_email'].lower() == member_email for r in responses_list)
+                member_email = member.get('email', '').strip().lower()
+                member_email_original = member.get('email', '')  # Keep original for display
+                
+                # Check if this member has responded
+                matching_response = response_map.get(member_email)
+                has_responded = matching_response is not None
+                
                 member_status.append({
-                    "email": member['email'],
+                    "email": member_email_original,
                     "status": "responded" if has_responded else "not_responded",
-                    "submitted_at": next((r['submitted_at'] for r in responses_list if r['respondent_email'].lower() == member_email), None)
+                    "submitted_at": matching_response.get('submitted_at') if matching_response else None
                 })
+                
+                if has_responded:
+                    print(f"  Member {member_email_original} has responded")
+                else:
+                    print(f"  Member {member_email_original} has not responded")
         
         print(f"Retrieved {len(responses_list)} member responses and {len(non_member_responses)} non-member responses for request {request_id}")
         
@@ -623,46 +641,90 @@ def refresh_form_responses(request_id: str):
             }), 401
         
         # Fetch latest responses from Google
+        print(f"Fetching responses from Google Forms API for form {form_id}...")
         responses = GoogleFormsService.get_form_responses(credentials, form_id)
         
         print(f"Found {len(responses)} total responses from Google")
+        if responses:
+            # Log sample response emails for debugging
+            sample_emails = [r.get('respondent_email', 'no email') for r in responses[:3]]
+            print(f"   Sample respondent emails: {sample_emails}")
         
-        # Delete old responses for this request
+        # Get existing responses to check for duplicates by response_id
+        existing_responses = {}
         old_responses = db.collection(Collections.RESPONSES)\
             .where('request_id', '==', request_id)\
             .stream()
         
-        deleted_count = 0
         for old_response in old_responses:
-            old_response.reference.delete()
-            deleted_count += 1
+            old_data = old_response.to_dict()
+            response_id = old_data.get('response_id')
+            if response_id:
+                existing_responses[response_id] = old_response.reference
         
-        print(f"Deleted {deleted_count} old responses")
+        print(f"Found {len(existing_responses)} existing responses in database")
         
-        # Store new responses
+        # Store new/updated responses with full answer data
+        stored_count = 0
+        updated_count = 0
+        new_count = 0
+        
         for response in responses:
+            response_id = response.get('response_id', '')
             response_data = {
                 'request_id': request_id,
                 'form_id': form_id,
                 'respondent_email': response.get('respondent_email', ''),
-                'response_id': response.get('response_id', ''),
+                'response_id': response_id,
                 'submitted_at': response.get('submitted_at', ''),
+                'last_submitted_at': response.get('last_submitted_at', ''),
+                'total_score': response.get('total_score'),
+                'answers': response.get('answers', {}),  # Full answer data
+                'answer_count': response.get('answer_count', 0),
                 'created_at': datetime.utcnow().isoformat() + 'Z'
             }
-            db.collection(Collections.RESPONSES).add(response_data)
+            
+            # Update existing response or create new one
+            if response_id and response_id in existing_responses:
+                # Update existing response
+                existing_responses[response_id].set(response_data)
+                updated_count += 1
+                # Remove from dict so we know which ones to delete
+                del existing_responses[response_id]
+            else:
+                # Create new response
+                db.collection(Collections.RESPONSES).add(response_data)
+                new_count += 1
+            
+            stored_count += 1
         
-        # Update form request with new count and sync time
-        request_ref.update({
-            'response_count': len(responses),
-            'last_synced_at': datetime.utcnow().isoformat() + 'Z'
-        })
+        # Delete responses that no longer exist in Google Forms
+        deleted_count = 0
+        for response_id, response_ref in existing_responses.items():
+            response_ref.delete()
+            deleted_count += 1
         
-        print(f"✅ Refreshed {len(responses)} responses for request {request_id}")
+        print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
+        
+        # Update form document in forms collection with sync time
+        form_doc_id = request_data.get('form_id')
+        if form_doc_id:
+            form_ref = db.collection(Collections.FORMS).document(form_doc_id)
+            form_doc = form_ref.get()
+            if form_doc.exists:
+                form_ref.update({
+                    'last_synced_at': datetime.utcnow().isoformat() + 'Z',
+                    'api_access_available': True,
+                    'updated_at': datetime.utcnow().isoformat() + 'Z'
+                })
+                print(f"Updated form document {form_doc_id} with sync time")
+        
+        print(f"Refreshed {stored_count} responses for request {request_id}")
         
         return jsonify({
             "success": True,
             "message": "Responses refreshed successfully",
-            "response_count": len(responses),
+            "response_count": stored_count,
             "synced_at": datetime.utcnow().isoformat() + 'Z'
         }), 200
         
@@ -670,7 +732,7 @@ def refresh_form_responses(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error refreshing responses: {error_msg}")
+        print(f"Error refreshing responses: {error_msg}")
         return jsonify({
             "error": "Failed to refresh responses",
             "details": error_msg
@@ -871,7 +933,7 @@ def create_form_request():
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
-        print(f"✅ Form request created with ID: {doc_ref.id}")
+        print(f"Form request created with ID: {doc_ref.id}")
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
@@ -889,7 +951,7 @@ def create_form_request():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error creating form request: {error_msg}")
+        print(f"Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
             "details": error_msg
@@ -974,7 +1036,7 @@ def delete_form_request(request_id: str):
         # Delete the form request
         request_ref.delete()
         
-        print(f"✅ Deleted form request {request_id} and {deleted_responses} responses")
+        print(f"Deleted form request {request_id} and {deleted_responses} responses")
         
         return jsonify({
             "success": True,
@@ -986,7 +1048,7 @@ def delete_form_request(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error deleting form request: {error_msg}")
+        print(f"Error deleting form request: {error_msg}")
         return jsonify({
             "error": "Failed to delete form request",
             "details": error_msg
@@ -1034,7 +1096,7 @@ def create_group():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error creating group: {error_msg}")
+        print(f"Error creating group: {error_msg}")
         return jsonify({
             "error": "Failed to create group",
             "details": error_msg
@@ -1066,7 +1128,7 @@ def get_user_groups():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error fetching groups: {error_msg}")
+        print(f"Error fetching groups: {error_msg}")
         return jsonify({
             "error": "Failed to fetch groups",
             "details": error_msg
@@ -1098,7 +1160,7 @@ def get_group(group_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error fetching group: {error_msg}")
+        print(f"Error fetching group: {error_msg}")
         return jsonify({
             "error": "Failed to fetch group",
             "details": error_msg
@@ -1151,7 +1213,7 @@ def add_group_members(group_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error adding members: {error_msg}")
+        print(f"Error adding members: {error_msg}")
         return jsonify({
             "error": "Failed to add members",
             "details": error_msg
@@ -1193,7 +1255,7 @@ def remove_group_member(group_id: str, email: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error removing member: {error_msg}")
+        print(f"Error removing member: {error_msg}")
         return jsonify({
             "error": "Failed to remove member",
             "details": error_msg
@@ -1225,7 +1287,7 @@ def get_group_by_token(invite_token: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error getting group by token: {error_msg}")
+        print(f"Error getting group by token: {error_msg}")
         return jsonify({
             "error": "Failed to get group info",
             "details": error_msg
@@ -1278,7 +1340,7 @@ def join_group(invite_token: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error joining group: {error_msg}")
+        print(f"Error joining group: {error_msg}")
         return jsonify({
             "error": "Failed to join group",
             "details": error_msg
@@ -1343,7 +1405,7 @@ def send_single_reminder(request_id: str, email: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error sending reminder: {error_msg}")
+        print(f"Error sending reminder: {error_msg}")
         return jsonify({
             "error": "Failed to send reminder",
             "details": error_msg
@@ -1433,7 +1495,7 @@ def send_bulk_reminders(request_id: str):
             else:
                 failed += 1
         
-        print(f"✅ Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
+        print(f"Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
         
         return jsonify({
             "success": True,
@@ -1448,7 +1510,7 @@ def send_bulk_reminders(request_id: str):
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error sending bulk reminders: {error_msg}")
+        print(f"Error sending bulk reminders: {error_msg}")
         return jsonify({
             "error": "Failed to send reminders",
             "details": error_msg

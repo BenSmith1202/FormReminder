@@ -23,6 +23,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import EmailIcon from '@mui/icons-material/Email';
 import SendIcon from '@mui/icons-material/Send';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 const API_URL = 'http://localhost:5000';
 
@@ -115,11 +116,11 @@ export default function ViewRequest() {
         throw new Error(result.error || 'Failed to send reminder');
       }
       
-      console.log('✅ Reminder sent:', result);
+      console.log('Reminder sent:', result);
       alert(result.message || 'Reminder sent successfully!');
       
     } catch (err: any) {
-      console.error('❌ Failed to send reminder:', err);
+      console.error('Failed to send reminder:', err);
       alert(`Failed to send reminder: ${err.message}`);
     } finally {
       setSendingEmail(null);
@@ -151,11 +152,11 @@ export default function ViewRequest() {
         throw new Error(result.error || 'Failed to send reminders');
       }
       
-      console.log('✅ Bulk reminders sent:', result);
+      console.log('Bulk reminders sent:', result);
       alert(`Success!\n\nSent: ${result.sent}\nSkipped (rate limit): ${result.skipped}\nFailed: ${result.failed}`);
       
     } catch (err: any) {
-      console.error('❌ Failed to send bulk reminders:', err);
+      console.error('Failed to send bulk reminders:', err);
       alert(`Failed to send reminders: ${err.message}`);
     } finally {
       setSendingBulk(false);
@@ -164,7 +165,8 @@ export default function ViewRequest() {
 
   useEffect(() => {
     if (requestId) {
-      loadFormRequestData();
+      // Sync and load on initial page load
+      syncAndLoadData();
     }
   }, [requestId]);
 
@@ -195,8 +197,14 @@ export default function ViewRequest() {
     };
   }, [requestId]);
 
-  const syncAndLoadData = async () => {
+  const syncAndLoadData = async (showLoading = false) => {
     try {
+      if (showLoading) {
+        setRefreshing(true);
+      }
+      
+      console.log('Syncing with Google Forms...');
+      
       // Sync with Google Forms first
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
         method: 'POST',
@@ -206,15 +214,27 @@ export default function ViewRequest() {
       if (!response.ok) {
         const result = await response.json();
         console.error('Auto-refresh sync error:', result.error);
+        // Still try to load cached data even if sync fails
+      } else {
+        const result = await response.json();
+        console.log(`Sync complete: ${result.response_count} responses`);
       }
       
-      // Then load the updated data
+      // Always load the updated data after sync attempt
       await loadFormRequestData();
     } catch (error) {
       console.error('Auto-refresh error:', error);
       // Still try to load cached data
-      loadFormRequestData();
+      await loadFormRequestData();
+    } finally {
+      if (showLoading) {
+        setRefreshing(false);
+      }
     }
+  };
+
+  const handleManualRefresh = async () => {
+    await syncAndLoadData(true);
   };
 
   // Update "seconds since update" counter
@@ -270,20 +290,31 @@ export default function ViewRequest() {
   return (
     <Box>
       {/* Header */}
-      <Box display="flex" alignItems="center" mb={3}>
-        <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
-          <ArrowBackIcon />
-        </IconButton>
-        <Box>
-          <Typography variant="h4">
-            {formRequest.title}
-          </Typography>
-          {lastUpdated && (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-              Last updated: {secondsSinceUpdate}s ago
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+        <Box display="flex" alignItems="center">
+          <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
+            <ArrowBackIcon />
+          </IconButton>
+          <Box>
+            <Typography variant="h4">
+              {formRequest.title}
             </Typography>
-          )}
+            {lastUpdated && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                Last updated: {secondsSinceUpdate}s ago
+              </Typography>
+            )}
+          </Box>
         </Box>
+        <Button
+          variant="outlined"
+          startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+          onClick={handleManualRefresh}
+          disabled={refreshing}
+          sx={{ ml: 2 }}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh Responses'}
+        </Button>
       </Box>
 
       {error && (
@@ -295,7 +326,16 @@ export default function ViewRequest() {
       {/* Warnings */}
       {formRequest.warnings && formRequest.warnings.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          {formRequest.warnings.join(', ')}
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            Important Notices:
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2 }}>
+            {formRequest.warnings.map((warning, index) => (
+              <li key={index}>
+                <Typography variant="body2">{warning}</Typography>
+              </li>
+            ))}
+          </Box>
         </Alert>
       )}
 
@@ -381,7 +421,7 @@ export default function ViewRequest() {
         
         {nonMemberResponses.length > 0 && (
           <Alert severity="warning" sx={{ mt: 2 }}>
-            ⚠️ {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
+            Warning: {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
           </Alert>
         )}
       </Paper>
@@ -504,7 +544,7 @@ export default function ViewRequest() {
                     </TableCell>
                     <TableCell align="center">
                       <Chip 
-                        label="❓ Non-member" 
+                        label="Non-member" 
                         color="warning" 
                         size="small" 
                       />
