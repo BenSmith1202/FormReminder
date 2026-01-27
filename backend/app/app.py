@@ -1,4 +1,5 @@
 import os
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 import sys
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env" # loads settings from an env file (temporary)
         case_sensitive = True # Makes sure the env variables are case-sensitive
+        extra = "ignore"
 
 
 settings = Settings() # Creates a global settings instance
