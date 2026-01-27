@@ -13,6 +13,8 @@ from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
 
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 # 1. Initialize Flask
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
@@ -1418,6 +1420,34 @@ def get_current_time():
     return jsonify({
         "current_time": now.isoformat() + "Z"
     })
+
+# ============= SETTINGS ROUTES ===================
+
+# Route to delete the user's account. Also redirects.
+@app.post('/api/delete')
+def delete_account():
+    """Delete the current user"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        User.delete_user(user_id)
+        
+        return jsonify({
+            "success": True,
+            "message": "Account deleted successfully"
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"❌ Error deleting account: {error_msg}")
+        return jsonify({
+            "error": "Failed to delete account",
+            "details": error_msg
+        }), 500
 
 
 # ============= EMAIL REMINDER ROUTES =============

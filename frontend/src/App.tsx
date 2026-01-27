@@ -11,6 +11,7 @@ import ViewGroup from './pages/ViewGroup';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Reset from './pages/Reset';
+import Settings from './pages/Settings';
 import ViewRequest from './pages/ViewRequest';
 
 const theme = createTheme({
@@ -50,6 +51,7 @@ function App() {
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/new" element={<CreateGroup />} />
             <Route path="/groups/:groupId" element={<ViewGroup />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>
