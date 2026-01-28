@@ -151,6 +151,8 @@ class Collections:
     SETTINGS = "settings"
     AUDIT_LOGS = "audit_logs"
     EMAIL_LOGS = "email_logs"
+    # Org-level recipient membership / opt-out records (owner_id + recipient_email)
+    ORG_MEMBERSHIPS = "org_memberships"
 
 # Helper function
 def get_db():

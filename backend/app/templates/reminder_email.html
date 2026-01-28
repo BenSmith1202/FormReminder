@@ -103,6 +103,13 @@
         <div class="footer">
             <p>This reminder was sent via FormReminder</p>
             <p style="margin-top: 10px;">You're receiving this because you're part of a form request group.</p>
+            {% if unsubscribe_url %}
+            <p style="margin-top: 12px;">
+                <a href="{{ unsubscribe_url }}" style="color: #6c757d; text-decoration: underline;">
+                    Leave this organization (opt out of future emails)
+                </a>
+            </p>
+            {% endif %}
         </div>
     </div>
 </body>

@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.database import get_db, FirestoreDB
 from models.user import User
 from models.group import Group
+from models.org_membership import OrgMembership
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
@@ -44,6 +45,27 @@ def log_session():
     print(f"Has user_id: {'user_id' in session}")
     if 'user_id' in session:
         print(f"User ID: {session['user_id']}")
+
+
+def _create_notification(owner_id: str, notif_type: str, message: str, data=None) -> None:
+    """Persist a simple in-app notification for an org owner/admin."""
+    try:
+        from models.database import Collections
+        from datetime import datetime
+
+        db = get_db()
+        db.collection(Collections.NOTIFICATIONS).add(
+            {
+                "owner_id": owner_id,
+                "type": notif_type,
+                "message": message,
+                "data": data or {},
+                "read": False,
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+    except Exception as e:
+        print(f"Warning: failed to create notification: {e}")
 
 @app.get("/")
 def root():
@@ -1388,18 +1410,28 @@ def add_group_members(group_id: str):
         
         if not emails:
             return jsonify({"error": "No valid emails found"}), 400
+
+        # Respect org-level opt-out: owners cannot re-add opted-out recipients by accident.
+        opted_out = []
+        allowed_emails = []
+        for e in emails:
+            if OrgMembership.is_opted_out(user_id, e):
+                opted_out.append(e)
+            else:
+                allowed_emails.append(e)
         
         print(f"Adding {len(emails)} emails to group {group_id}")
         
         # Add members
-        added_count = group.add_members(emails)
+        added_count = group.add_members(allowed_emails)
         
         return jsonify({
             "success": True,
             "message": f"Added {added_count} new members",
             "added_count": added_count,
             "total_members": len(group.members),
-            "skipped": len(emails) - added_count  # Duplicates
+            "skipped": len(emails) - added_count,  # Duplicates + opted-out
+            "skipped_opted_out": opted_out
         }), 200
         
     except Exception as e:
@@ -1507,6 +1539,9 @@ def join_group(invite_token: str):
         group = Group.get_by_invite_token(invite_token)
         if not group:
             return jsonify({"error": "Invalid invite link"}), 404
+
+        # Joining via invite link is an explicit opt-in; re-activate org membership if previously left.
+        OrgMembership.ensure_active(group.owner_id, email, source="invite_join")
         
         # Add member
         success = group.add_member(email)
@@ -1538,6 +1573,80 @@ def join_group(invite_token: str):
             "error": "Failed to join group",
             "details": error_msg
         }), 500
+
+
+# ============= ORGANIZATION (USER) MEMBERSHIP / OPT-OUT =============
+
+@app.route("/api/organizations/<owner_id>/leave", methods=["GET", "POST"])
+def leave_organization(owner_id: str):
+    """
+    PUBLIC: Recipient opt-out endpoint.
+
+    A recipient "leaving an organization" means:
+    - mark org membership as left (global suppression for future emails)
+    - remove the recipient from all groups owned by this org
+    - notify the org owner/admin
+    """
+    try:
+        # Support both email link clicks (GET query params) and JSON (POST).
+        email = (request.args.get("email") or "").strip()
+        token = (request.args.get("token") or "").strip()
+
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            email = (body.get("email") or email).strip()
+            token = (body.get("token") or token).strip()
+
+        if not email or not token:
+            return jsonify({"error": "email and token are required"}), 400
+
+        if not EmailService.verify_unsubscribe_token(owner_id, email, token):
+            return jsonify({"error": "Invalid or expired token"}), 403
+
+        # Mark opted out first (so even partial failures still suppress future emails).
+        OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
+
+        # Remove from all groups in this org (owner == org).
+        removed_from_groups = 0
+        groups = Group.get_user_groups(owner_id)
+        for g in groups:
+            try:
+                if g.remove_member(email):
+                    removed_from_groups += 1
+            except Exception:
+                # Continue best-effort; membership suppression already recorded.
+                pass
+
+        # Notify org owner/admin (in-app notification record).
+        _create_notification(
+            owner_id=owner_id,
+            notif_type="recipient_left_org",
+            message=f"{email} left your organization and was removed from {removed_from_groups} group(s).",
+            data={"recipient_email": email, "removed_from_groups": removed_from_groups},
+        )
+
+        # Return a friendly page for email link clicks.
+        if request.method == "GET":
+            return (
+                f"""
+                <html>
+                  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; padding: 32px;">
+                    <h2>You're opted out</h2>
+                    <p><strong>{email}</strong> has left this organization and will no longer receive emails from it.</p>
+                    <p>You may close this tab.</p>
+                  </body>
+                </html>
+                """,
+                200,
+                {"Content-Type": "text/html; charset=utf-8"},
+            )
+
+        return jsonify({"success": True, "message": "Opted out successfully"}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to opt out", "details": str(e)}), 500
 
 
 # ============= END GROUPS ROUTES =============
@@ -1585,9 +1694,13 @@ def send_single_reminder(request_id: str, email: str):
         form_url = request_data.get('form_url')
         
         print(f"Sending reminder to {email} for form: {form_title}")
+
+        # Respect org-level opt-out
+        if OrgMembership.is_opted_out(user_id, email):
+            return jsonify({"success": False, "error": "Recipient has opted out of this organization"}), 400
         
         # Send reminder
-        result = EmailService.send_reminder(request_id, form_title, form_url, email)
+        result = EmailService.send_reminder(request_id, form_title, form_url, email, owner_id=user_id)
         
         if result['success']:
             return jsonify(result), 200
@@ -1657,10 +1770,19 @@ def send_bulk_reminders(request_id: str):
         
         # Find non-responders
         non_responders = []
+        opted_out = []
         for member in group.members:
             member_email = member['email']
-            if member_email.lower() not in responded_emails:
-                non_responders.append(member_email)
+            member_email_lower = member_email.lower()
+            if member_email_lower in responded_emails:
+                continue
+
+            # Respect org-level opt-out
+            if OrgMembership.is_opted_out(user_id, member_email):
+                opted_out.append(member_email)
+                continue
+
+            non_responders.append(member_email)
         
         print(f"Found {len(non_responders)} non-responders out of {len(group.members)} members")
         
@@ -1679,7 +1801,13 @@ def send_bulk_reminders(request_id: str):
         failed = 0
         
         for recipient_email in non_responders:
-            result = EmailService.send_reminder(request_id, form_title, form_url, recipient_email)
+            result = EmailService.send_reminder(
+                request_id,
+                form_title,
+                form_url,
+                recipient_email,
+                owner_id=user_id,
+            )
             
             if result['success']:
                 sent += 1
@@ -1696,7 +1824,8 @@ def send_bulk_reminders(request_id: str):
             "sent": sent,
             "skipped": skipped,
             "failed": failed,
-            "total_non_responders": len(non_responders)
+            "total_non_responders": len(non_responders),
+            "skipped_opted_out": len(opted_out)
         }), 200
         
     except Exception as e:
