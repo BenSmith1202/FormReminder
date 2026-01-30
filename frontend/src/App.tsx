@@ -10,6 +10,7 @@ import JoinGroup from './pages/JoinGroup';
 import ViewGroup from './pages/ViewGroup';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import Reset from './pages/Reset';
 import ViewRequest from './pages/ViewRequest';
 import EditRequest from './pages/EditRequest';
 import EditGroup from './pages/EditGroup';
@@ -39,6 +40,7 @@ function App() {
           {/* Public routes (no Layout) */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/reset" element={<Reset />} />
           <Route path="/groups/join/:token" element={<JoinGroup />} />
           
           {/* Protected routes (with Layout) */}

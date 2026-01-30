@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Paper, Typography, Button, Box, CircularProgress, Alert, Card, CardContent, CardActions } from '@mui/material';
-import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
 import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
@@ -94,33 +93,41 @@ export default function Groups() {
           </Button>
         </Paper>
       ) : (
-        <Grid container spacing={3}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              md: 'repeat(2, 1fr)',
+              lg: 'repeat(3, 1fr)'
+            },
+            gap: 3
+          }}
+        >
           {groups.map((group) => (
-            <Grid size={{ xs: 12, md: 6, lg: 4 }} key={group.id}>
-              <Card>
-                <CardContent>
-                  <Box display="flex" alignItems="center" mb={1}>
-                    <GroupIcon sx={{ mr: 1, color: 'primary.main' }} />
-                    <Typography variant="h6">
-                      {group.name}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2, minHeight: 40 }}>
-                    {group.description || 'No description'}
+            <Card key={group.id}>
+              <CardContent>
+                <Box display="flex" alignItems="center" mb={1}>
+                  <GroupIcon sx={{ mr: 1, color: 'primary.main' }} />
+                  <Typography variant="h6">
+                    {group.name}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {group.member_count} member{group.member_count !== 1 ? 's' : ''}
-                  </Typography>
-                </CardContent>
-                <CardActions>
-                  <Button size="small" onClick={() => navigate(`/groups/${group.id}`)}>
-                    View Details
-                  </Button>
-                </CardActions>
-              </Card>
-            </Grid>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, minHeight: 40 }}>
+                  {group.description || 'No description'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {group.member_count} member{group.member_count !== 1 ? 's' : ''}
+                </Typography>
+              </CardContent>
+              <CardActions>
+                <Button size="small" onClick={() => navigate(`/groups/${group.id}`)}>
+                  View Details
+                </Button>
+              </CardActions>
+            </Card>
           ))}
-        </Grid>
+        </Box>
       )}
     </Box>
   );
