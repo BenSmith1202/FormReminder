@@ -4,6 +4,7 @@
 from datetime import datetime
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.database import get_db, Collections
 
 
@@ -65,13 +66,13 @@ class User:
             
             # Check if username already exists
             users_ref = db.collection(Collections.USERS)
-            existing_username = users_ref.where('username', '==', username).limit(1).stream()
+            existing_username = users_ref.where(filter=FieldFilter('username', '==', username)).limit(1).stream()
             if len(list(existing_username)) > 0:
                 print(f"Username {username} already exists")
                 return None
             
             # Check if email already exists
-            existing_email = users_ref.where('email', '==', email).limit(1).stream()
+            existing_email = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1).stream()
             if len(list(existing_email)) > 0:
                 print(f"Email {email} already exists")
                 return None
@@ -144,7 +145,7 @@ class User:
         try:
             db = get_db()
             users_ref = db.collection(Collections.USERS)
-            query = users_ref.where('username', '==', username).limit(1).stream()
+            query = users_ref.where(filter=FieldFilter('username', '==', username)).limit(1).stream()
             
             for doc in query:
                 user_data = doc.to_dict()

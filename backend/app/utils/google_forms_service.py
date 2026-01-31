@@ -197,28 +197,19 @@ class GoogleFormsService:
             form = service.forms().get(formId=form_id).execute()
             
             # Extract relevant metadata
+            # Google Forms API: settings.emailCollectionType is VERIFIED, RESPONDER_INPUT, or DO_NOT_COLLECT
+            settings_info = form.get('settings', {})
+            email_collection_type = settings_info.get('emailCollectionType', 'EMAIL_COLLECTION_TYPE_UNSPECIFIED')
+            # VERIFIED = collect from signed-in user; RESPONDER_INPUT = collect via form field
+            email_collection_enabled = email_collection_type in ('VERIFIED', 'RESPONDER_INPUT')
+
             metadata = {
                 'title': form.get('info', {}).get('title', 'Untitled Form'),
                 'description': form.get('info', {}).get('description', ''),
-                'email_collection_enabled': False,
-                'email_collection_type': 'NONE'
+                'email_collection_enabled': email_collection_enabled,
+                'email_collection_type': email_collection_type if email_collection_enabled else 'DO_NOT_COLLECT'
             }
-            
-            # Check if email collection is enabled
-            settings_info = form.get('settings', {})
-            if settings_info:
-                quiz_settings = settings_info.get('quizSettings', {})
-                email_collection = quiz_settings.get('isQuiz', False)
-                
-                # Check responderUri settings
-                responder_uri = form.get('responderUri', '')
-                
-                # More reliable: check if the form collects email
-                # This is typically in settings
-                if 'collectEmail' in str(settings_info).lower():
-                    metadata['email_collection_enabled'] = True
-                    metadata['email_collection_type'] = 'RESPONDER'
-            
+
             print(f"Form metadata: {metadata}")
             return metadata
             

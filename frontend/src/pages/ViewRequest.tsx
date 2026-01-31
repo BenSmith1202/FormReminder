@@ -68,10 +68,13 @@ export default function ViewRequest() {
   const [sendingEmail, setSendingEmail] = useState<string | null>(null);
   const [sendingBulk, setSendingBulk] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
 
-  const loadFormRequestData = async () => {
+  const loadFormRequestData = async (showLoadingSpinner = true) => {
     try {
-      setLoading(true);
+      if (showLoadingSpinner) {
+        setLoading(true);
+      }
       setError(null);
 
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}/responses`, {
@@ -83,19 +86,23 @@ export default function ViewRequest() {
       }
 
       const data = await response.json();
-      
-      console.log('Loaded form request data:', data);
-      
-      setFormRequest(data.form_request);
-      setNonMemberResponses(data.non_member_responses || []);
-      setMemberStatus(data.member_status || []);
+
+      const formReq = data?.form_request;
+      if (!formReq) {
+        throw new Error('Invalid response: no form request data');
+      }
+
+      setFormRequest(formReq);
+      setNonMemberResponses(Array.isArray(data.non_member_responses) ? data.non_member_responses : []);
+      setMemberStatus(Array.isArray(data.member_status) ? data.member_status : []);
       setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error loading form request:', err);
-      console.error('Auto-refresh error:', err);
       setError(err.message || 'Failed to load form request');
     } finally {
-      setLoading(false);
+      if (showLoadingSpinner) {
+        setLoading(false);
+      }
     }
   };
 
@@ -203,30 +210,59 @@ export default function ViewRequest() {
       if (showLoading) {
         setRefreshing(true);
       }
-      
-      console.log('Syncing with Google Forms...');
-      
-      // Sync with Google Forms first
-      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        const result = await response.json();
-        console.error('Auto-refresh sync error:', result.error);
-        // Still try to load cached data even if sync fails
-      } else {
-        const result = await response.json();
-        console.log(`Sync complete: ${result.response_count} responses`);
+
+      // Sync with Google Forms first (best-effort; don't crash page if it fails)
+      try {
+        const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          let errMsg = `Failed to refresh (${response.status})`;
+          let needsReconnect = false;
+          try {
+            const result = await response.json();
+            errMsg = result.message || result.error || result.details || errMsg;
+            // 404 "form not found" = need edit URL, not reconnect
+            needsReconnect = result.action_required === 'reconnect_google' && result.code !== 'form_id_edit_link_required';
+          } catch {
+            // Response may be non-JSON (e.g. HTML error page)
+          }
+          console.error('Auto-refresh sync error:', errMsg);
+          if (needsReconnect) setNeedsGoogleReconnect(true);
+          else if (response.status === 404) setNeedsGoogleReconnect(false);
+          // Only set error on initial load when we have no data yet; otherwise keep showing cached data
+          if (!formRequest) {
+            setError(errMsg);
+          }
+        } else {
+          setNeedsGoogleReconnect(false);
+          try {
+            const result = await response.json();
+            console.log('Sync complete:', result.response_count ?? 0, 'responses');
+          } catch {
+            // Ignore JSON parse failure for success response
+          }
+        }
+      } catch (refreshErr: unknown) {
+        console.error('Auto-refresh error:', refreshErr);
+        if (!formRequest) {
+          setError(refreshErr instanceof Error ? refreshErr.message : 'Failed to refresh responses');
+        }
       }
-      
-      // Always load the updated data after sync attempt
-      await loadFormRequestData();
-    } catch (error) {
-      console.error('Auto-refresh error:', error);
-      // Still try to load cached data
-      await loadFormRequestData();
+
+      // Always load data (from cache or after sync); never leave page blank
+      // Use full loading spinner only when we don't have data yet (initial load)
+      const isInitialLoad = !formRequest;
+      try {
+        await loadFormRequestData(isInitialLoad);
+      } catch (loadErr) {
+        console.error('Load form request data error:', loadErr);
+        if (!formRequest) {
+          setError(loadErr instanceof Error ? loadErr.message : 'Failed to load form request');
+        }
+      }
     } finally {
       if (showLoading) {
         setRefreshing(false);
@@ -268,7 +304,32 @@ export default function ViewRequest() {
         >
           Back to Dashboard
         </Button>
-        <Alert severity="error">{error}</Alert>
+        <Alert
+          severity="error"
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                Reconnect Google
+              </Button>
+            ) : undefined
+          }
+        >
+          {error}
+        </Alert>
       </Box>
     );
   }
@@ -298,7 +359,7 @@ export default function ViewRequest() {
           </IconButton>
           <Box>
             <Typography variant="h4">
-              {formRequest.title}
+              {formRequest.title ?? 'Form Request'}
             </Typography>
             {lastUpdated && (
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
@@ -319,19 +380,46 @@ export default function ViewRequest() {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    } else {
+                      setError(data.error || 'Could not start Google connect');
+                    }
+                  } catch {
+                    setError('Could not start Google connect');
+                  }
+                }}
+              >
+                Reconnect Google
+              </Button>
+            ) : undefined
+          }
+        >
           {error}
         </Alert>
       )}
 
       {/* Warnings */}
-      {formRequest.warnings && formRequest.warnings.length > 0 && (
+      {Array.isArray(formRequest.warnings) && formRequest.warnings.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
             Important Notices:
           </Typography>
           <Box component="ul" sx={{ m: 0, pl: 2 }}>
-            {formRequest.warnings.map((warning, index) => (
+            {formRequest.warnings.map((warning: string, index: number) => (
               <li key={index}>
                 <Typography variant="body2">{warning}</Typography>
               </li>
@@ -353,7 +441,7 @@ export default function ViewRequest() {
               Description
             </Typography>
             <Typography variant="body1">
-              {formRequest.description || 'No description'}
+              {formRequest.description ?? 'No description'}
             </Typography>
           </Box>
 
@@ -362,8 +450,8 @@ export default function ViewRequest() {
               Form URL
             </Typography>
             <Typography variant="body2">
-              <a href={formRequest.form_url} target="_blank" rel="noopener noreferrer">
-                {formRequest.form_url}
+              <a href={formRequest.form_url ?? '#'} target="_blank" rel="noopener noreferrer">
+                {formRequest.form_url ?? '—'}
               </a>
             </Typography>
           </Box>
@@ -374,7 +462,7 @@ export default function ViewRequest() {
                 Created
               </Typography>
               <Typography variant="body1">
-                {new Date(formRequest.created_at).toLocaleString()}
+                {formRequest.created_at ? new Date(formRequest.created_at).toLocaleString() : '—'}
               </Typography>
             </Box>
 
@@ -393,8 +481,8 @@ export default function ViewRequest() {
               <Typography variant="subtitle2" color="text.secondary">
                 Status
               </Typography>
-              <Chip 
-                label={formRequest.status} 
+                <Chip 
+                label={formRequest.status ?? 'Unknown'} 
                 color={formRequest.status === 'Active' ? 'success' : 'default'}
                 size="small"
               />
@@ -412,10 +500,10 @@ export default function ViewRequest() {
         
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="h3" color="primary">
-            {formRequest.response_count}
+            {formRequest.response_count ?? 0}
           </Typography>
           <Typography variant="h5" color="text.secondary">
-            / {formRequest.total_recipients || 0}
+            / {formRequest.total_recipients ?? 0}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             responses received

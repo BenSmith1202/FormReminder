@@ -33,14 +33,27 @@ class EmailService:
     jinja_env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     
     @staticmethod
-    def get_email_template(form_title: str, form_url: str, recipient_email: str) -> str:
-        """Load and render the email template with Jinja2"""
+    def get_email_template(
+        form_title: str,
+        form_url: str,
+        recipient_email: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> str:
+        """Load and render the email template with Jinja2.
+        Pass owner_id to include the organization opt-out link in the email.
+        """
+        unsubscribe_url = (
+            EmailService.build_unsubscribe_url(owner_id, recipient_email)
+            if owner_id
+            else None
+        )
         template = EmailService.jinja_env.get_template('reminder_email.html')
         return template.render(
             form_title=form_title,
             form_url=form_url,
             recipient_email=recipient_email,
-            unsubscribe_url=None
+            unsubscribe_url=unsubscribe_url,
         )
 
     @staticmethod
@@ -194,9 +207,13 @@ class EmailService:
                 'error': f'Rate limit: Already sent to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
             }
         
-        # Generate email content
+        # Generate email content (always include opt-out link when we have an owner)
         subject = f"Reminder: Please Complete {form_title}"
-        unsubscribe_url = EmailService.build_unsubscribe_url(owner_id, recipient_email) if owner_id else None
+        unsubscribe_url = (
+            EmailService.build_unsubscribe_url(owner_id, recipient_email)
+            if owner_id
+            else None
+        )
         template = EmailService.jinja_env.get_template("reminder_email.html")
         html_content = template.render(
             form_title=form_title,

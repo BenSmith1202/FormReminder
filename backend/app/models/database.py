@@ -49,11 +49,13 @@ class FirestoreDB:
             
             # If no configured path, try default locations
             if not cred_path:
-                # Try project root first (where firestore-credentials.json actually is)
-                root_cred_path = os.path.join(project_root, 'firestore-credentials.json')
-                if os.path.exists(root_cred_path):
-                    cred_path = root_cred_path
-                else:
+                # Try project root: firestore-credentials.json or firebase-credentials.json
+                for name in ('firestore-credentials.json', 'firebase-credentials.json'):
+                    root_cred_path = os.path.join(project_root, name)
+                    if os.path.exists(root_cred_path):
+                        cred_path = root_cred_path
+                        break
+                if not cred_path:
                     # Try backend/firebase-credentials.json (one level up from app/models)
                     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
                     default_path = os.path.join(backend_dir, 'firebase-credentials.json')

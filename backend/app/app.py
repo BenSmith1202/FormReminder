@@ -544,10 +544,16 @@ def get_form_requests():
             api_access_available = form_data.get('api_access_available', True)
             
             if not email_collection_enabled:
-                warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+                warnings.append(
+                    "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
+                    "Responses → turn on 'Collect email addresses', or add a question that asks for email."
+                )
             
             if not api_access_available:
-                warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+                warnings.append(
+                    "Could not access this form via the API. If Refresh fails: reconnect your Google account "
+                    "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
+                )
             
             # Merge form data into request_data
             merged_data = {
@@ -688,10 +694,16 @@ def get_form_request_responses(request_id: str):
         api_access_available = form_data.get('api_access_available', True)
         
         if not email_collection_enabled:
-            warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+            warnings.append(
+                "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
+                "Responses → turn on 'Collect email addresses', or add a question that asks for email."
+            )
         
         if not api_access_available:
-            warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+            warnings.append(
+                "Could not access this form via the API. If Refresh fails: reconnect your Google account "
+                "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
+            )
         
         # Merge form data into request_data for response
         request_data_with_form = {
@@ -757,7 +769,7 @@ def refresh_form_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        form_id = request_data.get('google_form_id')
+        form_id = request_data.get('google_form_id') or request_data.get('form_id')
         if not form_id:
             return jsonify({"error": "No Google Form ID found"}), 400
         
@@ -783,8 +795,34 @@ def refresh_form_responses(request_id: str):
         
         # Fetch latest responses from Google
         print(f"Fetching responses from Google Forms API for form {form_id}...")
-        responses = GoogleFormsService.get_form_responses(credentials, form_id)
-        
+        try:
+            responses = GoogleFormsService.get_form_responses(credentials, form_id)
+        except Exception as api_err:
+            err_str = str(api_err)
+            # 404 from Forms API = form ID not found (viewform URL uses a different "published" ID than the API expects)
+            if "404" in err_str or "Requested entity was not found" in err_str or "not found" in err_str.lower():
+                return jsonify({
+                    "error": "Form not found",
+                    "message": "The form link you used is likely the view/share link. The API needs the edit link: open the form in Google Forms and copy the URL from the address bar (it contains /edit). Re-create the form request with that edit URL.",
+                    "code": "form_id_edit_link_required"
+                }), 404
+            # 403 from Google = no permission
+            if "403" in err_str or "Forbidden" in err_str:
+                return jsonify({
+                    "error": "No access to this form",
+                    "message": "Reconnect your Google account or ensure the form owner has granted you edit access so we can sync responses.",
+                    "action_required": "reconnect_google"
+                }), 403
+            # Credential/refresh errors
+            if "invalid_grant" in err_str or "revoked" in err_str or "credentials" in err_str.lower():
+                user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+                return jsonify({
+                    "error": "Google credentials invalid",
+                    "message": "Please reconnect your Google account",
+                    "action_required": "reconnect_google"
+                }), 401
+            raise
+
         print(f"Found {len(responses)} total responses from Google")
         if responses:
             # Log sample response emails for debugging
@@ -847,6 +885,11 @@ def refresh_form_responses(request_id: str):
         
         print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
         
+        # Infer email collection from responses: if any response has respondent_email, it's enabled
+        any_response_has_email = any(
+            (r.get('respondent_email') or '').strip() for r in responses
+        )
+        
         # Update form document in forms collection with sync time
         form_doc_id = request_data.get('form_id')
         if not form_doc_id:
@@ -858,12 +901,27 @@ def refresh_form_responses(request_id: str):
             form_doc = form_ref.get()
             sync_time = datetime.utcnow().isoformat() + 'Z'
             if form_doc.exists:
-                form_ref.update({
+                update_data = {
                     'last_synced_at': sync_time,
                     'api_access_available': True,
                     'updated_at': sync_time
-                })
-                print(f"Updated form document {form_doc_id} with sync time")
+                }
+                if any_response_has_email:
+                    try:
+                        existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
+                        if isinstance(existing_settings, dict):
+                            update_data['form_settings'] = {
+                                **existing_settings,
+                                'email_collection_enabled': True,
+                                'email_collection_type': 'VERIFIED'
+                            }
+                    except Exception:
+                        pass  # Don't fail refresh if form_settings update fails
+                try:
+                    form_ref.update(update_data)
+                    print(f"Updated form document {form_doc_id} with sync time")
+                except Exception as update_err:
+                    print(f"Warning: Could not update form doc: {update_err}")
             else:
                 # Create form document if it doesn't exist (for older form requests)
                 form_ref.set({
@@ -921,7 +979,8 @@ def create_form_request():
         if not user.google_access_token or not user.google_refresh_token:
             return jsonify({
                 "error": "Google account not connected",
-                "message": "Please connect your Google account first"
+                "message": "Please connect your Google account first",
+                "action_required": "reconnect_google"
             }), 403
         
         data = request.get_json()
