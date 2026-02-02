@@ -1,12 +1,17 @@
 # Email Service for sending reminders
 import os
 import smtplib
+import hmac
+import hashlib
+import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import Optional
 from jinja2 import Environment, FileSystemLoader
 from models.database import get_db, Collections
+from config import settings
+from models.org_membership import OrgMembership
 
 
 class EmailService:
@@ -28,14 +33,49 @@ class EmailService:
     jinja_env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     
     @staticmethod
-    def get_email_template(form_title: str, form_url: str, recipient_email: str) -> str:
-        """Load and render the email template with Jinja2"""
+    def get_email_template(
+        form_title: str,
+        form_url: str,
+        recipient_email: str,
+        *,
+        owner_id: Optional[str] = None,
+    ) -> str:
+        """Load and render the email template with Jinja2.
+        Pass owner_id to include the organization opt-out link in the email.
+        """
+        unsubscribe_url = (
+            EmailService.build_unsubscribe_url(owner_id, recipient_email)
+            if owner_id
+            else None
+        )
         template = EmailService.jinja_env.get_template('reminder_email.html')
         return template.render(
             form_title=form_title,
             form_url=form_url,
-            recipient_email=recipient_email
+            recipient_email=recipient_email,
+            unsubscribe_url=unsubscribe_url,
         )
+
+    @staticmethod
+    def _unsubscribe_token(owner_id: str, recipient_email: str) -> str:
+        msg = f"{owner_id}:{recipient_email.strip().lower()}".encode("utf-8")
+        key = (settings.SECRET_KEY or "").encode("utf-8")
+        return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def build_unsubscribe_url(owner_id: str, recipient_email: str) -> str:
+        """
+        Creates a signed URL that allows a recipient to leave (opt out of) an org.
+        """
+        email_norm = recipient_email.strip().lower()
+        token = EmailService._unsubscribe_token(owner_id, email_norm)
+        qs = urllib.parse.urlencode({"email": email_norm, "token": token})
+        return f"{settings.BACKEND_PUBLIC_URL}/api/organizations/{owner_id}/leave?{qs}"
+
+    @staticmethod
+    def verify_unsubscribe_token(owner_id: str, recipient_email: str, token: str) -> bool:
+        expected = EmailService._unsubscribe_token(owner_id, recipient_email.strip().lower())
+        return hmac.compare_digest(expected, token or "")
     
     @staticmethod
     def send_email(to_email: str, subject: str, html_content: str) -> bool:
@@ -141,9 +181,24 @@ class EmailService:
             # Don't fail the whole operation if logging fails
     
     @staticmethod
-    def send_reminder(request_id: str, form_title: str, form_url: str, recipient_email: str, 
-                     skip_rate_limit: bool = False) -> dict:
+    def send_reminder(
+        request_id: str,
+        form_title: str,
+        form_url: str,
+        recipient_email: str,
+        *,
+        owner_id: Optional[str] = None,
+        skip_rate_limit: bool = False,
+    ) -> dict:
         """Send a reminder email to a single recipient"""
+
+        # Org-level opt-out suppression
+        if owner_id and OrgMembership.is_opted_out(owner_id, recipient_email):
+            return {
+                "success": False,
+                "error": "Recipient has opted out of this organization",
+                "opted_out": True,
+            }
         
         # Check rate limit
         if not skip_rate_limit and not EmailService.can_send_reminder(request_id, recipient_email):
@@ -152,9 +207,20 @@ class EmailService:
                 'error': f'Rate limit: Already sent to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
             }
         
-        # Generate email content
+        # Generate email content (always include opt-out link when we have an owner)
         subject = f"Reminder: Please Complete {form_title}"
-        html_content = EmailService.get_email_template(form_title, form_url, recipient_email)
+        unsubscribe_url = (
+            EmailService.build_unsubscribe_url(owner_id, recipient_email)
+            if owner_id
+            else None
+        )
+        template = EmailService.jinja_env.get_template("reminder_email.html")
+        html_content = template.render(
+            form_title=form_title,
+            form_url=form_url,
+            recipient_email=recipient_email,
+            unsubscribe_url=unsubscribe_url,
+        )
         
         # Send email
         success = EmailService.send_email(recipient_email, subject, html_content)

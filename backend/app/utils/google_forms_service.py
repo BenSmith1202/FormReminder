@@ -197,28 +197,19 @@ class GoogleFormsService:
             form = service.forms().get(formId=form_id).execute()
             
             # Extract relevant metadata
+            # Google Forms API: settings.emailCollectionType is VERIFIED, RESPONDER_INPUT, or DO_NOT_COLLECT
+            settings_info = form.get('settings', {})
+            email_collection_type = settings_info.get('emailCollectionType', 'EMAIL_COLLECTION_TYPE_UNSPECIFIED')
+            # VERIFIED = collect from signed-in user; RESPONDER_INPUT = collect via form field
+            email_collection_enabled = email_collection_type in ('VERIFIED', 'RESPONDER_INPUT')
+
             metadata = {
                 'title': form.get('info', {}).get('title', 'Untitled Form'),
                 'description': form.get('info', {}).get('description', ''),
-                'email_collection_enabled': False,
-                'email_collection_type': 'NONE'
+                'email_collection_enabled': email_collection_enabled,
+                'email_collection_type': email_collection_type if email_collection_enabled else 'DO_NOT_COLLECT'
             }
-            
-            # Check if email collection is enabled
-            settings_info = form.get('settings', {})
-            if settings_info:
-                quiz_settings = settings_info.get('quizSettings', {})
-                email_collection = quiz_settings.get('isQuiz', False)
-                
-                # Check responderUri settings
-                responder_uri = form.get('responderUri', '')
-                
-                # More reliable: check if the form collects email
-                # This is typically in settings
-                if 'collectEmail' in str(settings_info).lower():
-                    metadata['email_collection_enabled'] = True
-                    metadata['email_collection_type'] = 'RESPONDER'
-            
+
             print(f"Form metadata: {metadata}")
             return metadata
             
@@ -352,27 +343,57 @@ class GoogleFormsService:
     
     @staticmethod
     def check_email_collection(credentials: Credentials, form_id: str) -> bool:
-        """Check if form has email collection enabled"""
+        """
+        Check if form has email collection enabled.
+        
+        FIX: Previously, this function ignored the form's actual settings (emailCollectionType)
+        and only checked if existing responses had email addresses. This caused false warnings
+        when:
+          1. A form had email collection enabled but no responses yet
+          2. A form had old responses from before email collection was turned on
+          3. The form used VERIFIED emails but responses hadn't been synced
+        
+        NEW LOGIC:
+          1. PRIMARY: Trust the form's settings (emailCollectionType = VERIFIED or RESPONDER_INPUT)
+          2. FALLBACK: If settings say disabled, double-check responses in case there's
+             an email question field that still captures emails
+          3. Only show warning if BOTH settings say disabled AND responses lack emails
+        """
         try:
             metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
             
-            # For now, we'll check if we can get respondent emails from responses
-            # This is the most reliable way
-            responses = GoogleFormsService.get_form_responses(credentials, form_id)
-            
-            # If any response has an email, collection is enabled
-            has_emails = any(r.get('respondent_email') for r in responses)
-            
-            if not has_emails and len(responses) == 0:
-                # If no responses yet, we can't tell for sure
-                # Return True to allow form creation, but warn user
-                print("Warning: No responses yet to verify email collection")
+            # PRIMARY CHECK: Use form settings from Google Forms API
+            # This is the authoritative source - if the form owner enabled email collection,
+            # emailCollectionType will be 'VERIFIED' or 'RESPONDER_INPUT'
+            if metadata.get('email_collection_enabled'):
+                print(f"Email collection enabled via form settings: {metadata.get('email_collection_type')}")
                 return True
             
-            print(f"Email collection enabled: {has_emails}")
-            return has_emails
+            # FALLBACK CHECK: If settings say disabled, verify by checking actual responses
+            # This handles edge cases like:
+            #   - Form has a manual "Enter your email" question (not using Google's built-in collection)
+            #   - API returned unexpected emailCollectionType value
+            responses = GoogleFormsService.get_form_responses(credentials, form_id)
+            
+            # If any response has an email, collection is working (even if settings say otherwise)
+            has_emails = any(r.get('respondent_email') for r in responses)
+            
+            if has_emails:
+                print("Email collection enabled: responses contain email addresses (overriding settings)")
+                return True
+            
+            if len(responses) == 0:
+                # No responses yet and settings say disabled
+                # We can't verify, so trust the settings (which say disabled)
+                # This will show a warning, which is appropriate if settings truly say disabled
+                print("Warning: No responses to verify; form settings indicate email collection is disabled")
+                return metadata.get('email_collection_enabled', False)
+            
+            # Settings say disabled AND existing responses have no emails = truly disabled
+            print(f"Email collection disabled: {len(responses)} responses without email addresses")
+            return False
             
         except Exception as e:
             print(f"Error checking email collection: {e}")
-            # Default to True to not block during testing
+            # Default to True to not block form creation during errors
             return True

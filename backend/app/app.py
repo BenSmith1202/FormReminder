@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.database import get_db, FirestoreDB
 from models.user import User
 from models.group import Group
+from models.org_membership import OrgMembership
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
@@ -44,6 +45,27 @@ def log_session():
     print(f"Has user_id: {'user_id' in session}")
     if 'user_id' in session:
         print(f"User ID: {session['user_id']}")
+
+
+def _create_notification(owner_id: str, notif_type: str, message: str, data=None) -> None:
+    """Persist a simple in-app notification for an org owner/admin."""
+    try:
+        from models.database import Collections
+        from datetime import datetime
+
+        db = get_db()
+        db.collection(Collections.NOTIFICATIONS).add(
+            {
+                "owner_id": owner_id,
+                "type": notif_type,
+                "message": message,
+                "data": data or {},
+                "read": False,
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+    except Exception as e:
+        print(f"Warning: failed to create notification: {e}")
 
 @app.get("/")
 def root():
@@ -522,10 +544,16 @@ def get_form_requests():
             api_access_available = form_data.get('api_access_available', True)
             
             if not email_collection_enabled:
-                warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+                warnings.append(
+                    "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
+                    "Responses → turn on 'Collect email addresses', or add a question that asks for email."
+                )
             
             if not api_access_available:
-                warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+                warnings.append(
+                    "Could not access this form via the API. If Refresh fails: reconnect your Google account "
+                    "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
+                )
             
             # Merge form data into request_data
             merged_data = {
@@ -666,10 +694,16 @@ def get_form_request_responses(request_id: str):
         api_access_available = form_data.get('api_access_available', True)
         
         if not email_collection_enabled:
-            warnings.append("Email collection may not be enabled on this form. Make sure your Google Form has email collection enabled in settings.")
+            warnings.append(
+                "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
+                "Responses → turn on 'Collect email addresses', or add a question that asks for email."
+            )
         
         if not api_access_available:
-            warnings.append('API access not available. Grant edit access to your Google Form, then use "Refresh Responses" to fetch data.')
+            warnings.append(
+                "Could not access this form via the API. If Refresh fails: reconnect your Google account "
+                "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
+            )
         
         # Merge form data into request_data for response
         request_data_with_form = {
@@ -735,7 +769,7 @@ def refresh_form_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        form_id = request_data.get('google_form_id')
+        form_id = request_data.get('google_form_id') or request_data.get('form_id')
         if not form_id:
             return jsonify({"error": "No Google Form ID found"}), 400
         
@@ -761,8 +795,34 @@ def refresh_form_responses(request_id: str):
         
         # Fetch latest responses from Google
         print(f"Fetching responses from Google Forms API for form {form_id}...")
-        responses = GoogleFormsService.get_form_responses(credentials, form_id)
-        
+        try:
+            responses = GoogleFormsService.get_form_responses(credentials, form_id)
+        except Exception as api_err:
+            err_str = str(api_err)
+            # 404 from Forms API = form ID not found (viewform URL uses a different "published" ID than the API expects)
+            if "404" in err_str or "Requested entity was not found" in err_str or "not found" in err_str.lower():
+                return jsonify({
+                    "error": "Form not found",
+                    "message": "The form link you used is likely the view/share link. The API needs the edit link: open the form in Google Forms and copy the URL from the address bar (it contains /edit). Re-create the form request with that edit URL.",
+                    "code": "form_id_edit_link_required"
+                }), 404
+            # 403 from Google = no permission
+            if "403" in err_str or "Forbidden" in err_str:
+                return jsonify({
+                    "error": "No access to this form",
+                    "message": "Reconnect your Google account or ensure the form owner has granted you edit access so we can sync responses.",
+                    "action_required": "reconnect_google"
+                }), 403
+            # Credential/refresh errors
+            if "invalid_grant" in err_str or "revoked" in err_str or "credentials" in err_str.lower():
+                user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+                return jsonify({
+                    "error": "Google credentials invalid",
+                    "message": "Please reconnect your Google account",
+                    "action_required": "reconnect_google"
+                }), 401
+            raise
+
         print(f"Found {len(responses)} total responses from Google")
         if responses:
             # Log sample response emails for debugging
@@ -825,6 +885,11 @@ def refresh_form_responses(request_id: str):
         
         print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
         
+        # Infer email collection from responses: if any response has respondent_email, it's enabled
+        any_response_has_email = any(
+            (r.get('respondent_email') or '').strip() for r in responses
+        )
+        
         # Update form document in forms collection with sync time
         form_doc_id = request_data.get('form_id')
         if not form_doc_id:
@@ -836,12 +901,27 @@ def refresh_form_responses(request_id: str):
             form_doc = form_ref.get()
             sync_time = datetime.utcnow().isoformat() + 'Z'
             if form_doc.exists:
-                form_ref.update({
+                update_data = {
                     'last_synced_at': sync_time,
                     'api_access_available': True,
                     'updated_at': sync_time
-                })
-                print(f"Updated form document {form_doc_id} with sync time")
+                }
+                if any_response_has_email:
+                    try:
+                        existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
+                        if isinstance(existing_settings, dict):
+                            update_data['form_settings'] = {
+                                **existing_settings,
+                                'email_collection_enabled': True,
+                                'email_collection_type': 'VERIFIED'
+                            }
+                    except Exception:
+                        pass  # Don't fail refresh if form_settings update fails
+                try:
+                    form_ref.update(update_data)
+                    print(f"Updated form document {form_doc_id} with sync time")
+                except Exception as update_err:
+                    print(f"Warning: Could not update form doc: {update_err}")
             else:
                 # Create form document if it doesn't exist (for older form requests)
                 form_ref.set({
@@ -899,7 +979,8 @@ def create_form_request():
         if not user.google_access_token or not user.google_refresh_token:
             return jsonify({
                 "error": "Google account not connected",
-                "message": "Please connect your Google account first"
+                "message": "Please connect your Google account first",
+                "action_required": "reconnect_google"
             }), 403
         
         data = request.get_json()
@@ -1574,18 +1655,28 @@ def add_group_members(group_id: str):
         
         if not emails:
             return jsonify({"error": "No valid emails found"}), 400
+
+        # Respect org-level opt-out: owners cannot re-add opted-out recipients by accident.
+        opted_out = []
+        allowed_emails = []
+        for e in emails:
+            if OrgMembership.is_opted_out(user_id, e):
+                opted_out.append(e)
+            else:
+                allowed_emails.append(e)
         
         print(f"Adding {len(emails)} emails to group {group_id}")
         
         # Add members
-        added_count = group.add_members(emails)
+        added_count = group.add_members(allowed_emails)
         
         return jsonify({
             "success": True,
             "message": f"Added {added_count} new members",
             "added_count": added_count,
             "total_members": len(group.members),
-            "skipped": len(emails) - added_count  # Duplicates
+            "skipped": len(emails) - added_count,  # Duplicates + opted-out
+            "skipped_opted_out": opted_out
         }), 200
         
     except Exception as e:
@@ -1693,6 +1784,9 @@ def join_group(invite_token: str):
         group = Group.get_by_invite_token(invite_token)
         if not group:
             return jsonify({"error": "Invalid invite link"}), 404
+
+        # Joining via invite link is an explicit opt-in; re-activate org membership if previously left.
+        OrgMembership.ensure_active(group.owner_id, email, source="invite_join")
         
         # Add member
         success = group.add_member(email)
@@ -1787,6 +1881,80 @@ def update_group(group_id):
             "details": str(e)
         }), 500
 
+# ============= ORGANIZATION (USER) MEMBERSHIP / OPT-OUT =============
+
+@app.route("/api/organizations/<owner_id>/leave", methods=["GET", "POST"])
+def leave_organization(owner_id: str):
+    """
+    PUBLIC: Recipient opt-out endpoint.
+
+    A recipient "leaving an organization" means:
+    - mark org membership as left (global suppression for future emails)
+    - remove the recipient from all groups owned by this org
+    - notify the org owner/admin
+    """
+    try:
+        # Support both email link clicks (GET query params) and JSON (POST).
+        email = (request.args.get("email") or "").strip()
+        token = (request.args.get("token") or "").strip()
+
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            email = (body.get("email") or email).strip()
+            token = (body.get("token") or token).strip()
+
+        if not email or not token:
+            return jsonify({"error": "email and token are required"}), 400
+
+        if not EmailService.verify_unsubscribe_token(owner_id, email, token):
+            return jsonify({"error": "Invalid or expired token"}), 403
+
+        # Mark opted out first (so even partial failures still suppress future emails).
+        OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
+
+        # Remove from all groups in this org (owner == org).
+        removed_from_groups = 0
+        groups = Group.get_user_groups(owner_id)
+        for g in groups:
+            try:
+                if g.remove_member(email):
+                    removed_from_groups += 1
+            except Exception:
+                # Continue best-effort; membership suppression already recorded.
+                pass
+
+        # Notify org owner/admin (in-app notification record).
+        _create_notification(
+            owner_id=owner_id,
+            notif_type="recipient_left_org",
+            message=f"{email} left your organization and was removed from {removed_from_groups} group(s).",
+            data={"recipient_email": email, "removed_from_groups": removed_from_groups},
+        )
+
+        # Return a friendly page for email link clicks.
+        if request.method == "GET":
+            return (
+                f"""
+                <html>
+                  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; padding: 32px;">
+                    <h2>You're opted out</h2>
+                    <p><strong>{email}</strong> has left this organization and will no longer receive emails from it.</p>
+                    <p>You may close this tab.</p>
+                  </body>
+                </html>
+                """,
+                200,
+                {"Content-Type": "text/html; charset=utf-8"},
+            )
+
+        return jsonify({"success": True, "message": "Opted out successfully"}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to opt out", "details": str(e)}), 500
+
+
 # ============= END GROUPS ROUTES =============
 
 # This matches frontend/src/pages/ServerTime.tsx
@@ -1832,9 +2000,13 @@ def send_single_reminder(request_id: str, email: str):
         form_url = request_data.get('form_url')
         
         print(f"Sending reminder to {email} for form: {form_title}")
+
+        # Respect org-level opt-out
+        if OrgMembership.is_opted_out(user_id, email):
+            return jsonify({"success": False, "error": "Recipient has opted out of this organization"}), 400
         
         # Send reminder
-        result = EmailService.send_reminder(request_id, form_title, form_url, email)
+        result = EmailService.send_reminder(request_id, form_title, form_url, email, owner_id=user_id)
         
         if result['success']:
             return jsonify(result), 200
@@ -1904,10 +2076,19 @@ def send_bulk_reminders(request_id: str):
         
         # Find non-responders
         non_responders = []
+        opted_out = []
         for member in group.members:
             member_email = member['email']
-            if member_email.lower() not in responded_emails:
-                non_responders.append(member_email)
+            member_email_lower = member_email.lower()
+            if member_email_lower in responded_emails:
+                continue
+
+            # Respect org-level opt-out
+            if OrgMembership.is_opted_out(user_id, member_email):
+                opted_out.append(member_email)
+                continue
+
+            non_responders.append(member_email)
         
         print(f"Found {len(non_responders)} non-responders out of {len(group.members)} members")
         
@@ -1926,7 +2107,13 @@ def send_bulk_reminders(request_id: str):
         failed = 0
         
         for recipient_email in non_responders:
-            result = EmailService.send_reminder(request_id, form_title, form_url, recipient_email)
+            result = EmailService.send_reminder(
+                request_id,
+                form_title,
+                form_url,
+                recipient_email,
+                owner_id=user_id,
+            )
             
             if result['success']:
                 sent += 1
@@ -1943,7 +2130,8 @@ def send_bulk_reminders(request_id: str):
             "sent": sent,
             "skipped": skipped,
             "failed": failed,
-            "total_non_responders": len(non_responders)
+            "total_non_responders": len(non_responders),
+            "skipped_opted_out": len(opted_out)
         }), 200
         
     except Exception as e:

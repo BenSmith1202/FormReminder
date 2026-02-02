@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "FormReminder"
     DEBUG: bool = True
     SECRET_KEY: str = "change_me_in_production"  # Flask session secret
+    # Public base URL used in emails (unsubscribe links, etc.)
+    BACKEND_PUBLIC_URL: str = "http://localhost:5000"
     
     # Google OAuth Settings
     GOOGLE_CLIENT_ID: Optional[str] = None

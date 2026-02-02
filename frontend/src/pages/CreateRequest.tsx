@@ -65,6 +65,7 @@ export default function CreateRequest() {
   const [customDays, setCustomDays] = useState<number[]>([]);
   const [newDayInput, setNewDayInput] = useState<string>('');
   const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
+  const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
 
   useEffect(() => {
     loadGroups();
@@ -227,9 +228,15 @@ export default function CreateRequest() {
       const data = await response.json();
       
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create form request');
+        const needsReconnect = data.action_required === 'reconnect_google' ||
+          (response.status === 403 && data.error?.toLowerCase().includes('google'));
+        if (needsReconnect) {
+          setNeedsGoogleReconnect(true);
+        }
+        throw new Error(data.message || data.error || 'Failed to create form request');
       }
       
+      setNeedsGoogleReconnect(false);
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Failed to create form request');
@@ -255,7 +262,34 @@ export default function CreateRequest() {
         </Typography>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          <Alert
+            severity="error"
+            sx={{ mb: 3 }}
+            onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+            action={
+              needsGoogleReconnect ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                      const data = await res.json();
+                      if (data.authorization_url) {
+                        window.location.href = data.authorization_url;
+                      } else {
+                        setError(data.error || 'Could not start Google connect');
+                      }
+                    } catch (e) {
+                      setError('Could not start Google connect');
+                    }
+                  }}
+                >
+                  Connect Google
+                </Button>
+              ) : undefined
+            }
+          >
             {error}
           </Alert>
         )}
@@ -302,7 +336,7 @@ export default function CreateRequest() {
               </Box>
               <TextField
                 fullWidth
-                placeholder="Paste the link to the online form here"
+                placeholder="Paste the form link (e.g. docs.google.com/forms/d/e/.../viewform)"
                 value={formUrl}
                 onChange={(e) => setFormUrl(e.target.value)}
                 required
@@ -310,7 +344,7 @@ export default function CreateRequest() {
                 variant="outlined"
               />
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', ml: 0.5 }}>
-                Paste the link to the online form here.
+                For syncing responses, use the form&apos;s <strong>edit link</strong>: open the form in Google Forms and copy the URL from the address bar (it contains <code>/edit</code>). The view/share link (<code>viewform</code>) uses a different ID and will not work for sync.
               </Typography>
             </Box>
 
