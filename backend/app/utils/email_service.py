@@ -191,6 +191,7 @@ class EmailService:
         skip_rate_limit: bool = False,
     ) -> dict:
         """Send a reminder email to a single recipient"""
+        from utils.google_forms_service import GoogleFormsService
 
         # Org-level opt-out suppression
         if owner_id and OrgMembership.is_opted_out(owner_id, recipient_email):
@@ -207,6 +208,10 @@ class EmailService:
                 'error': f'Rate limit: Already sent to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
             }
         
+        # Convert form URL to viewform URL (the one recipients use to fill out the form)
+        # This ensures we don't accidentally send edit links
+        viewform_url = GoogleFormsService.get_viewform_url(form_url) if form_url else form_url
+        
         # Generate email content (always include opt-out link when we have an owner)
         subject = f"Reminder: Please Complete {form_title}"
         unsubscribe_url = (
@@ -217,7 +222,7 @@ class EmailService:
         template = EmailService.jinja_env.get_template("reminder_email.html")
         html_content = template.render(
             form_title=form_title,
-            form_url=form_url,
+            form_url=viewform_url,
             recipient_email=recipient_email,
             unsubscribe_url=unsubscribe_url,
         )

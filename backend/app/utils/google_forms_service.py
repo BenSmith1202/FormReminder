@@ -188,6 +188,33 @@ class GoogleFormsService:
             return None
     
     @staticmethod
+    def get_viewform_url(form_url_or_id: str) -> str:
+        """
+        Convert any Google Form URL or ID to the public viewform URL.
+        
+        This is the URL recipients should use to fill out the form.
+        
+        Examples:
+            Input: https://docs.google.com/forms/d/ABC123/edit
+            Output: https://docs.google.com/forms/d/ABC123/viewform
+            
+            Input: ABC123 (just the ID)
+            Output: https://docs.google.com/forms/d/ABC123/viewform
+        """
+        # If it looks like a URL, extract the form ID first
+        if form_url_or_id.startswith('http'):
+            form_id = GoogleFormsService.extract_form_id(form_url_or_id)
+            if not form_id:
+                # Fallback: return original URL but try to replace /edit with /viewform
+                return form_url_or_id.replace('/edit', '/viewform')
+        else:
+            # It's just the form ID
+            form_id = form_url_or_id
+        
+        # Build the standard viewform URL
+        return f"https://docs.google.com/forms/d/{form_id}/viewform"
+    
+    @staticmethod
     def get_form_metadata(credentials: Credentials, form_id: str) -> Dict:
         """Fetch form metadata from Google Forms API"""
         try:
