@@ -1,6 +1,6 @@
 
 from flask import Blueprint, request, jsonify, session
-from datetime import datetime
+from datetime import datetime, timezone
 import traceback
 
 # Import your models and database tools
@@ -84,10 +84,10 @@ def get_form_requests():
                     "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
                 )
             
-            # Merge form data into request_data
+            # Merge form data into request_data - request_data takes precedence
             merged_data = {
-                **request_data,
-                **form_data,  # Merge form data (form_url, title, description, last_synced_at, etc.)
+                **form_data,  # Form data first (base - last_synced_at, api_access, etc.)
+                **request_data,  # Request data second (overrides - title, description, etc.)
                 "response_count": response_count,  # Include dynamically calculated response_count
                 "total_recipients": total_recipients,  # Always include fresh count
                 "warnings": warnings  # Include dynamically calculated warnings
@@ -234,10 +234,10 @@ def get_form_request_responses(request_id: str):
                 "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
             )
         
-        # Merge form data into request_data for response
+        # Merge form data into request_data for response - request_data takes precedence
         request_data_with_form = {
-            **request_data,
-            **form_data,  # Merge form data (form_url, title, description, etc.)
+            **form_data,  # Form data first (base - last_synced_at, api_access, etc.)
+            **request_data,  # Request data second (overrides - title, description, etc.)
             "warnings": warnings
         }
         
@@ -389,7 +389,7 @@ def refresh_form_responses(request_id: str):
                 'total_score': response.get('total_score'),
                 'answers': response.get('answers', {}),  # Full answer data
                 'answer_count': response.get('answer_count', 0),
-                'created_at': datetime.utcnow().isoformat() + 'Z'
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             # Update existing response or create new one
@@ -428,7 +428,7 @@ def refresh_form_responses(request_id: str):
         if form_doc_id:
             form_ref = db.collection(Collections.FORMS).document(form_doc_id)
             form_doc = form_ref.get()
-            sync_time = datetime.utcnow().isoformat() + 'Z'
+            sync_time = datetime.now(timezone.utc).isoformat()
             if form_doc.exists:
                 update_data = {
                     'last_synced_at': sync_time,
@@ -474,7 +474,7 @@ def refresh_form_responses(request_id: str):
             "success": True,
             "message": "Responses refreshed successfully",
             "response_count": stored_count,
-            "synced_at": datetime.utcnow().isoformat() + 'Z'
+            "synced_at": datetime.now(timezone.utc).isoformat()
         }), 200
         
     except Exception as e:
@@ -659,7 +659,7 @@ def create_form_request():
         reminder_dates = ReminderSchedule.calculate_reminder_dates(due_date, reminder_days)
         
         # Create or update form document in forms collection
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = datetime.now(timezone.utc).isoformat()
         form_doc_id = form_id  # Use google_form_id as the document ID
         
         form_data = {
@@ -705,18 +705,18 @@ def create_form_request():
             'status': 'Active',
             'is_active': True,
             # Reminder schedule configuration
-            'due_date': due_date.isoformat() + 'Z',
+            'due_date': due_date.isoformat(),
             'reminder_schedule': {
                 'schedule_type': reminder_schedule,
                 'reminder_days': reminder_days,
                 'is_custom': schedule_config['is_custom'],
                 'custom_days': custom_days if reminder_schedule == 'custom' else None,
-                'calculated_reminder_dates': [d.isoformat() + 'Z' for d in reminder_dates]
+                'calculated_reminder_dates': [d.isoformat() for d in reminder_dates]
             },
             'first_reminder_timing': {
                 'timing_type': first_reminder_timing,
-                'scheduled_date': scheduled_reminder_date.isoformat() + 'Z' if scheduled_reminder_date else None,
-                'scheduled_time': scheduled_reminder_time.isoformat() + 'Z' if scheduled_reminder_time else None,
+                'scheduled_date': scheduled_reminder_date.isoformat() if scheduled_reminder_date else None,
+                'scheduled_time': scheduled_reminder_time.isoformat() if scheduled_reminder_time else None,
             }
         }
         
@@ -732,7 +732,7 @@ def create_form_request():
                 'respondent_email': response.get('respondent_email', ''),
                 'response_id': response.get('response_id', ''),
                 'submitted_at': response.get('submitted_at', ''),
-                'created_at': datetime.utcnow().isoformat() + 'Z'
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
@@ -796,7 +796,7 @@ def update_form_request(request_id):
             return jsonify({"error": "No data provided"}), 400
 
         updates = {
-            'updated_at': datetime.utcnow().isoformat() + 'Z'
+            'updated_at': datetime.now(timezone.utc).isoformat()
         }
 
         # --- Handle Basic Fields ---
@@ -854,7 +854,7 @@ def update_form_request(request_id):
             try:
                 if isinstance(new_due_date_str, str):
                     final_due_date_obj = datetime.fromisoformat(new_due_date_str.replace('Z', '+00:00'))
-                    updates['due_date'] = final_due_date_obj.isoformat() + 'Z'
+                    updates['due_date'] = final_due_date_obj.isoformat()
                     if new_due_date_str != current_due_date_str:
                         needs_reschedule = True
                 else:
@@ -897,7 +897,7 @@ def update_form_request(request_id):
                 'reminder_days': reminder_days,
                 'is_custom': schedule_config['is_custom'],
                 'custom_days': final_custom_days if final_schedule_type == 'custom' else None,
-                'calculated_reminder_dates': [d.isoformat() + 'Z' for d in reminder_dates]
+                'calculated_reminder_dates': [d.isoformat() for d in reminder_dates]
             }
 
         # --- Handle First Reminder Timing ---

@@ -158,17 +158,33 @@ def add_group_members(group_id: str):
         for e in emails:
             if OrgMembership.is_opted_out(user_id, e):
                 opted_out.append(e)
+                print(f"  Skipping opted-out email: {e}")
             else:
                 allowed_emails.append(e)
         
-        print(f"Adding {len(emails)} emails to group {group_id}")
+        print(f"Adding {len(allowed_emails)} emails to group {group_id} ({len(opted_out)} opted-out)")
+        
+        # If ALL emails were opted out, return a clear error
+        if not allowed_emails and opted_out:
+            opted_out_list = ', '.join(opted_out)
+            return jsonify({
+                "error": f"Cannot add opted-out members",
+                "message": f"The following email(s) have opted out of your organization: {opted_out_list}. They can only rejoin via an invite link.",
+                "skipped_opted_out": opted_out
+            }), 400
         
         # Add members
         added_count = group.add_members(allowed_emails)
         
+        # Build response message
+        message = f"Added {added_count} new members"
+        if opted_out:
+            opted_out_list = ', '.join(opted_out)
+            message += f". Skipped {len(opted_out)} opted-out email(s): {opted_out_list} (they can only rejoin via invite link)"
+        
         return jsonify({
             "success": True,
-            "message": f"Added {added_count} new members",
+            "message": message,
             "added_count": added_count,
             "total_members": len(group.members),
             "skipped": len(emails) - added_count,  # Duplicates + opted-out
