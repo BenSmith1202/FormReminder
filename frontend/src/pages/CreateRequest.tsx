@@ -31,7 +31,6 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Close as CloseIcon,
-  Google as GoogleIcon,
 } from '@mui/icons-material';
 import { TimePicker } from '@mui/x-date-pickers';
 import { StaticDatePicker } from '@mui/x-date-pickers/StaticDatePicker';
@@ -66,15 +65,10 @@ export default function CreateRequest() {
   const [customDays, setCustomDays] = useState<number[]>([]);
   const [newDayInput, setNewDayInput] = useState<string>('');
   const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
-  
-  // Google OAuth state
-  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
-  const [checkingGoogleAuth, setCheckingGoogleAuth] = useState(true);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
 
   useEffect(() => {
     loadGroups();
-    checkGoogleAuthStatus();
   }, []);
 
   // Handle cancel button click on scheduled date picker
@@ -169,53 +163,6 @@ export default function CreateRequest() {
     }
   };
 
-  const checkGoogleAuthStatus = async () => {
-    try {
-      setCheckingGoogleAuth(true);
-      const response = await fetch(`${API_URL}/api/google-auth-status`, {
-        credentials: 'include',
-      });
-      const data = await response.json();
-      setGoogleConnected(data.google_connected || false);
-    } catch (error) {
-      console.error('Failed to check Google auth status:', error);
-      setGoogleConnected(false);
-    } finally {
-      setCheckingGoogleAuth(false);
-    }
-  };
-
-  const connectGoogleAccount = async () => {
-    try {
-      setConnectingGoogle(true);
-      const response = await fetch(`${API_URL}/login/google`, {
-        credentials: 'include',
-      });
-      const data = await response.json();
-      
-      if (data.authorization_url) {
-        // Open OAuth in new window
-        const authWindow = window.open(data.authorization_url, 'Google Auth', 'width=500,height=600');
-        
-        // Poll to check when the window is closed
-        const pollTimer = setInterval(() => {
-          if (authWindow?.closed) {
-            clearInterval(pollTimer);
-            // Re-check auth status after window closes
-            setTimeout(() => {
-              checkGoogleAuthStatus();
-              setConnectingGoogle(false);
-            }, 1000);
-          }
-        }, 500);
-      }
-    } catch (error) {
-      console.error('Failed to initiate Google login:', error);
-      setError('Failed to connect Google account. Please try again.');
-      setConnectingGoogle(false);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -281,18 +228,15 @@ export default function CreateRequest() {
       const data = await response.json();
       
       if (!response.ok) {
-        // Handle specific error cases
-        if (response.status === 403 && data.message) {
-          // Permission error - show detailed message
-          throw new Error(data.message);
-        } else if (data.action_required === 'reconnect_google') {
-          // Need to reconnect Google
-          setGoogleConnected(false);
-          throw new Error('Your Google connection expired. Please reconnect.');
+        const needsReconnect = data.action_required === 'reconnect_google' ||
+          (response.status === 403 && data.error?.toLowerCase().includes('google'));
+        if (needsReconnect) {
+          setNeedsGoogleReconnect(true);
         }
-        throw new Error(data.error || data.details || 'Failed to create form request');
+        throw new Error(data.message || data.error || 'Failed to create form request');
       }
       
+      setNeedsGoogleReconnect(false);
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Failed to create form request');
@@ -318,71 +262,38 @@ export default function CreateRequest() {
         </Typography>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          <Alert
+            severity="error"
+            sx={{ mb: 3 }}
+            onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+            action={
+              needsGoogleReconnect ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                      const data = await res.json();
+                      if (data.authorization_url) {
+                        window.location.href = data.authorization_url;
+                      } else {
+                        setError(data.error || 'Could not start Google connect');
+                      }
+                    } catch (e) {
+                      setError('Could not start Google connect');
+                    }
+                  }}
+                >
+                  Connect Google
+                </Button>
+              ) : undefined
+            }
+          >
             {error}
           </Alert>
         )}
 
-        {/* Google Auth Check */}
-        {checkingGoogleAuth ? (
-          <Paper
-            elevation={0}
-            sx={{
-              p: 5,
-              bgcolor: 'background.paper',
-              borderRadius: 2,
-              border: '1px solid',
-              borderColor: 'divider',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minHeight: 200,
-            }}
-          >
-            <CircularProgress size={40} sx={{ mb: 2 }} />
-            <Typography variant="body1" color="text.secondary">
-              Checking Google connection...
-            </Typography>
-          </Paper>
-        ) : googleConnected === false ? (
-          <Paper
-            elevation={0}
-            sx={{
-              p: 5,
-              bgcolor: 'background.paper',
-              borderRadius: 2,
-              border: '1px solid',
-              borderColor: 'divider',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minHeight: 300,
-            }}
-          >
-            <GoogleIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-            <Typography variant="h6" gutterBottom>
-              Connect Your Google Account
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3, textAlign: 'center', maxWidth: 400 }}>
-              To create form requests, you need to connect your Google account. This allows FormReminder to access your Google Forms and track responses.
-            </Typography>
-            <Button
-              variant="contained"
-              size="large"
-              startIcon={connectingGoogle ? <CircularProgress size={20} color="inherit" /> : <GoogleIcon />}
-              onClick={connectGoogleAccount}
-              disabled={connectingGoogle}
-              sx={{ textTransform: 'none', px: 4, py: 1.5 }}
-            >
-              {connectingGoogle ? 'Connecting...' : 'Connect Google Account'}
-            </Button>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-              You'll be redirected to Google to authorize access.
-            </Typography>
-          </Paper>
-        ) : (
         <Paper 
           elevation={0}
           sx={{ 
@@ -425,7 +336,7 @@ export default function CreateRequest() {
               </Box>
               <TextField
                 fullWidth
-                placeholder="Paste the link to the online form here"
+                placeholder="Paste the form link (e.g. docs.google.com/forms/d/e/.../viewform)"
                 value={formUrl}
                 onChange={(e) => setFormUrl(e.target.value)}
                 required
@@ -433,7 +344,7 @@ export default function CreateRequest() {
                 variant="outlined"
               />
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', ml: 0.5 }}>
-                Paste the link to the online form here.
+                For syncing responses, use the form&apos;s <strong>edit link</strong>: open the form in Google Forms and copy the URL from the address bar (it contains <code>/edit</code>). The view/share link (<code>viewform</code>) uses a different ID and will not work for sync.
               </Typography>
             </Box>
 
@@ -506,7 +417,7 @@ export default function CreateRequest() {
                   >
                     <StaticDatePicker
                       value={dueDate}
-                      onChange={(newValue: Date | null) => {
+                      onChange={(newValue) => {
                         if (newValue) {
                           setDueDate(newValue);
                         }
@@ -738,11 +649,11 @@ export default function CreateRequest() {
                       >
                         <StaticDatePicker
                           value={scheduledDate}
-                          onChange={(newValue: Date | null) => {
+                          onChange={(newValue) => {
                             // Update date as user selects it
                             setScheduledDate(newValue);
                           }}
-                          onAccept={(newValue: Date | null) => {
+                          onAccept={(newValue) => {
                             // Explicitly save when OK/Accept is clicked
                             if (newValue) {
                               setScheduledDate(newValue);
@@ -786,11 +697,11 @@ export default function CreateRequest() {
                       <TimePicker
                         label="Scheduled Time"
                         value={scheduledTime}
-                        onChange={(newValue: Date | null) => {
+                        onChange={(newValue) => {
                           // Update time as user selects it
                           setScheduledTime(newValue);
                         }}
-                        onAccept={(newValue: Date | null) => {
+                        onAccept={(newValue) => {
                           // Explicitly save when OK/Accept is clicked
                           if (newValue) {
                             setScheduledTime(newValue);
@@ -844,7 +755,6 @@ export default function CreateRequest() {
             </Box>
           </form>
         </Paper>
-        )}
 
       </Box>
 

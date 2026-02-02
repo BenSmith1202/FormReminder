@@ -17,12 +17,18 @@ import {
   Stack,
   Divider,
   IconButton,
+  Grid,
+  Link,
+  Tooltip
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import EmailIcon from '@mui/icons-material/Email';
 import SendIcon from '@mui/icons-material/Send';
+import EditIcon from '@mui/icons-material/Edit';
+import EventIcon from '@mui/icons-material/Event';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 
 const API_URL = 'http://localhost:5000';
 
@@ -37,6 +43,9 @@ interface FormRequest {
   last_synced_at: string;
   status: string;
   warnings?: string[];
+  due_date?: string;
+  // Handle both string (legacy) and object (new) formats
+  reminder_schedule?: string | { schedule_type: string; [key: string]: any };
 }
 
 interface Response {
@@ -69,7 +78,8 @@ export default function ViewRequest() {
 
   const loadFormRequestData = async () => {
     try {
-      setLoading(true);
+      // Only show full spinner on first load
+      if (!formRequest) setLoading(true);
       setError(null);
 
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}/responses`, {
@@ -82,15 +92,12 @@ export default function ViewRequest() {
 
       const data = await response.json();
       
-      console.log('Loaded form request data:', data);
-      
       setFormRequest(data.form_request);
       setNonMemberResponses(data.non_member_responses || []);
       setMemberStatus(data.member_status || []);
       setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error loading form request:', err);
-      console.error('Auto-refresh error:', err);
       setError(err.message || 'Failed to load form request');
     } finally {
       setLoading(false);
@@ -98,9 +105,7 @@ export default function ViewRequest() {
   };
 
   const handleSendReminder = async (email: string) => {
-    if (!window.confirm(`Send a reminder email to ${email}?`)) {
-      return;
-    }
+    if (!window.confirm(`Send a reminder email to ${email}?`)) return;
 
     setSendingEmail(email);
     try {
@@ -110,16 +115,10 @@ export default function ViewRequest() {
       });
       
       const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to send reminder');
       
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to send reminder');
-      }
-      
-      console.log('✅ Reminder sent:', result);
       alert(result.message || 'Reminder sent successfully!');
-      
     } catch (err: any) {
-      console.error('❌ Failed to send reminder:', err);
       alert(`Failed to send reminder: ${err.message}`);
     } finally {
       setSendingEmail(null);
@@ -128,15 +127,12 @@ export default function ViewRequest() {
 
   const handleSendBulkReminders = async () => {
     const nonResponders = memberStatus.filter(m => m.status === 'not_responded');
-    
     if (nonResponders.length === 0) {
       alert('All members have already responded!');
       return;
     }
 
-    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?\n\n(This will skip anyone who was sent a reminder in the last hour)`)) {
-      return;
-    }
+    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?`)) return;
 
     setSendingBulk(true);
     try {
@@ -144,18 +140,11 @@ export default function ViewRequest() {
         method: 'POST',
         credentials: 'include',
       });
-      
       const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to send reminders');
       
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to send reminders');
-      }
-      
-      console.log('✅ Bulk reminders sent:', result);
-      alert(`Success!\n\nSent: ${result.sent}\nSkipped (rate limit): ${result.skipped}\nFailed: ${result.failed}`);
-      
+      alert(`Success!\n\nSent: ${result.sent}\nSkipped: ${result.skipped}\nFailed: ${result.failed}`);
     } catch (err: any) {
-      console.error('❌ Failed to send bulk reminders:', err);
       alert(`Failed to send reminders: ${err.message}`);
     } finally {
       setSendingBulk(false);
@@ -163,73 +152,47 @@ export default function ViewRequest() {
   };
 
   useEffect(() => {
-    if (requestId) {
-      loadFormRequestData();
-    }
+    if (requestId) loadFormRequestData();
   }, [requestId]);
 
   // Auto-refresh polling
   useEffect(() => {
     if (!requestId) return;
-
-    // Poll every 30 seconds
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        syncAndLoadData();
+        // Sync silently (no loading spinner)
+        fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+        }).then(() => loadFormRequestData()).catch(console.error);
       }
     }, 30000);
-
-    // Handle tab visibility changes
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // Immediately refresh when tab becomes active
-        syncAndLoadData();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      clearInterval(pollInterval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return () => clearInterval(pollInterval);
   }, [requestId]);
-
-  const syncAndLoadData = async () => {
-    try {
-      // Sync with Google Forms first
-      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        const result = await response.json();
-        console.error('Auto-refresh sync error:', result.error);
-      }
-      
-      // Then load the updated data
-      await loadFormRequestData();
-    } catch (error) {
-      console.error('Auto-refresh error:', error);
-      // Still try to load cached data
-      loadFormRequestData();
-    }
-  };
 
   // Update "seconds since update" counter
   useEffect(() => {
     if (!lastUpdated) return;
-
     const timer = setInterval(() => {
-      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
-      setSecondsSinceUpdate(seconds);
+      setSecondsSinceUpdate(Math.floor((Date.now() - lastUpdated.getTime()) / 1000));
     }, 1000);
-
     return () => clearInterval(timer);
   }, [lastUpdated]);
 
-  if (loading) {
+  const getScheduleLabel = (schedule?: string | { schedule_type: string; [key: string]: any }) => {
+    // Extract string type if it's an object
+    const type = (typeof schedule === 'object' && schedule !== null) ? schedule.schedule_type : schedule;
+
+    switch(type) {
+      case 'gentle': return 'Gentle (3, 1 days before)';
+      case 'normal': return 'Normal (5, 3, 1 days before)';
+      case 'frequent': return 'Frequent (Daily last week)';
+      case 'custom': return 'Custom Schedule';
+      default: return type || 'Not set';
+    }
+  };
+
+  if (loading && !formRequest) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
         <CircularProgress />
@@ -237,278 +200,213 @@ export default function ViewRequest() {
     );
   }
 
-  if (error && !formRequest) {
+  if (error || !formRequest) {
     return (
-      <Box>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/')}
-          sx={{ mb: 2 }}
-        >
+      <Box p={3}>
+        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/')} sx={{ mb: 2 }}>
           Back to Dashboard
         </Button>
-        <Alert severity="error">{error}</Alert>
-      </Box>
-    );
-  }
-
-  if (!formRequest) {
-    return (
-      <Box>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/')}
-          sx={{ mb: 2 }}
-        >
-          Back to Dashboard
-        </Button>
-        <Alert severity="warning">Form request not found</Alert>
+        <Alert severity="error">{error || 'Form request not found'}</Alert>
       </Box>
     );
   }
 
   return (
-    <Box>
+    <Box maxWidth="xl" sx={{ mx: 'auto', px: 2, py: 3 }}>
       {/* Header */}
-      <Box display="flex" alignItems="center" mb={3}>
-        <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
-          <ArrowBackIcon />
-        </IconButton>
-        <Box>
-          <Typography variant="h4">
-            {formRequest.title}
-          </Typography>
-          {lastUpdated && (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-              Last updated: {secondsSinceUpdate}s ago
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+        <Box display="flex" alignItems="center">
+          <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
+            <ArrowBackIcon />
+          </IconButton>
+          <Box>
+            <Typography variant="h4" fontWeight="bold">
+              {formRequest.title}
             </Typography>
-          )}
+            {lastUpdated && (
+              <Typography variant="caption" color="text.secondary">
+                Last updated: {secondsSinceUpdate}s ago
+              </Typography>
+            )}
+          </Box>
         </Box>
+        <Button
+          variant="outlined"
+          startIcon={<EditIcon />}
+          onClick={() => navigate(`/requests/${requestId}/edit`)}
+        >
+          Edit Configuration
+        </Button>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      {/* Warnings */}
       {formRequest.warnings && formRequest.warnings.length > 0 && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
+        <Alert severity="warning" sx={{ mb: 3 }}>
           {formRequest.warnings.join(', ')}
         </Alert>
       )}
 
-      {/* Form Details */}
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Form Details
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        
-        <Stack spacing={2}>
-          <Box>
-            <Typography variant="subtitle2" color="text.secondary">
-              Description
-            </Typography>
-            <Typography variant="body1">
-              {formRequest.description || 'No description'}
-            </Typography>
-          </Box>
+      <Grid container spacing={3} mb={3}>
+        {/* Main Info */}
+        <Grid size={{ xs: 12, md: 8 }}>
+          <Paper sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>Request Details</Typography>
+            <Divider sx={{ mb: 2 }} />
+            
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Description</Typography>
+                <Typography variant="body1">{formRequest.description || 'No description provided.'}</Typography>
+              </Box>
 
-          <Box>
-            <Typography variant="subtitle2" color="text.secondary">
-              Form URL
-            </Typography>
-            <Typography variant="body2">
-              <a href={formRequest.form_url} target="_blank" rel="noopener noreferrer">
-                {formRequest.form_url}
-              </a>
-            </Typography>
-          </Box>
-
-          <Box display="flex" gap={4}>
-            <Box>
-              <Typography variant="subtitle2" color="text.secondary">
-                Created
-              </Typography>
-              <Typography variant="body1">
-                {new Date(formRequest.created_at).toLocaleString()}
-              </Typography>
-            </Box>
-
-            <Box>
-              <Typography variant="subtitle2" color="text.secondary">
-                Last Synced
-              </Typography>
-              <Typography variant="body1">
-                {new Date(formRequest.last_synced_at).toLocaleString()}
-              </Typography>
-            </Box>
-
-            <Box>
-              <Typography variant="subtitle2" color="text.secondary">
-                Status
-              </Typography>
-              <Chip 
-                label={formRequest.status} 
-                color={formRequest.status === 'Active' ? 'success' : 'default'}
-                size="small"
-              />
-            </Box>
-          </Box>
-        </Stack>
-      </Paper>
-
-      {/* Response Summary */}
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Response Summary
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="h3" color="primary">
-            {formRequest.response_count}
-          </Typography>
-          <Typography variant="h5" color="text.secondary">
-            / {formRequest.total_recipients || 0}
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            responses received
-          </Typography>
-        </Box>
-        
-        {nonMemberResponses.length > 0 && (
-          <Alert severity="warning" sx={{ mt: 2 }}>
-            ⚠️ {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
-          </Alert>
-        )}
-      </Paper>
-
-      {/* Member Status Table */}
-      {memberStatus.length > 0 && (
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-            <Typography variant="h6">
-              Member Status ({memberStatus.length})
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={sendingBulk ? <CircularProgress size={20} /> : <SendIcon />}
-              onClick={handleSendBulkReminders}
-              disabled={sendingBulk || memberStatus.filter(m => m.status === 'not_responded').length === 0}
-            >
-              {sendingBulk ? 'Sending...' : `Send to All Non-Responders (${memberStatus.filter(m => m.status === 'not_responded').length})`}
-            </Button>
-          </Box>
-          <Divider sx={{ mb: 2}} />
-
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell width="50">#</TableCell>
-                  <TableCell>Email</TableCell>
-                  <TableCell>Submitted At</TableCell>
-                  <TableCell width="120" align="center">Status</TableCell>
-                  <TableCell width="120" align="center">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {memberStatus.map((member, index) => (
-                  <TableRow key={index} hover>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight="medium">
-                        {member.email}
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <EventIcon color="action" fontSize="small" />
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary">Due Date</Typography>
+                      <Typography variant="body1">
+                        {formRequest.due_date ? new Date(formRequest.due_date).toLocaleDateString() : 'Not set'}
                       </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {member.submitted_at 
-                        ? new Date(member.submitted_at).toLocaleString()
-                        : '-'}
-                    </TableCell>
-                    <TableCell align="center">
-                      {member.status === 'responded' ? (
-                        <Chip 
-                          icon={<CheckCircleIcon />} 
-                          label="Responded" 
-                          color="success" 
-                          size="small" 
-                        />
-                      ) : (
-                        <Chip 
-                          icon={<CancelIcon />} 
-                          label="Not Responded" 
-                          color="error" 
-                          size="small" 
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell align="center">
-                      {member.status === 'not_responded' && (
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={sendingEmail === member.email ? <CircularProgress size={16} /> : <EmailIcon />}
+                    </Box>
+                  </Box>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <ScheduleIcon color="action" fontSize="small" />
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary">Schedule</Typography>
+                      <Typography variant="body1">
+                        {getScheduleLabel(formRequest.reminder_schedule)}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+              </Grid>
+
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">Form URL</Typography>
+                <Link href={formRequest.form_url} target="_blank" rel="noopener" underline="hover" sx={{ wordBreak: 'break-all' }}>
+                  {formRequest.form_url}
+                </Link>
+              </Box>
+
+              <Box display="flex" gap={2}>
+                 <Chip label={formRequest.status} color={formRequest.status === 'Active' ? 'success' : 'default'} size="small" />
+                 <Typography variant="body2" color="text.secondary">
+                    Created: {new Date(formRequest.created_at).toLocaleDateString()}
+                 </Typography>
+              </Box>
+            </Stack>
+          </Paper>
+        </Grid>
+
+        {/* Stats */}
+        <Grid size={{ xs: 12, md: 4 }}>
+          <Paper sx={{ p: 3, textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <Typography variant="h6" color="text.secondary" gutterBottom>Response Rate</Typography>
+            <Box position="relative" display="inline-flex" justifyContent="center" my={2}>
+              <CircularProgress 
+                variant="determinate" 
+                value={formRequest.total_recipients > 0 ? (formRequest.response_count / formRequest.total_recipients) * 100 : 0} 
+                size={80}
+                thickness={4}
+              />
+              <Box position="absolute" top={0} left={0} bottom={0} right={0} display="flex" alignItems="center" justifyContent="center">
+                <Typography variant="h6" color="text.secondary">
+                  {formRequest.total_recipients > 0 ? Math.round((formRequest.response_count / formRequest.total_recipients) * 100) : 0}%
+                </Typography>
+              </Box>
+            </Box>
+            <Typography variant="h4">
+              {formRequest.response_count} <Typography component="span" variant="h6" color="text.secondary">/ {formRequest.total_recipients}</Typography>
+            </Typography>
+            <Typography variant="body2" color="text.secondary">responses received</Typography>
+          </Paper>
+        </Grid>
+      </Grid>
+
+      {/* Member Table */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="h6">Member Status</Typography>
+          <Button
+            variant="contained"
+            startIcon={sendingBulk ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
+            onClick={handleSendBulkReminders}
+            disabled={sendingBulk || memberStatus.filter(m => m.status === 'not_responded').length === 0}
+          >
+            {sendingBulk ? 'Sending...' : `Remind All Outstanding (${memberStatus.filter(m => m.status === 'not_responded').length})`}
+          </Button>
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+
+        <TableContainer sx={{ maxHeight: 600 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell width="50">#</TableCell>
+                <TableCell>Email</TableCell>
+                <TableCell>Submitted At</TableCell>
+                <TableCell align="center">Status</TableCell>
+                <TableCell align="center">Action</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {memberStatus.map((member, index) => (
+                <TableRow key={index} hover>
+                  <TableCell>{index + 1}</TableCell>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight="medium">{member.email}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    {member.submitted_at ? new Date(member.submitted_at).toLocaleString() : '-'}
+                  </TableCell>
+                  <TableCell align="center">
+                    {member.status === 'responded' ? (
+                      <Chip icon={<CheckCircleIcon />} label="Responded" color="success" size="small" />
+                    ) : (
+                      <Chip icon={<CancelIcon />} label="Waiting" color="error" size="small" variant="outlined" />
+                    )}
+                  </TableCell>
+                  <TableCell align="center">
+                    {member.status === 'not_responded' && (
+                      <Tooltip title="Send individual reminder">
+                        <IconButton 
+                          color="primary"
                           onClick={() => handleSendReminder(member.email)}
                           disabled={sendingEmail === member.email}
                         >
-                          {sendingEmail === member.email ? 'Sending...' : 'Send Reminder'}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      )}
+                          {sendingEmail === member.email ? <CircularProgress size={20} /> : <EmailIcon />}
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
 
       {/* Non-Member Responses */}
       {nonMemberResponses.length > 0 && (
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Non-Member Responses ({nonMemberResponses.length})
+        <Paper sx={{ p: 3, bgcolor: '#fff4e5' }}>
+          <Typography variant="h6" gutterBottom color="warning.dark">
+            ⚠️ Unrecognized Responses ({nonMemberResponses.length})
           </Typography>
-          <Divider sx={{ mb: 2 }} />
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            These responses are from emails not in your recipient group
-          </Alert>
-
           <TableContainer>
-            <Table>
+            <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell width="50">#</TableCell>
                   <TableCell>Email</TableCell>
                   <TableCell>Submitted At</TableCell>
-                  <TableCell width="120" align="center">Status</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {nonMemberResponses.map((response, index) => (
-                  <TableRow key={response.id} hover>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight="medium">
-                        {response.respondent_email || 'Anonymous'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {response.submitted_at 
-                        ? new Date(response.submitted_at).toLocaleString()
-                        : 'Unknown'}
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip 
-                        label="❓ Non-member" 
-                        color="warning" 
-                        size="small" 
-                      />
-                    </TableCell>
+                {nonMemberResponses.map((response) => (
+                  <TableRow key={response.id}>
+                    <TableCell>{response.respondent_email || 'Anonymous'}</TableCell>
+                    <TableCell>{new Date(response.submitted_at).toLocaleString()}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

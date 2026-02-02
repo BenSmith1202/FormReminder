@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from typing import Optional, List, Dict
 from models.database import get_db, Collections
+from models import form_request
 
 
 class Group:
@@ -193,6 +194,27 @@ class Group:
         
         return unique_emails
     
+    @staticmethod
+    def delete_group(group_id: str):
+        """Deletes a group, given its id. Also deletes all associated data: form requests and responses"""
+        try:
+            db = get_db()
+            group_ref = db.collection(Collections.GROUPS).document(group_id)
+            group_ref.delete()
+            print(f"User associated with id {group_id} deleted")
+
+            print(f"Attempting to delete associated form requests...")
+            frq_refs = db.collection(Collections.FORM_REQUESTS)
+            for frq in frq_refs:
+                if(frq.group_id == group_id):
+                    form_request.delete_frq(frq.id)
+            
+        except Exception as e:
+            print(f"Error deleting group: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def add_members(self, emails: List[str]) -> int:
         """Add multiple members to the group. Returns count of added members."""
         try:
@@ -270,6 +292,34 @@ class Group:
             
         except Exception as e:
             print(f"Error removing member: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+    def update_details(self, name: str, description: str) -> bool:
+        """Update group name and description"""
+        try:
+            db = get_db()
+            group_ref = db.collection(Collections.GROUPS).document(self.id)
+            
+            updates = {
+                'name': name,
+                'description': description,
+                'updated_at': datetime.utcnow().isoformat() + 'Z'
+            }
+            
+            group_ref.update(updates)
+            
+            # Update local instance
+            self.name = name
+            self.description = description
+            self.updated_at = updates['updated_at']
+            
+            print(f"✅ Group details updated: {self.id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating group details: {e}")
             import traceback
             traceback.print_exc()
             return False
