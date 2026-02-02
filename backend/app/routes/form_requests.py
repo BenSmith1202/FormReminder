@@ -8,6 +8,7 @@ from models.user import User
 from models.group import Group
 from models.database import get_db, Collections
 from utils.google_forms_service import GoogleFormsService
+from utils.scheduler import send_initial_emails  # For immediate email sending
 
 
 # Define the Blueprint
@@ -740,6 +741,27 @@ def create_form_request():
         print(f"   Title: {metadata.get('title')}")
         print(f"   Responses: {len(responses)}")
         print(f"   Email collection: {email_collection_enabled}")
+        
+        # ============================================================
+        # SEND INITIAL EMAILS (if first_reminder_timing is 'immediate')
+        # ============================================================
+        # When the user selects "immediate" timing, we send out the
+        # initial notification emails right now, not waiting for scheduler
+        # ============================================================
+        initial_email_result = None
+        if first_reminder_timing == 'immediate':
+            print(f"\n📨 First reminder timing is 'immediate' - sending initial emails now...")
+            form_title_for_email = data.get('title') or metadata.get('title', 'Untitled Form')
+            initial_email_result = send_initial_emails(
+                request_id=doc_ref.id,
+                owner_id=user_id,
+                form_title=form_title_for_email,
+                form_url=form_url,
+                group_id=group_id
+            )
+            print(f"   Initial email result: {initial_email_result}")
+        else:
+            print(f"   First reminder timing: {first_reminder_timing} (not immediate, skipping initial send)")
         
         return jsonify({
             "success": True,

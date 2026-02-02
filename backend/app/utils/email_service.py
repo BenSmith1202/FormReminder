@@ -6,7 +6,7 @@ import hashlib
 import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jinja2 import Environment, FileSystemLoader
 from models.database import get_db, Collections
@@ -124,9 +124,9 @@ class EmailService:
         try:
             db = get_db()
             
-            # Check for recent reminders
-            cutoff_time = datetime.utcnow() - timedelta(hours=EmailService.RATE_LIMIT_HOURS)
-            cutoff_str = cutoff_time.isoformat() + 'Z'
+            # Check for recent reminders - use timezone-aware UTC
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=EmailService.RATE_LIMIT_HOURS)
+            cutoff_str = cutoff_time.isoformat()
             
             print(f"🔍 Checking rate limit for request={request_id}, email={recipient_email}, cutoff={cutoff_str}")
             
@@ -169,7 +169,7 @@ class EmailService:
             log_data = {
                 'request_id': request_id,
                 'recipient_email': recipient_email,
-                'sent_at': datetime.utcnow().isoformat() + 'Z',
+                'sent_at': datetime.now(timezone.utc).isoformat(),
                 'success': success
             }
             
