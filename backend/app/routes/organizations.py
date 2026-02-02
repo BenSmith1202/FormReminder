@@ -4,11 +4,10 @@ import traceback
 
 # Import your models and database tools
 # Adjust these imports if your file structure is different
-from backend.app.routes.utilities import create_notification
+from .utilities import create_notification
 
 from models.group import Group
 from models.org_membership import OrgMembership
-from models.database import get_db, Collections
 from utils.email_service import EmailService
 
 

@@ -15,7 +15,7 @@ form_requests_bp = Blueprint('form_requests', __name__)
 
 
 # Get all form requests
-@form_requests_bp.get("/api/form-requests")
+@form_requests_bp.get("")
 def get_form_requests():
     """Retrieve all form requests from the database"""
     from models.database import Collections
@@ -113,7 +113,7 @@ def get_form_requests():
 
 
 # Get responses for a specific form request
-@form_requests_bp.get("/api/form-requests/<request_id>/responses")
+@form_requests_bp.get("/<request_id>/responses")
 def get_form_request_responses(request_id: str):
     """Get all responses for a form request"""
     from models.database import Collections
@@ -268,7 +268,7 @@ def get_form_request_responses(request_id: str):
 
 
 # Refresh responses from Google Forms
-@form_requests_bp.post("/api/form-requests/<request_id>/refresh")
+@form_requests_bp.post("/<request_id>/refresh")
 def refresh_form_responses(request_id: str):
     """Manually refresh responses from Google Forms"""
     from datetime import datetime
@@ -488,7 +488,7 @@ def refresh_form_responses(request_id: str):
         }), 500
 
 # Create a new form request
-@form_requests_bp.post("/api/form-requests")
+@form_requests_bp.post("")
 def create_form_request():
     """Create a new form request from a Google Form URL"""
     from datetime import datetime
@@ -762,7 +762,7 @@ def create_form_request():
     
 
 # Update an existing form request
-@form_requests_bp.put("/api/form-requests/<request_id>")
+@form_requests_bp.put("/<request_id>")
 def update_form_request(request_id):
     """Update an existing form request configuration"""
     from datetime import datetime
@@ -947,7 +947,7 @@ def update_form_request(request_id):
             "details": str(e)
         }), 500
 
-@form_requests_bp.post("/api/form-requests/custom-schedule")
+@form_requests_bp.post("/custom-schedule")
 def create_custom_schedule():
     """Create and validate a custom reminder schedule"""
     from utils.reminder_schedule import ReminderSchedule
@@ -987,7 +987,7 @@ def create_custom_schedule():
         }), 500
 
 
-@form_requests_bp.delete("/api/form-requests/<request_id>")
+@form_requests_bp.delete("/<request_id>")
 def delete_form_request(request_id: str):
     """Delete a form request and all its responses"""
     from models.database import Collections

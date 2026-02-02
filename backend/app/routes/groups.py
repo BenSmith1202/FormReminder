@@ -13,7 +13,7 @@ groups_bp = Blueprint('groups', __name__)
 
 # ============= GROUPS ROUTES =============
 
-@groups_bp.post("/api/groups")
+@groups_bp.post("")
 def create_group():
     """Create a new group"""
     try:
@@ -59,7 +59,7 @@ def create_group():
         }), 500
 
 
-@groups_bp.get("/api/groups")
+@groups_bp.get("")
 def get_user_groups():
     """Get all groups owned by the current user"""
     try:
@@ -91,7 +91,7 @@ def get_user_groups():
         }), 500
 
 
-@groups_bp.get("/api/groups/<group_id>")
+@groups_bp.get("/<group_id>")
 def get_group(group_id: str):
     """Get a specific group with all members"""
     try:
@@ -123,7 +123,7 @@ def get_group(group_id: str):
         }), 500
 
 
-@groups_bp.post("/api/groups/<group_id>/members")
+@groups_bp.post("/<group_id>/members")
 def add_group_members(group_id: str):
     """Add members to a group (bulk email paste)"""
     try:
@@ -186,7 +186,7 @@ def add_group_members(group_id: str):
         }), 500
 
 
-@groups_bp.delete("/api/groups/<group_id>/members/<email>")
+@groups_bp.delete("/<group_id>/members/<email>")
 def remove_group_member(group_id: str, email: str):
     """Remove a member from a group"""
     try:
@@ -228,7 +228,7 @@ def remove_group_member(group_id: str, email: str):
         }), 500
 
 
-@groups_bp.get("/api/groups/join/<invite_token>")
+@groups_bp.get("/join/<invite_token>")
 def get_group_by_token(invite_token: str):
     """PUBLIC: Get group info by invite token (for join page)"""
     try:
@@ -260,7 +260,7 @@ def get_group_by_token(invite_token: str):
         }), 500
 
 
-@groups_bp.post("/api/groups/join/<invite_token>")
+@groups_bp.post("/join/<invite_token>")
 def join_group(invite_token: str):
     """PUBLIC: Join a group via invite link (no auth required)"""
     try:
@@ -315,7 +315,7 @@ def join_group(invite_token: str):
             "details": error_msg
         }), 500
 
-@groups_bp.put("/api/groups/<group_id>")
+@groups_bp.put("/<group_id>")
 def update_group(group_id):
     """Update group details (name and description)"""
     try:

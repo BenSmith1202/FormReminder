@@ -15,6 +15,9 @@ from routes.auth_and_login import auth_bp
 from routes.groups import groups_bp
 from routes.form_requests import form_requests_bp
 from routes.utilities import utilities_bp
+from routes.email import email_bp
+from routes.organizations import orgs_bp
+# -------------------------
 
 # 1. Initialize Flask
 app = Flask(__name__)
@@ -54,6 +57,9 @@ app.register_blueprint(auth_bp) # Auth handles its own /api prefixes
 app.register_blueprint(groups_bp, url_prefix='/api/groups')
 app.register_blueprint(form_requests_bp, url_prefix='/api/form-requests')
 app.register_blueprint(utilities_bp) # Utils handles its own prefixes (/time, /api/health)
+app.register_blueprint(email_bp)
+app.register_blueprint(orgs_bp)
+
 
 @app.get("/")
 def root():
