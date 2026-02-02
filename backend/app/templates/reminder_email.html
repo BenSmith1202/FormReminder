@@ -76,6 +76,23 @@
         .form-info strong {
             color: #667eea;
         }
+        .opt-out-box {
+            margin-top: 28px;
+            padding: 16px 20px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #495057;
+        }
+        .opt-out-box a {
+            color: #667eea;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .opt-out-box a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -99,10 +116,25 @@
             </div>
             
             <p style="color: #6c757d; font-size: 14px;">If you've already completed this form, please disregard this reminder.</p>
+
+            {% if unsubscribe_url %}
+            <div class="opt-out-box">
+                <strong>Don't want these emails?</strong><br>
+                You can leave this organization and stop receiving reminders:
+                <a href="{{ unsubscribe_url }}">Leave organization (opt out)</a>
+            </div>
+            {% endif %}
         </div>
         <div class="footer">
             <p>This reminder was sent via FormReminder</p>
             <p style="margin-top: 10px;">You're receiving this because you're part of a form request group.</p>
+            {% if unsubscribe_url %}
+            <p style="margin-top: 12px;">
+                <a href="{{ unsubscribe_url }}" style="color: #667eea; font-weight: 600; text-decoration: none;">
+                    Leave this organization (opt out of future emails)
+                </a>
+            </p>
+            {% endif %}
         </div>
     </div>
 </body>
