@@ -15,7 +15,7 @@ class FormRequest:
                  status: str, total_recipients: int, warnings: List):
         self.id = frq_id
         self.title = title
-        self.title = created_at
+        self.created_at = created_at
         self.description = description
         self.due_date = due_date
         self.first_reminder_timing = first_reminder_timing
