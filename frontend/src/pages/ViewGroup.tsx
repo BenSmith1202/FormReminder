@@ -21,7 +21,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
 import GroupIcon from '@mui/icons-material/Group';
 import PersonIcon from '@mui/icons-material/Person';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -82,32 +81,6 @@ export default function ViewGroup() {
     alert('Invite link copied to clipboard!');
   };
 
-  const handleDeleteGroup = async () => {
-    if (!group) return;
-    
-    // Strict confirmation to prevent accidents
-    const confirmName = prompt(`To delete this group, please type its name "${group.name}":`);
-    if (confirmName !== group.name) {
-        if (confirmName !== null) alert("Group name did not match.");
-        return;
-    }
-
-    setDeleting(true);
-    try {
-      const response = await fetch(`${API_URL}/api/groups/${groupId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-
-      if (!response.ok) throw new Error('Failed to delete group');
-
-      navigate('/groups');
-    } catch (err: any) {
-      console.error('Error deleting group:', err);
-      alert(err.message);
-      setDeleting(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -136,15 +109,6 @@ export default function ViewGroup() {
           Back to Groups
         </Button>
         <Box display="flex" gap={2}>
-            <Button 
-                variant="outlined" 
-                color="error" 
-                startIcon={deleting ? <CircularProgress size={20} color="inherit" /> : <DeleteIcon />}
-                onClick={handleDeleteGroup}
-                disabled={deleting}
-            >
-                Delete Group
-            </Button>
             <Button 
                 variant="contained" 
                 startIcon={<EditIcon />} 

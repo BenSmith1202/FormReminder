@@ -1,21 +1,35 @@
-import { useEffect, useState } from 'react';
-import { Paper, Typography, Box, CircularProgress, Chip, Stack, Button, Link, Alert, IconButton } from '@mui/material';
-import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
+import { useEffect, useState, useMemo } from 'react';
+import { 
+  Paper, Typography, Box, CircularProgress, Chip, Stack, Button, 
+  Link, Alert, IconButton, Grid, Card, CardContent, LinearProgress, 
+  Tooltip, Container, Fade 
+} from '@mui/material';
+import { 
+  DataGrid, type GridColDef, type GridRenderCellParams 
+} from '@mui/x-data-grid';
 import { useNavigate } from 'react-router-dom';
+
+// Icons
 import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 
 const API_URL = 'http://localhost:5000';
 
-// Interface for the health data
+// --- Interfaces ---
 interface HealthResponse {
   status: string;
   database: string;
   submission_count?: number; 
 }
 
-// Interface for the table rows
 interface FormRequestRow {
-  id: string; // Firestore document ID
+  id: string;
   title: string;
   response_count: number;
   total_recipients: number;
@@ -29,178 +43,162 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<FormRequestRow[]>([]); 
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
 
-  // Column Definitions
+  // --- Statistics Calculation ---
+  const stats = useMemo(() => {
+    const activeForms = rows.filter(r => r.status === 'Active').length;
+    const totalResponses = rows.reduce((acc, curr) => acc + (curr.response_count || 0), 0);
+    const totalRecipients = rows.reduce((acc, curr) => acc + (curr.total_recipients || 0), 0);
+    // Avoid division by zero
+    const overallRate = totalRecipients > 0 ? Math.round((totalResponses / totalRecipients) * 100) : 0;
+    
+    return { activeForms, totalResponses, overallRate };
+  }, [rows]);
+
+  // --- Column Definitions ---
   const columns: GridColDef[] = [
     { 
       field: 'title', 
       headerName: 'Form Name', 
       flex: 1.5, 
-      minWidth: 200 
+      minWidth: 200,
+      renderCell: (params) => (
+        <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            {params.value}
+          </Typography>
+          {params.row.warnings && params.row.warnings.length > 0 && (
+             <Typography variant="caption" color="error.main" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+               <ErrorOutlineIcon fontSize="inherit" /> Attention needed
+             </Typography>
+          )}
+        </Box>
+      )
     },
     { 
-      field: 'response_count', 
-      headerName: 'Responses', 
-      width: 120, 
-      align: 'center', 
-      headerAlign: 'center',
+      field: 'progress', 
+      headerName: 'Completion', 
+      flex: 1,
+      minWidth: 180,
       renderCell: (params: GridRenderCellParams) => {
         const responded = params.row.response_count || 0;
         const total = params.row.total_recipients || 0;
+        const percentage = total > 0 ? Math.min(100, (responded / total) * 100) : 0;
+        
         return (
-          <Typography variant="body2">
-            {responded} / {total}
-          </Typography>
+          <Box sx={{ width: '100%', mr: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">
+                {responded} / {total}
+              </Typography>
+              <Typography variant="caption" fontWeight="bold">
+                {Math.round(percentage)}%
+              </Typography>
+            </Box>
+            <LinearProgress 
+              variant="determinate" 
+              value={percentage} 
+              color={percentage === 100 ? "success" : "primary"}
+              sx={{ 
+                height: 6, 
+                borderRadius: 3,
+                bgcolor: 'action.hover'
+              }} 
+            />
+          </Box>
         );
-      }
-    },
-    { 
-      field: 'created_at', 
-      headerName: 'Created', 
-      width: 120,
-      valueFormatter: (params: any) => {
-        if (!params) return '-';
-        try {
-          const date = new Date(params);
-          return date.toLocaleDateString();
-        } catch {
-          return '-';
-        }
-      }
-    },
-    { 
-      field: 'last_synced_at', 
-      headerName: 'Last Synced', 
-      width: 120,
-      valueFormatter: (params: any) => {
-        if (!params || params === '-') {
-          // Fallback to created_at if last_synced_at is not available
-          return null; // Let renderCell handle it
-        }
-        try {
-          const date = new Date(params);
-          if (isNaN(date.getTime())) {
-            return null; // Invalid date, let renderCell handle it
-          }
-          return date.toLocaleDateString();
-        } catch {
-          return null; // Let renderCell handle it
-        }
-      },
-      renderCell: (params: GridRenderCellParams) => {
-        let dateValue = params.value;
-        
-        // If last_synced_at is not available, try created_at as fallback
-        if (!dateValue || dateValue === '-') {
-          dateValue = params.row.created_at;
-        }
-        
-        if (!dateValue) {
-          return <Typography variant="body2" color="text.secondary">Never</Typography>;
-        }
-        
-        try {
-          const date = new Date(dateValue);
-          if (isNaN(date.getTime())) {
-            return <Typography variant="body2" color="text.secondary">Never</Typography>;
-          }
-          return <Typography variant="body2">{date.toLocaleDateString()}</Typography>;
-        } catch {
-          return <Typography variant="body2" color="text.secondary">Never</Typography>;
-        }
       }
     },
     { 
       field: 'status', 
       headerName: 'Status', 
-      width: 100,
+      width: 120,
       renderCell: (params: GridRenderCellParams) => {
-        if (!params || !params.value) return <Typography variant="caption">-</Typography>;
+        const isActive = params.value === 'Active';
         return (
           <Chip 
             label={params.value} 
-            color={params.value === 'Active' ? 'success' : 'default'} 
             size="small" 
-            variant="outlined" 
+            sx={{ 
+              fontWeight: 600,
+              bgcolor: isActive ? 'success.light' : 'grey.200',
+              color: isActive ? 'success.dark' : 'text.secondary',
+              border: 'none'
+            }} 
           />
         );
       }
     },
     { 
+      field: 'last_synced_at', 
+      headerName: 'Last Synced', 
+      width: 140,
+      valueFormatter: (params: any) => {
+        if (!params) return 'Never';
+        try {
+          return new Date(params).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch { return 'Never'; }
+      }
+    },
+    { 
       field: 'actions', 
-      headerName: '', 
-      width: 150,
+      headerName: 'Actions', 
+      width: 120,
       sortable: false,
-      renderCell: (params: GridRenderCellParams) => {
-        if (!params) return null;
-        return (
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button 
-              variant="outlined" 
-              size="small" 
-              onClick={() => navigate(`/request/${params.row.id}`)}
-            >
-              View
-            </Button>
+      align: 'right',
+      headerAlign: 'right',
+      renderCell: (params: GridRenderCellParams) => (
+        <Stack direction="row" spacing={1}>
+          <Tooltip title="View Details">
             <IconButton 
               size="small" 
-              onClick={() => handleDelete(params.row.id)}
-              title="Delete form request"
-              color="error"
+              onClick={(e) => { e.stopPropagation(); navigate(`/request/${params.row.id}`); }}
+              sx={{ color: 'primary.main', bgcolor: 'primary.50', '&:hover': { bgcolor: 'primary.100' } }}
+            >
+              <VisibilityIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Delete">
+            <IconButton 
+              size="small" 
+              onClick={(e) => { e.stopPropagation(); handleDelete(params.row.id); }}
+              sx={{ color: 'error.main', '&:hover': { bgcolor: 'error.50' } }}
             >
               <DeleteIcon fontSize="small" />
             </IconButton>
-          </Box>
-        );
-      }
+          </Tooltip>
+        </Stack>
+      )
     },
   ];
 
+  // --- Data Fetching ---
+
   const handleDelete = async (requestId: string) => {
-    if (!window.confirm('Are you sure you want to delete this form request? This will also delete all associated responses.')) {
-      return;
-    }
+    if (!window.confirm('Delete this form request? This action cannot be undone.')) return;
 
     try {
-      console.log(`Deleting form request: ${requestId}`);
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}`, {
         method: 'DELETE',
         credentials: 'include',
       });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to delete');
-      }
-      
-      console.log('✅ Delete successful:', result);
-      // Reload the form requests
-      loadFormRequests();
+      if (!response.ok) throw new Error('Failed to delete');
+      loadFormRequests(); // Reload
     } catch (error: any) {
-      console.error('❌ Delete failed:', error);
       alert(`Failed to delete: ${error.message}`);
     }
   };
 
   const loadFormRequests = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/form-requests`, {
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
+      if (!response.ok) throw new Error('Failed to load');
       
       const formRequests = await response.json();
       
-      console.log('Loaded form requests:', formRequests);
-      
-      // Transform to table rows
       const transformedRows: FormRequestRow[] = Array.isArray(formRequests) 
         ? formRequests.map((request: any) => ({
             id: request.id,
@@ -217,255 +215,249 @@ export default function Dashboard() {
       setRows(transformedRows);
       setLastUpdated(new Date());
     } catch (error) {
-      console.error('Failed to load form requests:', error);
-      console.error('Auto-refresh error:', error);
-      setRows([]);
+      console.error('Error loading data:', error);
     }
   };
 
-  // Custom Message when table is empty
-  const CustomNoRowsOverlay = () => (
-    <Stack height="100%" alignItems="center" justifyContent="center">
-      <Typography color="text.secondary">
-        You don't have any form requests.{' '}
-        <Link 
-            component="button" 
-            variant="body1" 
-            onClick={() => navigate('/requests/new')}
-            sx={{ verticalAlign: 'baseline', fontWeight: 'bold' }}
-        >
-            Click here
-        </Link>
-        {' '}to make one!
-      </Typography>
-    </Stack>
-  );
-
-  // Auto-refresh polling
-  useEffect(() => {
-    // Poll every 30 seconds
-    const pollInterval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        // Refresh all form requests from Google Forms
-        refreshAllFormRequests();
-      }
-    }, 30000);
-
-    // Handle tab visibility changes
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // Immediately refresh when tab becomes active
-        refreshAllFormRequests();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      clearInterval(pollInterval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    await refreshAllFormRequests();
+    setRefreshing(false);
+  };
 
   const refreshAllFormRequests = async () => {
     try {
-      // Get all form requests
-      const response = await fetch(`${API_URL}/api/form-requests`, {
-        credentials: 'include',
-      });
-      
+      const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
       if (!response.ok) return;
-      
       const formRequests = await response.json();
       
-      // Refresh each form request from Google Forms (in parallel)
       const refreshPromises = formRequests.map((req: any) =>
         fetch(`${API_URL}/api/form-requests/${req.id}/refresh`, {
           method: 'POST',
           credentials: 'include',
-        }).catch(err => {
-          console.error(`Auto-refresh error for ${req.id}:`, err);
-          return null; // Continue with other refreshes even if one fails
-        })
+        }).catch(() => null)
       );
       
       await Promise.all(refreshPromises);
-      
-      // Now load the updated data
       await loadFormRequests();
+      
+      // Also refresh health status
+      fetch(`${API_URL}/api/health`, { credentials: 'include' })
+        .then(res => res.json())
+        .then(healthData => setData(healthData))
+        .catch(() => {});
+
     } catch (error) {
-      console.error('Auto-refresh error:', error);
-      // Still try to load cached data
-      loadFormRequests();
+      console.error('Refresh error:', error);
     }
   };
 
-  // Update "seconds since update" counter
+  // --- Effects ---
+
+  // Initial Load
   useEffect(() => {
-    if (!lastUpdated) return;
-
-    const timer = setInterval(() => {
-      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
-      setSecondsSinceUpdate(seconds);
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [lastUpdated]);
-
-  useEffect(() => {
-    // Fetch health check and form requests in parallel
-    Promise.all([
+    const initLoad = async () => {
+      // Load health check first
       fetch(`${API_URL}/api/health`, { credentials: 'include' })
-        .then((res) => {
-          if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
-          }
-          return res.json();
-        })
-        .catch((err) => {
-          console.error("Failed to fetch health check", err);
-          return {
-            status: "error",
-            database: "disconnected"
-          };
-        }),
-      fetch(`${API_URL}/api/form-requests`, { credentials: 'include' })
-        .then((res) => {
-          if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
-          }
-          return res.json();
-        })
-        .catch((err) => {
-          console.error("Failed to fetch form requests", err);
-          return [];
-        })
-    ]).then(([healthData, formRequests]) => {
-      try {
-        setData(healthData);
-        
-        const transformedRows: FormRequestRow[] = Array.isArray(formRequests) 
-          ? formRequests.map((request: any) => ({
-              id: request.id,
-              title: request.title || 'Untitled Form',
-              response_count: request.response_count || 0,
-              total_recipients: request.total_recipients || 0,
-              created_at: request.created_at,
-              last_synced_at: request.last_synced_at,
-              status: request.is_active ? 'Active' : 'Inactive',
-              warnings: request.warnings || []
-            }))
-          : [];
-        
-        setRows(transformedRows);
-        setLoading(false);
-      } catch (error) {
-        console.error("Error processing data:", error);
-        setRows([]);
-        setLoading(false);
-      }
-    }).catch((error) => {
-      console.error("Error fetching data:", error);
-      setData({
-        status: "error",
-        database: "disconnected"
-      });
-      setRows([]);
+        .then(res => res.ok ? res.json() : { status: "error" })
+        .then(setData)
+        .catch(() => setData({ status: "error", database: "disconnected" }));
+
+      await loadFormRequests();
       setLoading(false);
-    });
+    };
+
+    initLoad();
   }, []);
+
+  // Auto-refresh interval
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshAllFormRequests();
+    }, 30000);
+    return () => clearInterval(pollInterval);
+  }, []);
+
+  // --- Render ---
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}>
-        <CircularProgress />
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
+        <CircularProgress size={40} thickness={4} />
       </Box>
     );
   }
 
-  // Safety check - ensure data exists
-  if (!data) {
-    return (
-      <Box>
-        <Typography variant="h4" gutterBottom>
-          Your Form Requests
-        </Typography>
-        <Alert severity="warning">
-          Unable to load dashboard data. Please check your connection.
-        </Alert>
-      </Box>
-    );
-  }
+  // Helper component for stats cards
+  const StatCard = ({ title, value, subtext, icon, color }: any) => (
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', height: '100%' }}>
+      <CardContent>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+          <Box>
+            <Typography color="text.secondary" variant="subtitle2" gutterBottom fontWeight="bold">
+              {title}
+            </Typography>
+            <Typography variant="h4" fontWeight="bold" sx={{ mb: 0.5 }}>
+              {value}
+            </Typography>
+            {subtext && (
+              <Typography variant="body2" color="text.secondary">
+                {subtext}
+              </Typography>
+            )}
+          </Box>
+          <Box 
+            sx={{ 
+              p: 1.5, 
+              borderRadius: 2, 
+              bgcolor: `${color}.50`, 
+              color: `${color}.main`,
+              display: 'flex' 
+            }}
+          >
+            {icon}
+          </Box>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
 
   return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      {/* Header Section */}
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'start', sm: 'center' }} spacing={2} sx={{ mb: 4 }}>
         <Box>
-          <Typography variant="h4">
-            Your Form Requests
+          <Typography variant="h4" fontWeight="bold" gutterBottom>
+            Dashboard
           </Typography>
-          {lastUpdated && (
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-              Last updated: {secondsSinceUpdate}s ago
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="body2" color="text.secondary">
+              Overview of your forms and responses
             </Typography>
-          )}
+            {lastUpdated && (
+              <Tooltip title={`Last full sync: ${lastUpdated.toLocaleTimeString()}`}>
+                <Chip 
+                  label="Up to date" 
+                  size="small" 
+                  color="success" 
+                  variant="outlined" 
+                  icon={<CheckCircleIcon />}
+                  sx={{ height: 20, fontSize: '0.7rem' }}
+                />
+              </Tooltip>
+            )}
+          </Stack>
         </Box>
-        <Button
-          variant="contained"
-          onClick={() => navigate('/requests/new')}
-        >
-          Create New
-        </Button>
-      </Box>
-
-      {/* Metric Cards */}
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} sx={{ mb: 4 }}>
-        <Box sx={{ flex: 1 }}>
-          <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', height: 140 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              System Status
-            </Typography>
-            <Box>
-               Status: <Chip label={data?.status || "Unknown"} color="success" size="small" />
-            </Box>
-            <Box sx={{ mt: 1 }}>
-               Database: <Chip label={data?.database || "Unknown"} color="primary" size="small" />
-            </Box>
-          </Paper>
-        </Box>
-
-        <Box sx={{ flex: 1 }}>
-          <Paper sx={{ p: 3, display: 'flex', flexDirection: 'column', height: 140 }}>
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Live Submissions
-            </Typography>
-            <Typography component="p" variant="h3">
-              {data?.submission_count || 0}
-            </Typography>
-            <Typography color="text.secondary" sx={{ flex: 1 }}>
-              responses recorded today
-            </Typography>
-          </Paper>
-        </Box>
+        
+        <Stack direction="row" spacing={2}>
+           <Button 
+            variant="outlined" 
+            startIcon={<RefreshIcon sx={{ animation: refreshing ? 'spin 1s linear infinite' : 'none', '@keyframes spin': { '0%': { transform: 'rotate(0deg)' }, '100%': { transform: 'rotate(360deg)' } } }} />}
+            onClick={handleManualRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Syncing...' : 'Sync Now'}
+          </Button>
+          <Button 
+            variant="contained" 
+            startIcon={<AddIcon />} 
+            onClick={() => navigate('/requests/new')}
+            sx={{ px: 3 }}
+          >
+            New Request
+          </Button>
+        </Stack>
       </Stack>
 
-        {/* Call to Action */}
-            <Button variant="contained" color="primary" sx={{ mb: 1, mt: 1}} onClick={() => navigate('/requests/new')}>
-                New Request
-            </Button>
-        {/* Data Grid Table */}
-        <Paper sx={{ height: 400, width: '100%', p: 1 }}>
-            <DataGrid
-                rows={Array.isArray(rows) ? rows : []}
-                columns={columns}
-                slots={{ noRowsOverlay: CustomNoRowsOverlay }}
-                initialState={{
-                    pagination: { paginationModel: { pageSize: 10 } },
-                }}
-                pageSizeOptions={[5, 10, 25]}
-                disableRowSelectionOnClick
-            />
-        </Paper>
-    </Box>
-);
+      {/* Metrics Grid */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Active Forms" 
+            value={stats.activeForms} 
+            subtext={`Total forms: ${rows.length}`}
+            icon={<AssignmentIcon />} 
+            color="primary"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Total Responses" 
+            value={stats.totalResponses} 
+            subtext="Across all active forms"
+            icon={<AssessmentIcon />} 
+            color="info"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="Response Rate" 
+            value={`${stats.overallRate}%`} 
+            subtext="Average completion"
+            icon={<CheckCircleIcon />} 
+            color="success"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard 
+            title="System Status" 
+            value={data?.status === 'healthy' ? 'Healthy' : 'Issues'} 
+            subtext={data?.database === 'connected' ? 'Database connected' : 'Database Error'}
+            icon={<RefreshIcon />} 
+            color={data?.status === 'healthy' ? 'success' : 'warning'}
+          />
+        </Grid>
+      </Grid>
+
+      {/* Main Data Table */}
+      <Paper 
+        elevation={0} 
+        sx={{ 
+          border: '1px solid', 
+          borderColor: 'divider',
+          overflow: 'hidden',
+          borderRadius: 2
+        }}
+      >
+        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}>
+          <Typography variant="h6" fontWeight="bold">
+            Recent Requests
+          </Typography>
+        </Box>
+        
+        <Box sx={{ height: 500, width: '100%' }}>
+          <DataGrid
+            rows={rows}
+            columns={columns}
+            slots={{ 
+              noRowsOverlay: () => (
+                <Stack height="100%" alignItems="center" justifyContent="center" spacing={2}>
+                  <AssignmentIcon sx={{ fontSize: 60, color: 'text.disabled' }} />
+                  <Typography color="text.secondary">No form requests found</Typography>
+                  <Button variant="text" onClick={() => navigate('/requests/new')}>Create one now</Button>
+                </Stack>
+              ) 
+            }}
+            initialState={{
+              pagination: { paginationModel: { pageSize: 10 } },
+              sorting: { sortModel: [{ field: 'created_at', sort: 'desc' }] }, // Default sort by newest
+            }}
+            pageSizeOptions={[5, 10, 25]}
+            disableRowSelectionOnClick
+            sx={{
+              border: 'none',
+              '& .MuiDataGrid-columnHeaders': {
+                bgcolor: 'grey.50',
+                color: 'text.secondary',
+                fontWeight: 'bold',
+              },
+              '& .MuiDataGrid-cell:focus': {
+                outline: 'none',
+              },
+            }}
+          />
+        </Box>
+      </Paper>
+    </Container>
+  );
 }

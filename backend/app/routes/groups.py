@@ -376,3 +376,52 @@ def update_group(group_id):
             "error": "Failed to update group", 
             "details": str(e)
         }), 500
+    
+@groups_bp.delete("/<group_id>")
+def delete_group(group_id: str):
+    """Delete a group and all its members"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        print(f"Request to delete group {group_id} by user {user_id}")
+        
+        # Get group
+        group = Group.get_by_id(group_id)
+        
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Verify ownership
+        if group.owner_id != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Delete the group
+        # Ensure your Group model has a delete() method. 
+        # If not, use the database logic directly:
+        from models.database import get_db, Collections
+        
+        db = get_db()
+        
+        # Optional: You might want to delete all form requests associated with this group first,
+        # or handle that relationship in your application logic.
+        
+        # Delete the group document
+        db.collection(Collections.GROUPS).document(group_id).delete()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Group '{group.name}' deleted successfully",
+            "id": group_id
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error deleting group: {error_msg}")
+        return jsonify({
+            "error": "Failed to delete group",
+            "details": error_msg
+        }), 500
