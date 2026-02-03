@@ -108,6 +108,25 @@ class User:
             return None
     
     @staticmethod
+    def edit_username(user_id: str, newUsername: str) -> Optional['User']:
+        """Edit a given user's username"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(user_id)
+
+            # Update database entry
+            user_ref.update({"username" : newUsername})
+
+            print(f"username reset successfully. New username: {newUsername}")
+
+            return User.get_by_username(newUsername)
+        except Exception as e:
+            print(f"Error editing username: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    @staticmethod
     def reset_password(username: str, password: str) -> Optional['User']:
         """Reset a given user's password"""
         try:

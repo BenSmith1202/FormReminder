@@ -17,6 +17,7 @@ from routes.form_requests import form_requests_bp
 from routes.utilities import utilities_bp
 from routes.email import email_bp
 from routes.organizations import orgs_bp
+from routes.settings import settings_bp
 # -------------------------
 
 # 1. Initialize Flask
@@ -59,6 +60,7 @@ app.register_blueprint(form_requests_bp, url_prefix='/api/form-requests')
 app.register_blueprint(utilities_bp) # Utils handles its own prefixes (/time, /api/health)
 app.register_blueprint(email_bp)
 app.register_blueprint(orgs_bp)
+app.register_blueprint(settings_bp)
 
 
 @app.get("/")
