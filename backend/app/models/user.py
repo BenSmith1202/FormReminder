@@ -217,20 +217,37 @@ class User:
             return None
     
     @staticmethod
-    def delete_user(user_id: str):
-        """Delete's a user, given their id. This method should never be called without 
-        first having the user enter their password to confirm they want to delete their account."""
+    def delete_user(user_id: str, provided_password: str):
+        """
+        Verifies the password and deletes the user document.
+        Returns: (bool, message)
+        """
         try:
             db = get_db()
             user_ref = db.collection(Collections.USERS).document(user_id)
+            user_doc = user_ref.get()
+
+            if not user_doc.exists:
+                return False, "User not found"
+
+            user_data = user_doc.to_dict()
+            hashed_password = user_data.get('password_hash')
+
+            # 1. Verify the password
+            if not hashed_password or not User.verify_password(hashed_password, provided_password):
+                print(f"⚠️ Failed deletion attempt for user {user_id}: Incorrect password")
+                return False, "Incorrect password"
+
+            # 2. Delete the user
             user_ref.delete()
-            print(f"User associated with id {user_id} deleted")
+            print(f"✅ User associated with id {user_id} deleted")
+            return True, "Success"
             
         except Exception as e:
-            print(f"Error deleting: {e}")
+            print(f"❌ Error during deletion: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return False, str(e)
 
 
     

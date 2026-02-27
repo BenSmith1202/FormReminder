@@ -15,13 +15,27 @@ settings_bp = Blueprint('settings', __name__)
 # Route to delete the user's account. Also redirects.
 @settings_bp.post('/api/delete')
 def delete_account():
-    """Delete the current user"""
+    """Delete the current user after password verification"""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
         
-        User.delete_user(user_id)
+        # Get password from the frontend request
+        data = request.json
+        provided_password = data.get('password')
+        
+        if not provided_password:
+            return jsonify({"error": "Password is required to delete account"}), 400
+
+        # Attempt deletion with verification
+        success, message = User.delete_user(user_id, provided_password)
+        
+        if not success:
+            return jsonify({"error": message}), 401 # Unauthorized
+            
+        # Clear the session after successful deletion
+        session.clear()
         
         return jsonify({
             "success": True,
@@ -30,12 +44,10 @@ def delete_account():
         
     except Exception as e:
         import traceback
-        error_msg = str(e)
         traceback.print_exc()
-        print(f"❌ Error deleting account: {error_msg}")
         return jsonify({
             "error": "Failed to delete account",
-            "details": error_msg
+            "details": str(e)
         }), 500
     
 @settings_bp.post('/api/edit_username')
