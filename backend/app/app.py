@@ -18,6 +18,7 @@ from routes.utilities import utilities_bp
 from routes.email import email_bp
 from routes.organizations import orgs_bp
 from routes.settings import settings_bp
+from utils.scheduler import init_scheduler  # Automatic reminder scheduler
 # -------------------------
 
 # 1. Initialize Flask
@@ -71,10 +72,21 @@ def root():
         "status": "running",
     }
 
-#reminder_scheduler = init_scheduler(app)
+# ============================================================================
+# AUTOMATIC REMINDER SCHEDULER
+# ============================================================================
+# This starts a background scheduler that periodically checks all form requests
+# and sends reminder emails to non-responders when the current date matches
+# a scheduled reminder day (e.g., 7 days before due, 3 days before, etc.)
+#
+# Test Mode: Set TEST_MODE = True in utils/scheduler.py to check every minute
+# Production: Set TEST_MODE = False to check every hour
+# ============================================================================
+reminder_scheduler = init_scheduler(app)
 
 # 4. Run the Server
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    # use_reloader=False prevents the scheduler from running twice in debug mode
+    app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
     
