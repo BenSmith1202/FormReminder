@@ -13,6 +13,8 @@ import Register from './pages/Register';
 import Reset from './pages/Reset';
 import ViewRequest from './pages/ViewRequest';
 import Analytics from './pages/Analytics';
+import EditRequest from './pages/EditRequest';
+import EditGroup from './pages/EditGroup';
 
 const theme = createTheme({
   palette: {
@@ -46,12 +48,15 @@ function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/requests/new" element={<CreateRequest />} />
+            <Route path="/requests/:requestId" element={<ViewRequest />} />
             <Route path="/request/:requestId" element={<ViewRequest />} />
+            <Route path="/requests/:requestId/edit" element={<EditRequest />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/time" element={<ServerTime />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/new" element={<CreateGroup />} />
             <Route path="/groups/:groupId" element={<ViewGroup />} />
+            <Route path="/groups/:groupId/edit" element={<EditGroup />} />
           </Route>
         </Routes>
       </BrowserRouter>
