@@ -1,4 +1,7 @@
 import os
+import hmac
+import hashlib
+import json
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 import sys
 from flask import Flask, jsonify, request, session
@@ -11,6 +14,7 @@ from models.database import get_db, FirestoreDB
 from models.user import User
 from models.group import Group
 from models.org_membership import OrgMembership
+from models.opt_out_event import OptOutEvent
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
@@ -1525,16 +1529,24 @@ def remove_group_member(group_id: str, email: str):
         
         # Remove member
         success = group.remove_member(email)
-        
+
         if not success:
             return jsonify({"error": "Member not found"}), 404
-        
+
+        try:
+            OptOutEvent.log(
+                user_id, email, "left_group", "owner", "owner_dashboard",
+                group_id=group_id, group_name=group.name,
+            )
+        except Exception:
+            pass
+
         return jsonify({
             "success": True,
             "message": f"Removed {email}",
             "total_members": len(group.members)
         }), 200
-        
+
     except Exception as e:
         import traceback
         error_msg = str(e)
@@ -1664,6 +1676,10 @@ def leave_organization(owner_id: str):
 
         # Mark opted out first (so even partial failures still suppress future emails).
         OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
+        try:
+            OptOutEvent.log(owner_id, email, "opted_out", "recipient", "email_link")
+        except Exception:
+            pass
 
         # Remove from all groups in this org (owner == org).
         removed_from_groups = 0
@@ -1708,6 +1724,60 @@ def leave_organization(owner_id: str):
         return jsonify({"error": "Failed to opt out", "details": str(e)}), 500
 
 
+@app.post("/api/organizations/<owner_id>/resubscribe")
+def resubscribe_recipient(owner_id: str):
+    """
+    Owner-only: Re-subscribe a recipient who had opted out.
+    Clears opt-out state; no email is sent to the recipient.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        if user_id != owner_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        body = request.get_json(silent=True) or {}
+        email = (body.get("email") or "").strip()
+        if not email:
+            return jsonify({"error": "email is required"}), 400
+
+        if not OrgMembership.is_opted_out(owner_id, email):
+            return jsonify({"error": "Recipient is not opted out."}), 400
+
+        OrgMembership.ensure_active(owner_id, email, source="owner_dashboard")
+        try:
+            OptOutEvent.log(owner_id, email, "added_back_by_owner", "owner", "owner_dashboard")
+        except Exception:
+            pass
+
+        return jsonify({"success": True, "email": email, "status": "active"}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to resubscribe", "details": str(e)}), 500
+
+
+@app.get("/api/organizations/<owner_id>/opt-out-events")
+def get_opt_out_events(owner_id: str):
+    """Owner-only: Return opt-out / group-leave / resubscribe events for dashboard."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        if user_id != owner_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        events = OptOutEvent.get_events_for_owner(owner_id)
+        return jsonify({
+            "events": [e.to_dict() for e in events],
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get events", "details": str(e)}), 500
+
+
 # ============= END GROUPS ROUTES =============
 
 # This matches frontend/src/pages/ServerTime.tsx
@@ -1719,6 +1789,73 @@ def get_current_time():
     return jsonify({
         "current_time": now.isoformat() + "Z"
     })
+
+
+# ============= EMAILIT WEBHOOK (public, no auth) =============
+
+@app.post("/api/webhooks/emailit")
+def webhook_emailit():
+    """
+    Public endpoint for Emailit delivery tracking events.
+    Verifies X-Emailit-Signature (HMAC-SHA256 of body) before processing.
+    """
+    from models.database import Collections
+    from datetime import datetime
+
+    raw_body = request.get_data(as_text=False)
+    signature = request.headers.get("X-Emailit-Signature", "").strip()
+    secret = os.environ.get("EMAILIT_WEBHOOK_SECRET")
+
+    if secret:
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return jsonify({"error": "Invalid signature"}), 400
+    else:
+        print("WARNING: EMAILIT_WEBHOOK_SECRET not set; skipping webhook signature verification (dev mode)")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as e:
+        print(f"Webhook body parse error: {e}")
+        return jsonify({"received": True}), 200
+
+    event_type = payload.get("event_type") or payload.get("event") or payload.get("type")
+    if not event_type:
+        return jsonify({"received": True}), 200
+
+    # Extract recipient and request_id; adjust keys if Emailit payload structure differs
+    recipient_email = payload.get("email") or payload.get("recipient_email") or payload.get("to")
+    if isinstance(recipient_email, dict):
+        recipient_email = recipient_email.get("email") or recipient_email.get("address")
+    recipient_email = (recipient_email or "").strip()
+    metadata = payload.get("metadata") or {}
+    request_id = metadata.get("request_id") if isinstance(metadata, dict) else None
+
+    handled = {"email.delivered", "email.opened", "email.link_clicked", "email.bounced"}
+    if event_type not in handled:
+        return jsonify({"received": True}), 200
+
+    try:
+        db = get_db()
+        now = datetime.utcnow().isoformat() + "Z"
+        db.collection(Collections.EMAIL_EVENTS).add({
+            "event_type": event_type,
+            "recipient_email": recipient_email,
+            "request_id": request_id,
+            "timestamp": now,
+            "raw_payload": payload,
+        })
+        if event_type == "email.bounced":
+            reason = payload.get("reason") or payload.get("bounce_reason") or payload.get("message")
+            EmailService.mark_bounced(recipient_email, reason=reason)
+    except Exception as e:
+        print(f"Webhook log error: {e}")
+
+    return jsonify({"received": True}), 200
 
 
 # ============= EMAIL REMINDER ROUTES =============
@@ -1854,38 +1991,48 @@ def send_bulk_reminders(request_id: str):
                 "failed": 0
             }), 200
         
-        # Send reminders (respecting rate limits)
-        sent = 0
-        skipped = 0
-        failed = 0
-        
-        for recipient_email in non_responders:
-            result = EmailService.send_reminder(
-                request_id,
-                form_title,
-                form_url,
-                recipient_email,
-                owner_id=user_id,
-            )
-            
-            if result['success']:
-                sent += 1
-            elif 'Rate limit' in result.get('error', ''):
-                skipped += 1
-            else:
-                failed += 1
-        
-        print(f"Bulk reminders complete: {sent} sent, {skipped} skipped (rate limit), {failed} failed")
-        
-        return jsonify({
+        # Build recipient descriptors and dispatch via the batch sender.
+        # One API call per person is intentional — every email body is personalised
+        # with a unique per-recipient HMAC-signed unsubscribe URL.
+        recipient_descriptors = [
+            {
+                "request_id": request_id,
+                "form_title": form_title,
+                "form_url": form_url,
+                "recipient_email": email,
+                "owner_id": user_id,
+            }
+            for email in non_responders
+        ]
+
+        summary = EmailService.send_reminders_batch(recipient_descriptors)
+
+        sent = len(summary["sent"])
+        skipped = len(summary["skipped"])
+        failed = len(summary["failed"])
+        not_attempted = len(summary["not_attempted"])
+
+        response_body = {
             "success": True,
             "message": f"Sent {sent} reminders",
             "sent": sent,
             "skipped": skipped,
             "failed": failed,
+            "opted_out": len(summary["opted_out"]),
+            "bounced": len(summary["bounced"]),
+            "not_attempted": not_attempted,
             "total_non_responders": len(non_responders),
-            "skipped_opted_out": len(opted_out)
-        }), 200
+            "skipped_opted_out": len(opted_out),
+        }
+
+        if summary["emailit_rate_limited"]:
+            response_body["warning"] = (
+                f"Emailit API rate limit reached (1000 emails/hour). "
+                f"Sent {sent} of {len(non_responders)}. "
+                f"{not_attempted} recipient(s) not attempted — try again later."
+            )
+
+        return jsonify(response_body), 200
         
     except Exception as e:
         import traceback

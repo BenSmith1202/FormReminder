@@ -12,6 +12,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Reset from './pages/Reset';
 import ViewRequest from './pages/ViewRequest';
+import Analytics from './pages/Analytics';
 
 const theme = createTheme({
   palette: {
@@ -46,6 +47,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/requests/new" element={<CreateRequest />} />
             <Route path="/request/:requestId" element={<ViewRequest />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/time" element={<ServerTime />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/new" element={<CreateGroup />} />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Paper,
@@ -17,6 +17,9 @@ import {
   Stack,
   Divider,
   IconButton,
+  Tabs,
+  Tab,
+  Snackbar,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -54,6 +57,16 @@ interface MemberStatus {
   submitted_at?: string;
 }
 
+interface OptOutEventItem {
+  id: string;
+  recipient_email: string;
+  event_type: string;
+  group_name: string | null;
+  performed_by: string;
+  source: string;
+  timestamp: string;
+}
+
 export default function ViewRequest() {
   const { requestId } = useParams<{ requestId: string }>();
   const navigate = useNavigate();
@@ -69,6 +82,13 @@ export default function ViewRequest() {
   const [sendingBulk, setSendingBulk] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
+  const [tabIndex, setTabIndex] = useState(0);
+  const [optOutEvents, setOptOutEvents] = useState<OptOutEventItem[]>([]);
+  const [optOutLoading, setOptOutLoading] = useState(false);
+  const [optOutFetched, setOptOutFetched] = useState(false);
+  const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
+  const [ownerId, setOwnerId] = useState<string | null>(null);
 
   const loadFormRequestData = async (showLoadingSpinner = true) => {
     try {
@@ -178,6 +198,34 @@ export default function ViewRequest() {
     }
   }, [requestId]);
 
+  useEffect(() => {
+    if (tabIndex !== 1 || optOutFetched) return;
+    const fetchOptOutData = async () => {
+      setOptOutLoading(true);
+      try {
+        const userRes = await fetch(`${API_URL}/api/current-user`, { credentials: 'include' });
+        const userData = await userRes.json();
+        if (!userData.authenticated || !userData.user?.id) {
+          setOptOutLoading(false);
+          return;
+        }
+        setOwnerId(userData.user.id);
+        const eventsRes = await fetch(`${API_URL}/api/organizations/${userData.user.id}/opt-out-events`, {
+          credentials: 'include',
+        });
+        if (!eventsRes.ok) throw new Error('Failed to load opt-out events');
+        const eventsData = await eventsRes.json();
+        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
+      } catch {
+        setOptOutEvents([]);
+      } finally {
+        setOptOutLoading(false);
+        setOptOutFetched(true);
+      }
+    };
+    fetchOptOutData();
+  }, [tabIndex, optOutFetched]);
+
   // Auto-refresh polling
   useEffect(() => {
     if (!requestId) return;
@@ -272,6 +320,67 @@ export default function ViewRequest() {
 
   const handleManualRefresh = async () => {
     await syncAndLoadData(true);
+  };
+
+  const handleResubscribeOptOut = async (email: string) => {
+    if (!ownerId) return;
+    setResubscribingEmail(email);
+    try {
+      const res = await fetch(`${API_URL}/api/organizations/${ownerId}/resubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSnackbar({ open: true, message: data.error || 'Failed to re-subscribe', isError: true });
+        return;
+      }
+      setSnackbar({ open: true, message: 'Recipient re-subscribed successfully' });
+      const eventsRes = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, { credentials: 'include' });
+      if (eventsRes.ok) {
+        const eventsData = await eventsRes.json();
+        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
+      }
+    } catch (e: any) {
+      setSnackbar({ open: true, message: e.message || 'Failed to re-subscribe', isError: true });
+    } finally {
+      setResubscribingEmail(null);
+    }
+  };
+
+  const memberEmailsSet = useMemo(() => new Set(memberStatus.map((m) => m.email.toLowerCase())), [memberStatus]);
+  const optedOutForRequest = useMemo(() => {
+    const byEmail: Record<string, { event_type: string; timestamp: string }> = {};
+    const sorted = [...optOutEvents]
+      .filter((e) => memberEmailsSet.has((e.recipient_email || '').toLowerCase()))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    for (const e of sorted) {
+      const key = (e.recipient_email || '').toLowerCase();
+      if (key && byEmail[key] === undefined) {
+        byEmail[key] = { event_type: e.event_type, timestamp: e.timestamp };
+      }
+    }
+    return Object.entries(byEmail)
+      .filter(([, v]) => v.event_type === 'opted_out' || v.event_type === 'left_group')
+      .map(([email, v]) => ({ email, event_type: v.event_type, timestamp: v.timestamp }));
+  }, [optOutEvents, memberEmailsSet]);
+
+  const formatOptOutTimestamp = (ts: string) => {
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const h = d.getHours();
+      const am = h < 12;
+      const h12 = h % 12 || 12;
+      const m = d.getMinutes();
+      const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+      return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${h12}:${pad(m)} ${am ? 'a' : 'p'}m`;
+    } catch {
+      return ts;
+    }
   };
 
   // Update "seconds since update" counter
@@ -428,6 +537,13 @@ export default function ViewRequest() {
         </Alert>
       )}
 
+      <Tabs value={tabIndex} onChange={(_, v: number) => setTabIndex(v)} sx={{ mb: 2 }}>
+        <Tab label="Responses" />
+        <Tab label="Opted Out" />
+      </Tabs>
+
+      {tabIndex === 0 && (
+        <>
       {/* Form Details */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -647,6 +763,74 @@ export default function ViewRequest() {
           </TableContainer>
         </Paper>
       )}
+        </>
+      )}
+
+      {tabIndex === 1 && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>Opted Out</Typography>
+          <Divider sx={{ mb: 2 }} />
+          {optOutLoading ? (
+            <Box display="flex" justifyContent="center" py={4}>
+              <CircularProgress />
+            </Box>
+          ) : optedOutForRequest.length === 0 ? (
+            <Alert severity="info">No opted-out recipients for this request.</Alert>
+          ) : (
+            <TableContainer sx={{ overflowX: 'auto' }}>
+              <Table size="small" sx={{ minWidth: 360 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Email</TableCell>
+                    <TableCell>Event Type</TableCell>
+                    <TableCell>Timestamp</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {optedOutForRequest.map((row) => (
+                    <TableRow key={row.email} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight="medium">{row.email}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={row.event_type}
+                          color={row.event_type === 'opted_out' ? 'error' : 'warning'}
+                          size="small"
+                          variant="outlined"
+                        />
+                      </TableCell>
+                      <TableCell>{formatOptOutTimestamp(row.timestamp)}</TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={resubscribingEmail === row.email}
+                          onClick={() => handleResubscribeOptOut(row.email)}
+                          startIcon={resubscribingEmail === row.email ? <CircularProgress size={14} /> : undefined}
+                        >
+                          {resubscribingEmail === row.email ? 'Sending...' : 'Re-subscribe'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Paper>
+      )}
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        message={snackbar.message}
+        ContentProps={{
+          sx: snackbar.isError ? { bgcolor: 'error.main', color: 'white' } : undefined,
+        }}
+      />
     </Box>
   );
 }
