@@ -161,6 +161,8 @@ class Collections:
     EMAIL_EVENTS = "email_events"
     # Bounced email addresses (skip future sends)
     BOUNCED_EMAILS = "bounced_emails"
+    # Sub-user memberships within an owner's organization
+    ORG_MEMBERS = "org_members"
 
 # Helper function
 def get_db():

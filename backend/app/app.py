@@ -15,6 +15,7 @@ from models.user import User
 from models.group import Group
 from models.org_membership import OrgMembership
 from models.opt_out_event import OptOutEvent
+from models.org_member import OrgMember
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
@@ -23,8 +24,8 @@ from utils.email_service import EmailService
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
 
-CORS(app, 
-     origins=["http://localhost:5173"],  # Frontend URL
+CORS(app,
+     origins=["http://localhost:5173", "http://localhost:5174"],
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
@@ -70,6 +71,87 @@ def _create_notification(owner_id: str, notif_type: str, message: str, data=None
         )
     except Exception as e:
         print(f"Warning: failed to create notification: {e}")
+
+# ---------------------------------------------------------------------------
+# Sub-user / org-context helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_org_context(session_user_id: str, org_id: str | None):
+    """Resolve the effective owner for a request that may come from a sub-user.
+
+    The frontend sends an optional ``X-Org-ID`` header when the logged-in user
+    is acting on behalf of another owner's organization.  This helper validates
+    that relationship and returns everything the calling route needs.
+
+    Args:
+        session_user_id: The currently authenticated user's ID.
+        org_id: Value of the ``X-Org-ID`` request header, or ``None``.
+
+    Returns:
+        A 3-tuple ``(effective_owner_id, membership_or_None, error_or_None)``.
+
+        - ``effective_owner_id`` – the ``owner_id`` to use in DB queries.
+        - ``membership_or_None`` – the ``OrgMember`` record if acting as a
+          sub-user, ``None`` when acting as own org.
+        - ``error_or_None`` – a Flask ``(Response, status_code)`` tuple to
+          return immediately if access is denied, otherwise ``None``.
+    """
+    if not org_id or org_id == session_user_id:
+        return session_user_id, None, None
+
+    membership = OrgMember.get_membership(org_id, session_user_id)
+    if not membership or membership.status != OrgMember.STATUS_ACTIVE:
+        from flask import jsonify as _jsonify
+        return None, None, (_jsonify({"error": "Not an active member of this organization"}), 403)
+
+    return org_id, membership, None
+
+
+def _send_invite_email(
+    to_email: str,
+    inviter_name: str,
+    inviter_email: str,
+    org_name: str,
+    role: str,
+    invite_token: str,
+) -> bool:
+    """Render the invite template and dispatch via Emailit.
+
+    Args:
+        to_email: Recipient's email address.
+        inviter_name: Display name of the person who sent the invite.
+        inviter_email: Email of the inviter (shown in footer).
+        org_name: Display name for the organization.
+        role: ``"admin"`` or ``"manager"``.
+        invite_token: The raw token embedded in the accept URL.
+
+    Returns:
+        True if the Emailit API accepted the email, False otherwise.
+    """
+    from jinja2 import Environment, FileSystemLoader
+    import os
+
+    template_dir = os.path.join(os.path.dirname(__file__), "templates")
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template("invite_email.html")
+
+    accept_url = f"{settings.FRONTEND_URL}/invite/accept?token={invite_token}"
+
+    html_content = template.render(
+        inviter_name=inviter_name,
+        inviter_email=inviter_email,
+        org_name=org_name,
+        role=role,
+        accept_url=accept_url,
+    )
+
+    result = EmailService.send_email(
+        to_email,
+        f"[FormReminder] You've been invited to join {org_name}",
+        html_content,
+    )
+    return result.get("success", False)
+
 
 @app.get("/")
 def root():
@@ -492,24 +574,43 @@ def health_check():
 # Get all form requests
 @app.get("/api/form-requests")
 def get_form_requests():
-    """Retrieve all form requests from the database"""
+    """Retrieve all form requests from the database.
+
+    Sub-users may call this with the ``X-Org-ID`` header to list the form
+    requests assigned to them within the specified organization.
+    """
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         db = get_db()
-        
+
         form_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where('owner_id', '==', user_id)\
+            .where('owner_id', '==', effective_owner_id)\
             .stream()
+
+        # If acting as sub-user, only surface assigned form requests
+        assigned_ids = (
+            {a["resource_id"] for a in membership.assignments if a["resource_type"] == "form_request"}
+            if membership else None
+        )
         
         requests_list = []
         for req in form_requests:
+            # Sub-user: skip form requests not in their assignment list
+            if assigned_ids is not None and req.id not in assigned_ids:
+                continue
+
             request_data = req.to_dict()
-            
+
             # Get form data from forms collection to include last_synced_at, title, form_url, etc.
             form_id = request_data.get('form_id')
             if not form_id:
@@ -590,27 +691,39 @@ def get_form_requests():
 # Get responses for a specific form request
 @app.get("/api/form-requests/<request_id>/responses")
 def get_form_request_responses(request_id: str):
-    """Get all responses for a form request"""
+    """Get all responses for a form request.
+
+    Sub-users may call this with the ``X-Org-ID`` header provided they have
+    been assigned to this form request.
+    """
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         db = get_db()
-        
+
         # Get the form request
         request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
         request_doc = request_ref.get()
-        
+
         if not request_doc.exists:
             return jsonify({"error": "Form request not found"}), 404
-        
+
         request_data = request_doc.to_dict()
-        
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+
+        # Verify ownership or sub-user assignment
+        if membership:
+            if not membership.can_perform("view", "form_request", request_id):
+                return jsonify({"error": "Not assigned to this form request"}), 403
+        elif request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # Get form data from forms collection
@@ -745,16 +858,30 @@ def get_form_request_responses(request_id: str):
 # Refresh responses from Google Forms
 @app.post("/api/form-requests/<request_id>/refresh")
 def refresh_form_responses(request_id: str):
-    """Manually refresh responses from Google Forms"""
+    """Manually refresh responses from Google Forms.
+
+    Always uses the org owner's Google credentials regardless of who triggers
+    the refresh, so sub-users do not need their own Google connection.
+    """
     from datetime import datetime
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
-        user = User.get_by_id(user_id)
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
+        # Sub-user: verify assignment before allowing refresh
+        if membership and not membership.can_perform("view", "form_request", request_id):
+            return jsonify({"error": "Not assigned to this form request"}), 403
+
+        # Always use the org owner's Google credentials
+        user = User.get_by_id(effective_owner_id)
         if not user or not user.google_access_token:
             return jsonify({"error": "Google account not connected"}), 403
         
@@ -766,17 +893,17 @@ def refresh_form_responses(request_id: str):
         
         if not request_doc.exists:
             return jsonify({"error": "Form request not found"}), 404
-        
+
         request_data = request_doc.to_dict()
-        
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+
+        # Verify ownership (membership assignment already checked above)
+        if not membership and request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
-        
+
         form_id = request_data.get('google_form_id') or request_data.get('form_id')
         if not form_id:
             return jsonify({"error": "No Google Form ID found"}), 400
-        
+
         print(f"Refreshing responses for form {form_id}")
         
         # Get user's Google credentials
@@ -965,20 +1092,34 @@ def refresh_form_responses(request_id: str):
 # Create a new form request
 @app.post("/api/form-requests")
 def create_form_request():
-    """Create a new form request from a Google Form URL"""
+    """Create a new form request from a Google Form URL.
+
+    Managers cannot create form requests.  Admins acting in an org context
+    may create form requests owned by the org owner.
+    """
     from datetime import datetime
     from models.database import Collections
-    
+
     try:
         # Check if user is authenticated
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
-        user = User.get_by_id(user_id)
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
+        # Managers cannot create form requests
+        if membership and not membership.can_perform("create", "form_request", ""):
+            return jsonify({"error": "Managers cannot create form requests"}), 403
+
+        # Use org owner's account for Google credentials when admin acts on behalf of org
+        user = User.get_by_id(effective_owner_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
-        
+
         # Check if user has connected Google account
         if not user.google_access_token or not user.google_refresh_token:
             return jsonify({
@@ -1047,12 +1188,12 @@ def create_form_request():
         
         schedule_config = ReminderSchedule.get_schedule_config(reminder_schedule, custom_days)
         
-        # Verify group exists and user owns it
+        # Verify group exists and the effective owner owns it
         group = Group.get_by_id(group_id)
         if not group:
             return jsonify({"error": "Group not found"}), 404
-        
-        if group.owner_id != user_id:
+
+        if group.owner_id != effective_owner_id:
             return jsonify({"error": "You don't own this group"}), 403
         
         print(f"Creating form request for URL: {form_url} with group: {group.name}")
@@ -1142,7 +1283,7 @@ def create_form_request():
             'form_url': form_url,
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
-            'owner_id': user_id,
+            'owner_id': effective_owner_id,
             'created_at': now,
             'updated_at': now,
             'is_active': True,
@@ -1174,7 +1315,7 @@ def create_form_request():
         form_request_data = {
             'form_id': form_doc_id,  # Reference to forms collection
             'google_form_id': form_id,
-            'owner_id': user_id,
+            'owner_id': effective_owner_id,
             'group_id': group_id,
             'created_at': now,
             'status': 'Active',
@@ -1278,27 +1419,39 @@ def create_custom_schedule():
 
 @app.delete("/api/form-requests/<request_id>")
 def delete_form_request(request_id: str):
-    """Delete a form request and all its responses"""
+    """Delete a form request and all its responses.
+
+    Managers cannot delete form requests.  Admins may delete within their
+    assigned scope.  Only the org owner can delete unassigned requests.
+    """
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         db = get_db()
-        
+
         # Get the form request
         request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
         request_doc = request_ref.get()
-        
+
         if not request_doc.exists:
             return jsonify({"error": "Form request not found"}), 404
-        
+
         request_data = request_doc.to_dict()
-        
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+
+        # Verify ownership or admin delete permission
+        if membership:
+            if not membership.can_perform("delete", "form_request", request_id):
+                return jsonify({"error": "Not authorized to delete this form request"}), 403
+        elif request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # Delete all responses for this request
@@ -1337,28 +1490,36 @@ def delete_form_request(request_id: str):
 
 @app.post("/api/groups")
 def create_group():
-    """Create a new group"""
+    """Create a new group.  Managers cannot create groups; admins may."""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
+        if membership and not membership.can_perform("create", "group", ""):
+            return jsonify({"error": "Managers cannot create groups"}), 403
+
         data = request.get_json()
         if not data or 'name' not in data:
             return jsonify({"error": "Group name is required"}), 400
-        
+
         name = data['name'].strip()
         description = data.get('description', '').strip()
-        
+
         if not name:
             return jsonify({"error": "Group name cannot be empty"}), 400
-        
-        print(f"Creating group: {name} for user {user_id}")
-        
+
+        print(f"Creating group: {name} for user {effective_owner_id}")
+
         group = Group.create_group(
             name=name,
             description=description,
-            owner_id=user_id
+            owner_id=effective_owner_id
         )
         
         if not group:
@@ -1383,20 +1544,35 @@ def create_group():
 
 @app.get("/api/groups")
 def get_user_groups():
-    """Get all groups owned by the current user"""
+    """Get groups for the current user or, via X-Org-ID, their assigned groups."""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
+        print(f"Fetching groups for owner: {effective_owner_id}")
+
+        all_groups = Group.get_user_groups(effective_owner_id)
+
+        # Sub-user: filter to assigned groups only
+        if membership:
+            assigned_group_ids = {
+                a["resource_id"] for a in membership.assignments
+                if a["resource_type"] == "group"
+            }
+            groups = [g for g in all_groups if g.id in assigned_group_ids]
+        else:
+            groups = all_groups
         
-        print(f"Fetching groups for user: {user_id}")
-        
-        groups = Group.get_user_groups(user_id)
-        
-        groups_list = [group.to_dict() for group in groups]
-        
+        groups_list = [g.to_dict() for g in groups]
+
         print(f"Found {len(groups_list)} groups")
-        
+
         return jsonify({
             "groups": groups_list,
             "count": len(groups_list)
@@ -1415,19 +1591,27 @@ def get_user_groups():
 
 @app.get("/api/groups/<group_id>")
 def get_group(group_id: str):
-    """Get a specific group with all members"""
+    """Get a specific group with all members."""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         group = Group.get_by_id(group_id)
-        
+
         if not group:
             return jsonify({"error": "Group not found"}), 404
-        
-        # Verify ownership
-        if group.owner_id != user_id:
+
+        # Verify ownership or sub-user assignment
+        if membership:
+            if not membership.can_perform("view", "group", group_id):
+                return jsonify({"error": "Not assigned to this group"}), 403
+        elif group.owner_id != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         return jsonify({
@@ -1447,25 +1631,37 @@ def get_group(group_id: str):
 
 @app.post("/api/groups/<group_id>/members")
 def add_group_members(group_id: str):
-    """Add members to a group (bulk email paste)"""
+    """Add members to a group (bulk email paste).
+
+    Both owners and sub-users (admin or manager) with assignment to this
+    group may add members.
+    """
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         data = request.get_json()
         if not data or 'emails' not in data:
             return jsonify({"error": "Emails are required"}), 400
-        
+
         emails_text = data['emails']
-        
+
         # Get group
         group = Group.get_by_id(group_id)
         if not group:
             return jsonify({"error": "Group not found"}), 404
-        
-        # Verify ownership
-        if group.owner_id != user_id:
+
+        # Verify ownership or sub-user edit permission
+        if membership:
+            if not membership.can_perform("edit", "group", group_id):
+                return jsonify({"error": "Not authorized to edit this group"}), 403
+        elif group.owner_id != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # Parse emails from text
@@ -1474,11 +1670,11 @@ def add_group_members(group_id: str):
         if not emails:
             return jsonify({"error": "No valid emails found"}), 400
 
-        # Respect org-level opt-out: owners cannot re-add opted-out recipients by accident.
+        # Respect org-level opt-out (always scoped to the org owner).
         opted_out = []
         allowed_emails = []
         for e in emails:
-            if OrgMembership.is_opted_out(user_id, e):
+            if OrgMembership.is_opted_out(effective_owner_id, e):
                 opted_out.append(e)
             else:
                 allowed_emails.append(e)
@@ -1510,21 +1706,33 @@ def add_group_members(group_id: str):
 
 @app.delete("/api/groups/<group_id>/members/<email>")
 def remove_group_member(group_id: str, email: str):
-    """Remove a member from a group"""
+    """Remove a member from a group.
+
+    Both owners and sub-users (admin or manager) with assignment may remove
+    group members.
+    """
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         print(f"Removing member {email} from group {group_id}")
-        
+
         # Get group
         group = Group.get_by_id(group_id)
         if not group:
             return jsonify({"error": "Group not found"}), 404
-        
-        # Verify ownership
-        if group.owner_id != user_id:
+
+        # Verify ownership or sub-user edit permission
+        if membership:
+            if not membership.can_perform("edit", "group", group_id):
+                return jsonify({"error": "Not authorized to edit this group"}), 403
+        elif group.owner_id != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # Remove member
@@ -1535,7 +1743,7 @@ def remove_group_member(group_id: str, email: str):
 
         try:
             OptOutEvent.log(
-                user_id, email, "left_group", "owner", "owner_dashboard",
+                effective_owner_id, email, "left_group", "owner", "owner_dashboard",
                 group_id=group_id, group_name=group.name,
             )
         except Exception:
@@ -1780,6 +1988,443 @@ def get_opt_out_events(owner_id: str):
 
 # ============= END GROUPS ROUTES =============
 
+# ============= ORG MEMBER (SUB-USER) ROUTES =============
+#
+# Every User account IS its own organization (org_id == owner's user_id).
+# Sub-users must already have a FormReminder account.
+# The frontend identifies the active org context via the X-Org-ID header.
+#
+# Role capabilities (assigned resources only):
+#   admin   — view, edit, create, delete, send_reminder
+#   manager — view, edit, send_reminder  (no create / delete)
+# Only the org owner can manage members and send invites.
+
+
+@app.get("/api/org/members")
+def list_org_members():
+    """Owner only: list all sub-users (pending and active) in the caller's org."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        members = OrgMember.get_org_members(user_id)
+        return jsonify({"members": [m.to_dict() for m in members]}), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to list members", "details": str(e)}), 500
+
+
+@app.post("/api/org/invite")
+def invite_org_member():
+    """Owner only: send an email invite to an existing FormReminder account.
+
+    Body JSON:
+        email (str): The invitee's email address.
+        role  (str): ``"admin"`` or ``"manager"``.
+
+    The invitee must already have a FormReminder account.  If found, a
+    pending membership record is created and an invite email is dispatched.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json(silent=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        role = (data.get("role") or "").strip().lower()
+
+        if not email:
+            return jsonify({"error": "email is required"}), 400
+        if role not in OrgMember.VALID_ROLES:
+            return jsonify({"error": f"role must be one of: {sorted(OrgMember.VALID_ROLES)}"}), 400
+
+        # Prevent owner inviting themselves
+        owner = User.get_by_id(user_id)
+        if not owner:
+            return jsonify({"error": "Owner account not found"}), 404
+        if (owner.email or "").lower() == email:
+            return jsonify({"error": "You cannot invite yourself"}), 400
+
+        # Invitee must already have an account
+        invitee = User.get_by_email(email) if hasattr(User, "get_by_email") else None
+        if invitee is None:
+            # Fallback: search by email field in users collection
+            db = get_db()
+            from models.database import Collections as _C
+            results = list(db.collection(_C.USERS).where("email", "==", email).stream())
+            invitee_id = results[0].id if results else None
+        else:
+            invitee_id = invitee.id
+
+        if not invitee_id:
+            return jsonify({
+                "error": "No FormReminder account found for that email address",
+                "hint": "The person must register for FormReminder before they can be invited",
+            }), 404
+
+        # Check for duplicate active membership
+        existing = OrgMember.get_membership(user_id, invitee_id)
+        if existing and existing.status == OrgMember.STATUS_ACTIVE:
+            return jsonify({"error": "This user is already an active member"}), 409
+
+        # Create pending invite record
+        member = OrgMember.create_invite(
+            org_id=user_id,
+            invite_email=email,
+            role=role,
+            invited_by=user_id,
+        )
+
+        # Dispatch invite email (best-effort; membership record already saved)
+        org_name = owner.username or owner.email or user_id
+        email_sent = _send_invite_email(
+            to_email=email,
+            inviter_name=org_name,
+            inviter_email=owner.email or "",
+            org_name=org_name,
+            role=role,
+            invite_token=member.invite_token,
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Invite {'sent' if email_sent else 'created (email failed)'}",
+            "member": member.to_dict(),
+            "email_sent": email_sent,
+        }), 201
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to send invite", "details": str(e)}), 500
+
+
+@app.post("/api/org/members")
+def add_org_member():
+    """Owner only: manually add an existing user as an active member (no invite email).
+
+    Body JSON:
+        email (str): The user's email address.
+        role  (str): ``"admin"`` or ``"manager"``.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json(silent=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        role = (data.get("role") or "").strip().lower()
+
+        if not email:
+            return jsonify({"error": "email is required"}), 400
+        if role not in OrgMember.VALID_ROLES:
+            return jsonify({"error": f"role must be one of: {sorted(OrgMember.VALID_ROLES)}"}), 400
+
+        # Prevent adding yourself
+        owner = User.get_by_id(user_id)
+        if owner and (owner.email or "").lower() == email:
+            return jsonify({"error": "You cannot add yourself as a sub-user"}), 400
+
+        # Look up user by email
+        db = get_db()
+        from models.database import Collections as _C
+        results = list(db.collection(_C.USERS).where("email", "==", email).stream())
+        if not results:
+            return jsonify({
+                "error": "No FormReminder account found for that email address",
+                "hint": "The person must register for FormReminder before they can be added",
+            }), 404
+
+        target_user_id = results[0].id
+
+        # Idempotency: if already active, just return existing record
+        existing = OrgMember.get_membership(user_id, target_user_id)
+        if existing and existing.status == OrgMember.STATUS_ACTIVE:
+            return jsonify({
+                "success": True,
+                "message": "User is already an active member",
+                "member": existing.to_dict(),
+            }), 200
+
+        member = OrgMember.create_active(
+            org_id=user_id,
+            member_user_id=target_user_id,
+            role=role,
+            invited_by=user_id,
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Added {email} as {role}",
+            "member": member.to_dict(),
+        }), 201
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to add member", "details": str(e)}), 500
+
+
+@app.get("/api/org/invite/<token>")
+def get_invite_details(token: str):
+    """PUBLIC: Return invite metadata so the frontend can display the accept page.
+
+    No authentication required — this is called before the user logs in.
+    """
+    try:
+        member = OrgMember.get_by_token(token)
+        if not member or member.status != OrgMember.STATUS_PENDING:
+            return jsonify({"error": "Invite not found or already accepted"}), 404
+
+        owner = User.get_by_id(member.org_id)
+        org_name = (owner.username or owner.email or member.org_id) if owner else member.org_id
+
+        return jsonify({
+            "org_id": member.org_id,
+            "org_name": org_name,
+            "role": member.role,
+            "invite_email": member.invite_email,
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to get invite details", "details": str(e)}), 500
+
+
+@app.post("/api/org/invite/accept")
+def accept_org_invite():
+    """Authenticated user accepts a pending invite using their token.
+
+    Body JSON:
+        token (str): The invite token from the email link.
+
+    The logged-in user's account is linked to the invite.  Their email must
+    match the address the invite was sent to.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in to accept an invite"}), 401
+
+        data = request.get_json(silent=True) or {}
+        token = (data.get("token") or "").strip()
+        if not token:
+            return jsonify({"error": "token is required"}), 400
+
+        member = OrgMember.get_by_token(token)
+        if not member:
+            return jsonify({"error": "Invalid or expired invite token"}), 404
+        if member.status == OrgMember.STATUS_ACTIVE:
+            return jsonify({"error": "This invite has already been accepted"}), 409
+
+        # Verify the logged-in user's email matches the invite
+        user = User.get_by_id(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        if member.invite_email and (user.email or "").lower() != member.invite_email:
+            return jsonify({
+                "error": "This invite was sent to a different email address",
+                "expected": member.invite_email,
+            }), 403
+
+        success = member.accept(user_id)
+        if not success:
+            return jsonify({"error": "Failed to accept invite"}), 500
+
+        owner = User.get_by_id(member.org_id)
+        org_name = (owner.username or owner.email or member.org_id) if owner else member.org_id
+
+        return jsonify({
+            "success": True,
+            "message": f"You are now a {member.role} in {org_name}",
+            "member": member.to_dict(),
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to accept invite", "details": str(e)}), 500
+
+
+@app.put("/api/org/members/<member_user_id>")
+def update_org_member_role(member_user_id: str):
+    """Owner only: change the role of an existing sub-user.
+
+    Body JSON:
+        role (str): ``"admin"`` or ``"manager"``.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json(silent=True) or {}
+        new_role = (data.get("role") or "").strip().lower()
+        if new_role not in OrgMember.VALID_ROLES:
+            return jsonify({"error": f"role must be one of: {sorted(OrgMember.VALID_ROLES)}"}), 400
+
+        member = OrgMember.get_membership(user_id, member_user_id)
+        if not member:
+            return jsonify({"error": "Member not found"}), 404
+
+        if not member.update_role(new_role):
+            return jsonify({"error": "Failed to update role"}), 500
+
+        return jsonify({
+            "success": True,
+            "message": f"Role updated to {new_role}",
+            "member": member.to_dict(),
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to update role", "details": str(e)}), 500
+
+
+@app.delete("/api/org/members/<member_user_id>")
+def remove_org_member(member_user_id: str):
+    """Owner only: remove a sub-user from the organization."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        member = OrgMember.get_membership(user_id, member_user_id)
+        if not member:
+            return jsonify({"error": "Member not found"}), 404
+
+        if not member.remove():
+            return jsonify({"error": "Failed to remove member"}), 500
+
+        return jsonify({"success": True, "message": "Member removed"}), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to remove member", "details": str(e)}), 500
+
+
+@app.post("/api/org/members/<member_user_id>/assignments")
+def add_member_assignment(member_user_id: str):
+    """Owner only: assign a group or form request to a sub-user.
+
+    Body JSON:
+        resource_type (str): ``"group"`` or ``"form_request"``.
+        resource_id   (str): Firestore document ID of the resource.
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json(silent=True) or {}
+        resource_type = (data.get("resource_type") or "").strip()
+        resource_id = (data.get("resource_id") or "").strip()
+
+        if resource_type not in ("group", "form_request"):
+            return jsonify({"error": "resource_type must be 'group' or 'form_request'"}), 400
+        if not resource_id:
+            return jsonify({"error": "resource_id is required"}), 400
+
+        member = OrgMember.get_membership(user_id, member_user_id)
+        if not member:
+            return jsonify({"error": "Member not found"}), 404
+
+        if not member.add_assignment(resource_type, resource_id):
+            return jsonify({"error": "Failed to add assignment"}), 500
+
+        return jsonify({
+            "success": True,
+            "message": f"Assigned {resource_type} {resource_id} to member",
+            "assignments": member.assignments,
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to add assignment", "details": str(e)}), 500
+
+
+@app.delete("/api/org/members/<member_user_id>/assignments/<resource_type>/<resource_id>")
+def remove_member_assignment(member_user_id: str, resource_type: str, resource_id: str):
+    """Owner only: revoke a sub-user's access to a specific resource."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        if resource_type not in ("group", "form_request"):
+            return jsonify({"error": "resource_type must be 'group' or 'form_request'"}), 400
+
+        member = OrgMember.get_membership(user_id, member_user_id)
+        if not member:
+            return jsonify({"error": "Member not found"}), 404
+
+        removed = member.remove_assignment(resource_type, resource_id)
+        if not removed:
+            return jsonify({"error": "Assignment not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "message": "Assignment removed",
+            "assignments": member.assignments,
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to remove assignment", "details": str(e)}), 500
+
+
+@app.get("/api/my-organizations")
+def list_my_organizations():
+    """Authenticated user: list all organizations they belong to as a sub-user."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        memberships = OrgMember.get_user_memberships(user_id)
+
+        orgs = []
+        for m in memberships:
+            owner = User.get_by_id(m.org_id)
+            orgs.append({
+                **m.to_dict(),
+                "org_name": (owner.username or owner.email or m.org_id) if owner else m.org_id,
+            })
+
+        return jsonify({"organizations": orgs}), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to list organizations", "details": str(e)}), 500
+
+
+@app.get("/api/my-organizations/<org_id>/assignments")
+def get_my_assignments(org_id: str):
+    """Sub-user: list the resources assigned to them within a specific org."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        member = OrgMember.get_membership(org_id, user_id)
+        if not member or member.status != OrgMember.STATUS_ACTIVE:
+            return jsonify({"error": "Not a member of this organization"}), 403
+
+        return jsonify({
+            "org_id": org_id,
+            "role": member.role,
+            "assignments": member.assignments,
+        }), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": "Failed to get assignments", "details": str(e)}), 500
+
+
+# ============= END ORG MEMBER ROUTES =============
+
 # This matches frontend/src/pages/ServerTime.tsx
 @app.route('/time', methods=['GET'])
 def get_current_time():
@@ -1862,41 +2507,53 @@ def webhook_emailit():
 
 @app.post("/api/form-requests/<request_id>/send-reminder/<email>")
 def send_single_reminder(request_id: str, email: str):
-    """Send a reminder email to a single recipient"""
+    """Send a reminder email to a single recipient.
+
+    Both owners and sub-users with send_reminder permission on the assigned
+    form request may call this endpoint.
+    """
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         db = get_db()
-        
+
         # Get the form request
         request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
         request_doc = request_ref.get()
-        
+
         if not request_doc.exists:
             return jsonify({"error": "Form request not found"}), 404
-        
+
         request_data = request_doc.to_dict()
-        
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+
+        # Verify ownership or sub-user send_reminder permission
+        if membership:
+            if not membership.can_perform("send_reminder", "form_request", request_id):
+                return jsonify({"error": "Not authorized to send reminders for this form request"}), 403
+        elif request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
-        
+
         # Get form info
         form_title = request_data.get('title', 'Untitled Form')
         form_url = request_data.get('form_url')
-        
+
         print(f"Sending reminder to {email} for form: {form_title}")
 
-        # Respect org-level opt-out
-        if OrgMembership.is_opted_out(user_id, email):
+        # Respect org-level opt-out (always scoped to the org owner)
+        if OrgMembership.is_opted_out(effective_owner_id, email):
             return jsonify({"success": False, "error": "Recipient has opted out of this organization"}), 400
-        
+
         # Send reminder
-        result = EmailService.send_reminder(request_id, form_title, form_url, email, owner_id=user_id)
+        result = EmailService.send_reminder(request_id, form_title, form_url, email, owner_id=effective_owner_id)
         
         if result['success']:
             return jsonify(result), 200
@@ -1916,29 +2573,41 @@ def send_single_reminder(request_id: str, email: str):
 
 @app.post("/api/form-requests/<request_id>/send-reminders")
 def send_bulk_reminders(request_id: str):
-    """Send reminders to all non-responders (excluding recently sent)"""
+    """Send reminders to all non-responders (excluding recently sent).
+
+    Both owners and sub-users with send_reminder permission on the assigned
+    form request may trigger a bulk send.
+    """
     from models.database import Collections
-    
+
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
-        
+
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+
         db = get_db()
-        
+
         # Get the form request
         request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
         request_doc = request_ref.get()
-        
+
         if not request_doc.exists:
             return jsonify({"error": "Form request not found"}), 404
-        
+
         request_data = request_doc.to_dict()
-        
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+
+        # Verify ownership or sub-user send_reminder permission
+        if membership:
+            if not membership.can_perform("send_reminder", "form_request", request_id):
+                return jsonify({"error": "Not authorized to send reminders for this form request"}), 403
+        elif request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
-        
+
         # Get form info
         form_title = request_data.get('title', 'Untitled Form')
         form_url = request_data.get('form_url')
@@ -1973,8 +2642,8 @@ def send_bulk_reminders(request_id: str):
             if member_email_lower in responded_emails:
                 continue
 
-            # Respect org-level opt-out
-            if OrgMembership.is_opted_out(user_id, member_email):
+            # Respect org-level opt-out (always scoped to org owner)
+            if OrgMembership.is_opted_out(effective_owner_id, member_email):
                 opted_out.append(member_email)
                 continue
 
@@ -2000,7 +2669,7 @@ def send_bulk_reminders(request_id: str):
                 "form_title": form_title,
                 "form_url": form_url,
                 "recipient_email": email,
-                "owner_id": user_id,
+                "owner_id": effective_owner_id,
             }
             for email in non_responders
         ]
