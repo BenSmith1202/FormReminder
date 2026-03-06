@@ -86,12 +86,20 @@ def get_form_requests():
                 )
             
             # Merge form data into request_data - request_data takes precedence
+            # IMPORTANT: We only use form_data for fields that don't exist in request_data
+            # (like last_synced_at, api_access_available, form_settings)
+            # The title should ALWAYS come from request_data to avoid duplicate title bug
             merged_data = {
-                **form_data,  # Form data first (base - last_synced_at, api_access, etc.)
-                **request_data,  # Request data second (overrides - title, description, etc.)
-                "response_count": response_count,  # Include dynamically calculated response_count
-                "total_recipients": total_recipients,  # Always include fresh count
-                "warnings": warnings  # Include dynamically calculated warnings
+                # Only pull specific fields from form_data that we actually need
+                "last_synced_at": form_data.get('last_synced_at'),
+                "api_access_available": form_data.get('api_access_available', True),
+                "form_settings": form_data.get('form_settings', {}),
+                # Now spread all of request_data (this is the source of truth)
+                **request_data,
+                # Override with dynamically calculated fields
+                "response_count": response_count,
+                "total_recipients": total_recipients,
+                "warnings": warnings
             }
             
             requests_list.append({
@@ -697,11 +705,15 @@ def create_form_request():
             form_ref.set(form_data)
         
         # Create form request document with enhanced metadata
+        # IMPORTANT: Store title directly in form_request, not just in forms collection
+        # This allows multiple form requests for the same form to have different titles
         form_request_data = {
             'form_id': form_doc_id,  # Reference to forms collection
             'google_form_id': form_id,
             'owner_id': user_id,
             'group_id': group_id,
+            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),  # Store title here!
+            'form_url': form_url,  # Store form_url directly in the request
             'created_at': now,
             'status': 'Active',
             'is_active': True,

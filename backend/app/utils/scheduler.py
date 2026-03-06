@@ -39,7 +39,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 # To enable test mode, either:
 #   1. Set environment variable: SCHEDULER_TEST_MODE=true
 #   2. Or change this line to: TEST_MODE = True
-TEST_MODE = True  # <-- FLIP THIS TO False FOR PRODUCTION
+TEST_MODE = False  # <-- FLIP THIS TO False FOR PRODUCTION
 
 # Override with environment variable if set
 if os.environ.get('SCHEDULER_TEST_MODE', '').lower() == 'false':
@@ -263,12 +263,14 @@ def check_and_send_reminders():
                     continue
                 
                 # Send the reminder email
+                # In TEST_MODE, skip rate limiting so we can test emails quickly
                 result = EmailService.send_reminder(
                     request_id,
                     form_title,
                     form_url,
                     member_email,
-                    owner_id=owner_id
+                    owner_id=owner_id,
+                    skip_rate_limit=TEST_MODE  # Bypass rate limit in test mode
                 )
                 
                 if result.get('success'):
