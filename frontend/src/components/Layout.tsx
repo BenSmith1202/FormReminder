@@ -130,10 +130,8 @@ export default function Layout() {
             <Button
               color="inherit"
               startIcon={<SettingsIcon />}
-              onClick={() => {
-                // TODO: Navigate to settings page when created
-                alert('Settings page coming soon');
-              }}
+              onClick={() => navigate('/settings')}
+              variant={location.pathname === '/settings' ? 'outlined' : 'text'}
               size={isMobile ? 'small' : 'medium'}
               aria-label="Settings"
               sx={isMobile ? { minWidth: 40 } : {}}

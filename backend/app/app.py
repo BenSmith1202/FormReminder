@@ -20,6 +20,17 @@ from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
 
+# --- IMPORT BLUEPRINTS ---
+from routes.auth_and_login import auth_bp
+from routes.groups import groups_bp
+from routes.form_requests import form_requests_bp
+from routes.utilities import utilities_bp
+from routes.email import email_bp
+from routes.organizations import orgs_bp
+from routes.settings import settings_bp
+from utils.scheduler import init_scheduler  # Automatic reminder scheduler
+# -------------------------
+
 # 1. Initialize Flask
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
@@ -151,6 +162,15 @@ def _send_invite_email(
         html_content,
     )
     return result.get("success", False)
+
+# 4. Register Blueprints
+app.register_blueprint(auth_bp) # Auth handles its own /api prefixes
+app.register_blueprint(groups_bp, url_prefix='/api/groups')
+app.register_blueprint(form_requests_bp, url_prefix='/api/form-requests')
+app.register_blueprint(utilities_bp) # Utils handles its own prefixes (/time, /api/health)
+app.register_blueprint(email_bp)
+app.register_blueprint(orgs_bp)
+app.register_blueprint(settings_bp)
 
 
 @app.get("/")
