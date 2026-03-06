@@ -106,10 +106,7 @@ export default function Layout() {
             <Button
               color="inherit"
               startIcon={<SettingsIcon />}
-              onClick={() => {
-                // TODO: Navigate to settings page when created
-                alert('Settings page coming soon');
-              }}
+              onClick={() => navigate('/settings')}
             >
               Settings
             </Button>

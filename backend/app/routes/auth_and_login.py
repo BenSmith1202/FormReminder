@@ -1,13 +1,30 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
 import traceback
+import requests
+import os
+from firebase_admin import _auth_utils
+from dotenv import load_dotenv
 
 # Import your models and database tools
+import firebase_admin
 from models.user import User
+from firebase_admin import auth, credentials
 from utils.google_forms_service import GoogleFormsService
 
 # Define the Blueprint
 auth_bp = Blueprint('auth_and_login', __name__)
+
+# Initialize SDK
+current_dir = os.path.dirname(os.path.abspath(__file__))
+key_path = os.path.join(current_dir, "..", "..", "..", "firebase-credentials.json")
+final_path = os.path.normpath(key_path)
+
+cred = credentials.Certificate(final_path)
+firebase_admin.initialize_app(cred)
+
+# Load the environment variables
+load_dotenv()
 
 # AUTHENTICATION ROUTES
 
@@ -58,51 +75,52 @@ def register():
             "details": error_msg
         }), 500
 
-@auth_bp.post("/api/reset")
+@auth_bp.post('/api/reset')
 def reset():
-    """Reset a user's password"""
+    """API Route to trigger the password reset email"""
     try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        username = data.get('username')
-        password = data.get('password')
-        
-        # Validate input
-        if not username or not password:
-            return jsonify({"error": "Username and password are required"}), 400
-        
-        if len(password) < 6:
-            return jsonify({"error": "Password must be at least 6 characters"}), 400
-        
-        print(f"Attempting to reset password for user: {username}")
-        
-        user = User.reset_password(username, password)
-        
-        if not user:
-            return jsonify({"error": "Password reset failed"}), 409
-        
-        session['user_id'] = user.id
-        
-        print(f"User password reset: {user.id}")
-        
-        return jsonify({
-            "success": True,
-            "message": "Password reset successfully",
-            "user": user.to_safe_dict()
-        }), 201
-        
+        data = request.json
+        email = data.get('email')
+
+        print(email)
+
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+
+        success, message = trigger_password_reset(email)
+
+        if success:
+            return jsonify({
+                "success": True, 
+                "message": "Password reset email sent!"
+            }), 200
+        else:
+            if message == "EMAIL_NOT_FOUND":
+                return jsonify({"error": "No account found with that email address."}), 404
+            return jsonify({"error": f"Firebase error: {message}"}), 400
+
     except Exception as e:
         import traceback
-        error_msg = str(e)
         traceback.print_exc()
-        print(f"Error during registration: {error_msg}")
-        return jsonify({
-            "error": "Password reset failed",
-            "details": error_msg
-        }), 500
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+def trigger_password_reset(email):
+    API_KEY = os.getenv("FIREBASE_WEB_API_KEY")
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={API_KEY}"
+    
+    payload = {
+        "requestType": "PASSWORD_RESET",
+        "email": email
+    }
+    
+    response = requests.post(url, json=payload)
+    
+    if response.status_code == 200:
+        return True, "Success: Reset email sent!"
+    else:
+        error_data = response.json()
+        # Common errors: EMAIL_NOT_FOUND, USER_DISABLED
+        return False, error_data.get('error', {}).get('message', 'Unknown Error')
 
 @auth_bp.post("/api/login")
 def login():
@@ -112,6 +130,8 @@ def login():
         
         if not data:
             return jsonify({"error": "No data provided"}), 400
+        
+        link = auth
         
         username = data.get('username')
         password = data.get('password')
