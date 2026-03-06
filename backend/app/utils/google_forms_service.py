@@ -10,6 +10,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from config import settings
 
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 
 class GoogleFormsService:
     """Service for interacting with Google Forms API"""

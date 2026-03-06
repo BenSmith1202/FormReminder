@@ -10,61 +10,39 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-
 const API_URL = 'http://localhost:5000';
 
 function Reset() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  e.preventDefault();
+  setLoading(true);
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match')
-      return;
+  try {
+    const response = await fetch(`${API_URL}/api/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setMessage('If an account exists, a reset link has been sent.');
+    } else {
+      setError(data.error || 'Reset failed');
     }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const response = await fetch(`${API_URL}/api/reset`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({username, password})
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        console.log('Reset successful')
-        // Store user info in localStorage
-        localStorage.setItem('user', JSON.stringify(data.user));
-        // Redirect to user login
-        navigate('/login');
-      } else {
-        setError(data.error || 'Reset failed');
-      }
-    } catch (err) {
-      console.error('Reset error:', err);
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
+  } catch (err) {
+    setError('Server connection failed');
+  } finally {
+    setLoading(false);
   }
+};
 
   return (
     <Container maxWidth="sm">
@@ -74,46 +52,24 @@ function Reset() {
             Reset Password
           </Typography>
 
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
-          )}
+          <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 3 }}>
+            Enter your email address and we'll send you a link to reset your password.
+          </Typography>
+
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {message && <Alert severity="success" sx={{ mb: 2 }}>{message}</Alert>}
 
           <form onSubmit={handleSubmit}>
-
             <TextField
               fullWidth
-              label="Username"
+              label="Email Address"
+              type="email"
               variant="outlined"
               margin="normal"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
               autoFocus
-            />
-            
-            <TextField
-              fullWidth
-              label="New Password"
-              type="password"
-              variant="outlined"
-              margin="normal"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoFocus
-            />
-
-            <TextField
-              fullWidth
-              label="Confirm New Password"
-              type="password"
-              variant="outlined"
-              margin="normal"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
             />
 
             <Button
@@ -125,7 +81,15 @@ function Reset() {
               sx={{ mt: 3, mb: 2 }}
               disabled={loading}
             >
-              {loading ? <CircularProgress size={24} /> : 'Reset Password'}
+              {loading ? <CircularProgress size={24} /> : 'Send Reset Link'}
+            </Button>
+            
+            <Button 
+              fullWidth 
+              variant="text" 
+              onClick={() => navigate('/login')}
+            >
+              Back to Login
             </Button>
           </form>
         </Paper>
