@@ -441,3 +441,106 @@ def delete_group(group_id: str):
             "error": "Failed to delete group",
             "details": error_msg
         }), 500
+
+
+# ============================================================
+# DUPLICATION HELPERS - Factored for reusability
+# ============================================================
+
+def _generate_copy_name(original_name: str) -> str:
+    """Generate a copy name by appending (Copy N) to the original name"""
+    import re
+    # Check if the name already ends with (Copy N)
+    match = re.search(r'\(Copy\s*(\d+)\)\s*$', original_name)
+    if match:
+        # Increment the copy number
+        copy_num = int(match.group(1)) + 1
+        return re.sub(r'\(Copy\s*\d+\)\s*$', f'(Copy {copy_num})', original_name)
+    else:
+        return f"{original_name} (Copy 1)"
+
+
+def _duplicate_group(group_id: str, user_id: str) -> tuple:
+    """
+    Duplicate a group with all its members.
+    Returns (new_group_data, error_message).
+    If successful, error_message is None. If failed, new_group_data is None.
+    """
+    import uuid
+    from models.database import get_db, Collections
+    
+    db = get_db()
+    
+    # Get the original group
+    original_group = Group.get_by_id(group_id)
+    
+    if not original_group:
+        return None, "Group not found"
+    
+    # Verify ownership
+    if original_group.owner_id != user_id:
+        return None, "Unauthorized"
+    
+    # Generate new name with (Copy N)
+    new_name = _generate_copy_name(original_group.name)
+    
+    # Generate new invite token
+    new_invite_token = str(uuid.uuid4())
+    
+    # Create the new group with same members
+    now = datetime.utcnow().isoformat() + 'Z'
+    new_group_data = {
+        'name': new_name,
+        'description': original_group.description,
+        'owner_id': user_id,
+        'invite_token': new_invite_token,
+        'members': original_group.members.copy(),  # Copy all members
+        'created_at': now,
+        'updated_at': now
+    }
+    
+    # Add to groups collection
+    doc_ref = db.collection(Collections.GROUPS).document()
+    doc_ref.set(new_group_data)
+    
+    print(f"Group duplicated: {group_id} -> {doc_ref.id}")
+    print(f"   Original name: {original_group.name}")
+    print(f"   New name: {new_name}")
+    print(f"   Members copied: {len(original_group.members)}")
+    
+    return {
+        'id': doc_ref.id,
+        **new_group_data,
+        'member_count': len(new_group_data['members'])
+    }, None
+
+
+@groups_bp.post("/<group_id>/duplicate")
+def duplicate_group(group_id: str):
+    """Duplicate a group with all its members, with (Copy N) appended to the name"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        new_group, error = _duplicate_group(group_id, user_id)
+        
+        if error:
+            status = 404 if error == "Group not found" else 403
+            return jsonify({"error": error}), status
+        
+        return jsonify({
+            "success": True,
+            "message": f"Group duplicated as '{new_group['name']}'",
+            "group": new_group
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error duplicating group: {error_msg}")
+        return jsonify({
+            "error": "Failed to duplicate group",
+            "details": error_msg
+        }), 500

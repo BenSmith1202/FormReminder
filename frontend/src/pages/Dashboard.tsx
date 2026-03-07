@@ -18,6 +18,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 const API_URL = 'http://localhost:5000';
 
@@ -146,12 +147,12 @@ export default function Dashboard() {
     { 
       field: 'actions', 
       headerName: 'Actions', 
-      width: 120,
+      width: 160,
       sortable: false,
       align: 'right',
       headerAlign: 'right',
       renderCell: (params: GridRenderCellParams) => (
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={0.5}>
           <Tooltip title="View Details">
             <IconButton 
               size="small" 
@@ -159,6 +160,15 @@ export default function Dashboard() {
               sx={{ color: 'primary.main', bgcolor: 'primary.50', '&:hover': { bgcolor: 'primary.100' } }}
             >
               <VisibilityIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Duplicate">
+            <IconButton 
+              size="small" 
+              onClick={(e) => { e.stopPropagation(); handleDuplicate(params.row.id); }}
+              sx={{ color: 'grey.600', '&:hover': { bgcolor: 'grey.100' } }}
+            >
+              <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title="Delete">
@@ -176,6 +186,23 @@ export default function Dashboard() {
   ];
 
   // --- Data Fetching ---
+
+  // Duplicate a form request and navigate to the new one
+  const handleDuplicate = async (requestId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/duplicate`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to duplicate');
+      
+      const result = await response.json();
+      // Navigate to the new duplicated form request
+      navigate(`/request/${result.form_request.id}`);
+    } catch (error: any) {
+      alert(`Failed to duplicate: ${error.message}`);
+    }
+  };
 
   const handleDelete = async (requestId: string) => {
     if (!window.confirm('Delete this form request? This action cannot be undone.')) return;
@@ -429,6 +456,7 @@ export default function Dashboard() {
           <DataGrid
             rows={rows}
             columns={columns}
+            onRowClick={(params) => navigate(`/request/${params.row.id}`)}
             slots={{ 
               noRowsOverlay: () => (
                 <Stack height="100%" alignItems="center" justifyContent="center" spacing={2}>
@@ -446,6 +474,7 @@ export default function Dashboard() {
             disableRowSelectionOnClick
             sx={{
               border: 'none',
+              cursor: 'pointer',
               '& .MuiDataGrid-columnHeaders': {
                 bgcolor: 'grey.50',
                 color: 'text.secondary',

@@ -165,6 +165,13 @@
                         <p><strong>Sent to:</strong> {{ recipient_email }}</p>
                     </div>
                     
+                    {% if custom_message %}
+                    <div style="background: #e8f4fd; border-left: 4px solid #2196f3; padding: 15px 20px; margin: 25px 0; border-radius: 0 6px 6px 0;">
+                        <p style="margin: 0; font-style: italic; color: #1565c0;"><strong>Message from sender:</strong></p>
+                        <p style="margin: 10px 0 0 0; color: #333;">{{ custom_message }}</p>
+                    </div>
+                    {% endif %}
+                    
                     <p>Please take a moment to complete this form at your earliest convenience.</p>
                     
                     <!-- Button with Outlook-compatible table fallback -->

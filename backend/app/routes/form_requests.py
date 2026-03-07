@@ -7,6 +7,11 @@ import traceback
 from models.user import User
 from models.group import Group
 from models.database import get_db, Collections
+from models.notification import (
+    notify_form_submission,
+    notify_form_completed,
+    notify_unrecognized_submission
+)
 from utils.google_forms_service import GoogleFormsService
 from utils.scheduler import send_initial_emails  # For immediate email sending
 
@@ -52,20 +57,27 @@ def get_form_requests():
             # Don't use created_at as fallback for last_synced_at - they should be different
             # last_synced_at should only exist if the form has been synced
             
-            # Get group to calculate total_recipients
+            # Get group to calculate total_recipients and member emails
             group_id = request_data.get('group_id')
             total_recipients = 0
+            group_emails = set()
             if group_id:
                 group = Group.get_by_id(group_id)
                 if group:
                     total_recipients = len(group.members)
+                    group_emails = {m['email'].lower() for m in group.members}
             
-            # Calculate response_count dynamically from responses collection
+            # Calculate response_count - only count responses from group members
             response_count = 0
             responses_query = db.collection(Collections.RESPONSES)\
                 .where('request_id', '==', req.id)\
                 .stream()
-            response_count = sum(1 for _ in responses_query)
+            
+            for resp in responses_query:
+                resp_email = resp.to_dict().get('respondent_email', '').lower()
+                # Only count if email is in group or no group exists
+                if not group_emails or resp_email in group_emails:
+                    response_count += 1
             
             # Calculate warnings dynamically
             warnings = []
@@ -422,6 +434,60 @@ def refresh_form_responses(request_id: str):
             deleted_count += 1
         
         print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
+        
+        # --- NOTIFICATION TRIGGERS ---
+        # Notify for each new submission
+        if new_count > 0:
+            form_title = request_data.get('title', 'Untitled Form')
+            owner_id = request_data.get('owner_id')
+            
+            # Get group members to check if submission is from recognized email
+            group_id = request_data.get('group_id')
+            group_emails = set()
+            if group_id:
+                group = Group.get_by_id(group_id)
+                if group:
+                    group_emails = {m['email'].lower() for m in group.members}
+            
+            # Track member response count for completion check
+            member_response_count = 0
+            
+            for response in responses:
+                response_id = response.get('response_id', '')
+                respondent_email = response.get('respondent_email', '').strip()
+                
+                # Count member responses for completion check
+                if not group_emails or respondent_email.lower() in group_emails:
+                    member_response_count += 1
+                
+                # If this is a new response, send appropriate notification
+                if response_id and response_id not in existing_responses:
+                    if group_emails and respondent_email.lower() not in group_emails:
+                        # Unrecognized email - send yellow warning notification
+                        notify_unrecognized_submission(
+                            user_id=owner_id,
+                            form_name=form_title,
+                            form_reminder_id=request_id,
+                            respondent_email=respondent_email or 'Unknown'
+                        )
+                    else:
+                        # Recognized member submission
+                        notify_form_submission(
+                            user_id=owner_id,
+                            form_name=form_title,
+                            form_reminder_id=request_id,
+                            respondent_email=respondent_email or 'Unknown'
+                        )
+            
+            # Check if form is now fully completed (only count member responses)
+            if group_id and group_emails:
+                total_recipients = len(group_emails)
+                if total_recipients > 0 and member_response_count >= total_recipients:
+                    notify_form_completed(
+                        user_id=owner_id,
+                        form_name=form_title,
+                        form_reminder_id=request_id
+                    )
         
         # Infer email collection from responses: if any response has respondent_email, it's enabled
         any_response_has_email = any(
@@ -1074,5 +1140,197 @@ def delete_form_request(request_id: str):
         print(f"Error deleting form request: {error_msg}")
         return jsonify({
             "error": "Failed to delete form request",
+            "details": error_msg
+        }), 500
+
+
+# Add unrecognized email to the form request's group
+@form_requests_bp.post("/<request_id>/add-email-to-group")
+def add_email_to_group(request_id: str):
+    """Add an unrecognized email to the form request's group"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+        
+        db = get_db()
+        
+        # Get the form request
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+        
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+        
+        request_data = request_doc.to_dict()
+        
+        # Verify ownership
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+        
+        # Get the group
+        group_id = request_data.get('group_id')
+        if not group_id:
+            return jsonify({"error": "This form request has no group attached"}), 400
+        
+        group = Group.get_by_id(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+        
+        # Check if email already in group
+        existing_emails = {m['email'].lower() for m in group.members}
+        if email in existing_emails:
+            return jsonify({"error": "Email is already in the group"}), 400
+        
+        # Add the email to the group
+        success = group.add_member(email)
+        
+        if success:
+            print(f"Added {email} to group {group.name}")
+            return jsonify({
+                "success": True,
+                "message": f"Added {email} to {group.name}",
+                "group_id": group_id,
+                "group_name": group.name
+            }), 200
+        else:
+            return jsonify({"error": "Failed to add email to group"}), 500
+            
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error adding email to group: {error_msg}")
+        return jsonify({
+            "error": "Failed to add email to group",
+            "details": error_msg
+        }), 500
+
+
+# ============================================================
+# DUPLICATION HELPERS - Factored for reusability
+# ============================================================
+
+def _generate_copy_name(original_name: str) -> str:
+    """Generate a copy name by appending (Copy N) to the original name"""
+    import re
+    # Check if the name already ends with (Copy N)
+    match = re.search(r'\(Copy\s*(\d+)\)\s*$', original_name)
+    if match:
+        # Increment the copy number
+        copy_num = int(match.group(1)) + 1
+        return re.sub(r'\(Copy\s*\d+\)\s*$', f'(Copy {copy_num})', original_name)
+    else:
+        return f"{original_name} (Copy 1)"
+
+
+def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
+    """
+    Duplicate a form request including its responses.
+    Returns (new_request_data, error_message).
+    If successful, error_message is None. If failed, new_request_data is None.
+    """
+    db = get_db()
+    
+    # Get the original form request
+    request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+    request_doc = request_ref.get()
+    
+    if not request_doc.exists:
+        return None, "Form request not found"
+    
+    request_data = request_doc.to_dict()
+    
+    # Verify ownership
+    if request_data.get('owner_id') != user_id:
+        return None, "Unauthorized"
+    
+    # Generate new title with (Copy N)
+    original_title = request_data.get('title', 'Untitled Form')
+    new_title = _generate_copy_name(original_title)
+    
+    # Create the new form request with same settings
+    now = datetime.now(timezone.utc).isoformat()
+    new_request_data = {
+        'form_id': request_data.get('form_id'),
+        'google_form_id': request_data.get('google_form_id'),
+        'owner_id': user_id,
+        'group_id': request_data.get('group_id'),
+        'title': new_title,
+        'form_url': request_data.get('form_url'),
+        'created_at': now,
+        'status': 'Active',
+        'is_active': True,
+        'due_date': request_data.get('due_date'),
+        'reminder_schedule': request_data.get('reminder_schedule'),
+        'first_reminder_timing': request_data.get('first_reminder_timing')
+    }
+    
+    # Add to form_requests collection
+    doc_ref = db.collection(Collections.FORM_REQUESTS).document()
+    doc_ref.set(new_request_data)
+    new_request_id = doc_ref.id
+    
+    # Copy all responses from the original request to the new request
+    original_responses = db.collection(Collections.RESPONSES)\
+        .where('request_id', '==', request_id)\
+        .stream()
+    
+    response_count = 0
+    for response in original_responses:
+        response_data = response.to_dict()
+        # Create a copy with the new request_id
+        new_response_data = {
+            **response_data,
+            'request_id': new_request_id,
+            'created_at': now  # Update created_at for the copy
+        }
+        db.collection(Collections.RESPONSES).add(new_response_data)
+        response_count += 1
+    
+    print(f"Form request duplicated: {request_id} -> {new_request_id}")
+    print(f"   Original title: {original_title}")
+    print(f"   New title: {new_title}")
+    print(f"   Responses copied: {response_count}")
+    
+    return {
+        'id': new_request_id,
+        **new_request_data
+    }, None
+
+
+@form_requests_bp.post("/<request_id>/duplicate")
+def duplicate_form_request(request_id: str):
+    """Duplicate a form request with (Copy N) appended to the name"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        new_request, error = _duplicate_form_request(request_id, user_id)
+        
+        if error:
+            status = 404 if error == "Form request not found" else 403
+            return jsonify({"error": error}), status
+        
+        return jsonify({
+            "success": True,
+            "message": f"Form request duplicated as '{new_request['title']}'",
+            "form_request": new_request
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error duplicating form request: {error_msg}")
+        return jsonify({
+            "error": "Failed to duplicate form request",
             "details": error_msg
         }), 500

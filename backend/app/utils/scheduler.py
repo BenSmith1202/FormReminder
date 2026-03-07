@@ -312,6 +312,118 @@ def check_and_send_reminders():
 
 
 # ============================================================================
+# OVERDUE FORM CHECK
+# ============================================================================
+
+def check_overdue_forms():
+    """
+    Check for forms that have just become overdue and notify owners.
+    
+    A form is considered overdue if:
+    - The due date has passed (due_date < today)
+    - The form is not fully completed (response_count < total_recipients)
+    - We haven't already sent an overdue notification for this form
+    """
+    from models.database import get_db, Collections
+    from models.group import Group
+    from models.notification import notify_form_overdue, Notification
+    
+    print(f"\n{'='*60}")
+    print(f"⏰ [{datetime.now()}] Checking for overdue forms...")
+    print(f"{'='*60}")
+    
+    try:
+        db = get_db()
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        
+        requests = db.collection(Collections.FORM_REQUESTS).stream()
+        overdue_count = 0
+        
+        for req_doc in requests:
+            req_data = req_doc.to_dict()
+            request_id = req_doc.id
+            
+            due_date_str = req_data.get('due_date')
+            if not due_date_str:
+                continue
+            
+            # Parse due date
+            try:
+                if isinstance(due_date_str, str):
+                    due_date_str = fix_corrupted_date(due_date_str)
+                    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+                else:
+                    due_date = due_date_str
+                    
+                if due_date.tzinfo is None:
+                    due_date = due_date.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            
+            # Check if just became overdue (due date was yesterday or earlier)
+            if due_date.date() >= today:
+                continue  # Not overdue yet
+            
+            # Check if we already sent an overdue notification for this form
+            existing_notifications = db.collection(Collections.NOTIFICATIONS)\
+                .where('form_reminder_id', '==', request_id)\
+                .where('type', '==', 'form_overdue')\
+                .limit(1)\
+                .stream()
+            
+            already_notified = False
+            for _ in existing_notifications:
+                already_notified = True
+                break
+            
+            if already_notified:
+                continue
+            
+            # Check if form was completed (response_count >= total_recipients)
+            group_id = req_data.get('group_id')
+            if not group_id:
+                continue
+                
+            group = Group.get_by_id(group_id)
+            if not group:
+                continue
+                
+            total_recipients = len(group.members)
+            
+            # Count responses
+            responses = db.collection(Collections.RESPONSES)\
+                .where('request_id', '==', request_id)\
+                .stream()
+            response_count = sum(1 for _ in responses)
+            
+            # If completed, no need to notify about overdue
+            if response_count >= total_recipients:
+                continue
+            
+            # Send overdue notification
+            owner_id = req_data.get('owner_id')
+            form_title = req_data.get('title', 'Untitled Form')
+            
+            notify_form_overdue(
+                user_id=owner_id,
+                form_name=form_title,
+                form_reminder_id=request_id
+            )
+            
+            print(f"   ⏰ Form '{form_title}' is overdue! ({response_count}/{total_recipients} responses)")
+            overdue_count += 1
+        
+        print(f"\n   Found {overdue_count} newly overdue form(s)")
+        print(f"{'='*60}\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error checking overdue forms: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# ============================================================================
 # SCHEDULER INITIALIZATION
 # ============================================================================
 
@@ -347,6 +459,15 @@ def init_scheduler(app):
         trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES),
         id='reminder_check',
         name='Check and send automatic reminders',
+        replace_existing=True
+    )
+    
+    # Add overdue form check job (runs same interval as reminders)
+    scheduler.add_job(
+        func=check_overdue_forms,
+        trigger=IntervalTrigger(minutes=CHECK_INTERVAL_MINUTES),
+        id='overdue_check',
+        name='Check for overdue forms and send notifications',
         replace_existing=True
     )
     

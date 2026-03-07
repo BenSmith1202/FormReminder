@@ -58,9 +58,9 @@ def leave_organization(owner_id: str):
         # Notify org owner/admin (in-app notification record).
         create_notification(
             owner_id=owner_id,
-            notif_type="recipient_left_org",
-            message=f"{email} left your organization and was removed from {removed_from_groups} group(s).",
-            data={"recipient_email": email, "removed_from_groups": removed_from_groups},
+            notif_type="member_opted_out",
+            message=f"{email} has opted out of your reminders",
+            data={"email": email, "removed_from_groups": removed_from_groups},
         )
 
         # Return a friendly page for email link clicks.

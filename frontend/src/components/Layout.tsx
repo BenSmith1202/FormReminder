@@ -6,6 +6,7 @@ import AddIcon from '@mui/icons-material/Add';
 import EmailIcon from '@mui/icons-material/Email';
 import GroupIcon from '@mui/icons-material/Group';
 import SettingsIcon from '@mui/icons-material/Settings';
+import NotificationBell from './NotificationBell';
 
 const API_URL = 'http://localhost:5000';
 
@@ -110,6 +111,7 @@ export default function Layout() {
             >
               Settings
             </Button>
+            <NotificationBell />
             <Button
               color="inherit"
               onClick={handleLogout}
