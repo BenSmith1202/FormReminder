@@ -39,6 +39,8 @@ export default function Settings() {
     const [customMessageLoading, setCustomMessageLoading] = useState(false);
     const [customMessageSaved, setCustomMessageSaved] = useState(true);
 
+
+    // checks if the user is currently logged in; redirect to login if not
     useEffect(() => {
         const checkAuth = async () => {
           try {
@@ -65,6 +67,7 @@ export default function Settings() {
         checkAuth();
     }, [navigate]);
 
+    // fetches the user's currently active form and populates the frontend with them
     useEffect(() => {
     const fetchUserForms = async () => {
       if (!user?.id) return; // Guard clause
@@ -85,7 +88,35 @@ export default function Settings() {
     };
 
   fetchUserForms();
-}, [user]); // Re-runs whenever the 'user' state changes
+}, [user]); 
+
+    // sends the user's registed email a reset password email
+    const resetPassword = async () => {
+      // Clear previous status messages
+      setError('');
+      setLoading(true);
+
+      try {
+        // We use user.email directly from the authenticated session
+        const response = await fetch(`${API_URL}/api/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: user.email }) 
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          setSuccess(`A password reset link has been sent to ${user.email}`);
+        } else {
+          setError(data.error || 'Failed to send reset email');
+        }
+      } catch (err) {
+        setError('Server connection failed');
+      } finally {
+        setLoading(false);
+      }
+    };
 
     // Save custom email message
     const saveCustomMessage = async () => {
@@ -114,6 +145,7 @@ export default function Settings() {
       }
     };
     
+    // delete the user account
     const handleDelete = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -140,6 +172,8 @@ export default function Settings() {
         }
     };
 
+
+    // edit the user's username
     const editUsername = async (e: React.FormEvent) => {
       e.preventDefault();
       setError('');
@@ -165,7 +199,8 @@ export default function Settings() {
       }
     };
 
-
+    // handles notification toggling
+    // TODO: This is just a placeholder; David needs to replace/edit it with the actual logic
     const handleToggleNotification = async (formId: string, enabled: boolean) => {
   setActionLoading(true);
   try {
@@ -210,9 +245,26 @@ export default function Settings() {
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
         <CardHeader 
             title="Security Settings" 
-            subheader="WIP"
+            subheader="Manage your account security and credentials"
         />
         <Divider />
+        <CardContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Need to update your password? Click the button below, and we will send a secure reset link to your registered email address: <strong>{user?.email}</strong>.
+          </Typography>
+        </CardContent>
+        <CardActions sx={{ px: 2, pb: 2 }}>
+          <Button
+            variant="outlined"
+            color="primary"
+            fullWidth
+            onClick={resetPassword}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={18} /> : null}
+          >
+            {loading ? 'Sending...' : 'Send Password Reset Email'}
+          </Button>
+        </CardActions>
       </Card>
 
       {/* Team Members Card */}
@@ -369,7 +421,6 @@ export default function Settings() {
   );
 }
 
-// TODO: Notifications: implement notification frontend; enable disable for each form
+// TODO:
 // Orgs: Add/remove members from organization
 // Security: reset password, view permissions from organizations
-// Profile: not much tbh
