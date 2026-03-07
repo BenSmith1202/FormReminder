@@ -77,5 +77,57 @@ def edit_username():
             "error": "Failed to edit username",
             "details": error_msg
         }), 500
-        
 
+
+# ============= CUSTOM EMAIL MESSAGE ROUTES ===================
+
+@settings_bp.get('/api/settings/custom-message')
+def get_custom_message():
+    """Get user's custom email message"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        user = User.get_by_id(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        return jsonify({
+            "success": True,
+            "custom_message": user.email_custom_message or ""
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting custom message: {e}")
+        return jsonify({"error": "Failed to get custom message"}), 500
+
+
+@settings_bp.post('/api/settings/custom-message')
+def save_custom_message():
+    """Save user's custom email message (max 200 characters)"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
+        data = request.get_json()
+        message = data.get('custom_message', '')
+        
+        # Enforce 200 character limit
+        if len(message) > 200:
+            return jsonify({"error": "Message must be 200 characters or less"}), 400
+        
+        success = User.update_custom_message(user_id, message)
+        
+        if success:
+            return jsonify({
+                "success": True,
+                "message": "Custom message saved successfully"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to save custom message"}), 500
+            
+    except Exception as e:
+        print(f"Error saving custom message: {e}")
+        return jsonify({"error": "Failed to save custom message"}), 500

@@ -39,9 +39,11 @@ class EmailService:
         recipient_email: str,
         *,
         owner_id: Optional[str] = None,
+        custom_message: Optional[str] = None,
     ) -> str:
         """Load and render the email template with Jinja2.
         Pass owner_id to include the organization opt-out link in the email.
+        Pass custom_message to include the sender's personal message.
         """
         unsubscribe_url = (
             EmailService.build_unsubscribe_url(owner_id, recipient_email)
@@ -54,6 +56,7 @@ class EmailService:
             form_url=form_url,
             recipient_email=recipient_email,
             unsubscribe_url=unsubscribe_url,
+            custom_message=custom_message,
         )
 
     @staticmethod
@@ -191,6 +194,8 @@ class EmailService:
         skip_rate_limit: bool = False,
     ) -> dict:
         """Send a reminder email to a single recipient"""
+        from utils.google_forms_service import GoogleFormsService
+        from models.user import User
 
         # Org-level opt-out suppression
         if owner_id and OrgMembership.is_opted_out(owner_id, recipient_email):
@@ -207,7 +212,17 @@ class EmailService:
                 'error': f'Rate limit: Already sent to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
             }
         
-        # Generate email content (always include opt-out link when we have an owner)
+        # Convert form URL to viewform URL (the one recipients use to fill out the form)
+        viewform_url = GoogleFormsService.get_viewform_url(form_url) if form_url else form_url
+        
+        # Get owner's custom message if available
+        custom_message = None
+        if owner_id:
+            owner = User.get_by_id(owner_id)
+            if owner and owner.email_custom_message:
+                custom_message = owner.email_custom_message
+        
+        # Generate email content
         subject = f"Reminder: Please Complete {form_title}"
         unsubscribe_url = (
             EmailService.build_unsubscribe_url(owner_id, recipient_email)
@@ -217,9 +232,10 @@ class EmailService:
         template = EmailService.jinja_env.get_template("reminder_email.html")
         html_content = template.render(
             form_title=form_title,
-            form_url=form_url,
+            form_url=viewform_url,
             recipient_email=recipient_email,
             unsubscribe_url=unsubscribe_url,
+            custom_message=custom_message,
         )
         
         # Send email

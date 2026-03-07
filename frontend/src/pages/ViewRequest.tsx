@@ -19,7 +19,8 @@ import {
   IconButton,
   Grid,
   Link,
-  Tooltip
+  Tooltip,
+  Snackbar
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -29,6 +30,7 @@ import SendIcon from '@mui/icons-material/Send';
 import EditIcon from '@mui/icons-material/Edit';
 import EventIcon from '@mui/icons-material/Event';
 import ScheduleIcon from '@mui/icons-material/Schedule';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
 
 const API_URL = 'http://localhost:5000';
 
@@ -75,6 +77,10 @@ export default function ViewRequest() {
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
   const [sendingEmail, setSendingEmail] = useState<string | null>(null);
   const [sendingBulk, setSendingBulk] = useState(false);
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);  // Track which email is being added
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>(
+    { open: false, message: '', severity: 'success' }
+  );
 
   const loadFormRequestData = async () => {
     try {
@@ -148,6 +154,31 @@ export default function ViewRequest() {
       alert(`Failed to send reminders: ${err.message}`);
     } finally {
       setSendingBulk(false);
+    }
+  };
+
+  // Add unrecognized email to the form's group
+  const handleAddEmailToGroup = async (email: string) => {
+    setAddingEmail(email);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/add-email-to-group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to add email');
+      
+      setSnackbar({ open: true, message: result.message, severity: 'success' });
+      
+      // Reload data to reflect the change
+      loadFormRequestData();
+    } catch (err: any) {
+      setSnackbar({ open: true, message: err.message, severity: 'error' });
+    } finally {
+      setAddingEmail(null);
     }
   };
 
@@ -400,6 +431,7 @@ export default function ViewRequest() {
                 <TableRow>
                   <TableCell>Email</TableCell>
                   <TableCell>Submitted At</TableCell>
+                  <TableCell align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -407,6 +439,24 @@ export default function ViewRequest() {
                   <TableRow key={response.id}>
                     <TableCell>{response.respondent_email || 'Anonymous'}</TableCell>
                     <TableCell>{new Date(response.submitted_at).toLocaleString()}</TableCell>
+                    <TableCell align="center">
+                      {/* Add email to group button - only show if email exists */}
+                      {response.respondent_email && (
+                        <Tooltip title="Add this email to the group">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleAddEmailToGroup(response.respondent_email)}
+                            disabled={addingEmail === response.respondent_email}
+                          >
+                            {addingEmail === response.respondent_email ? (
+                              <CircularProgress size={20} />
+                            ) : (
+                              <PersonAddIcon />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -414,6 +464,22 @@ export default function ViewRequest() {
           </TableContainer>
         </Paper>
       )}
+
+      {/* Snackbar for feedback messages */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

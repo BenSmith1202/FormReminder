@@ -3,81 +3,121 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style type="text/css">
+        /* Reset styles for email clients */
+        body, table, td, p, a, li, blockquote {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: Arial, Helvetica, sans-serif;
             line-height: 1.6;
-            color: #333;
+            color: #333333;
             margin: 0;
             padding: 0;
             background-color: #f4f4f4;
         }
-        .container {
+        .email-wrapper {
+            width: 100%;
+            background-color: #f4f4f4;
+            padding: 40px 0;
+        }
+        .email-container {
             max-width: 600px;
-            margin: 40px auto;
-            background: white;
+            margin: 0 auto;
+            background: #ffffff;
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background-color: #5c6bc0;
+            color: #ffffff;
             padding: 30px;
             text-align: center;
         }
         .header h1 {
             margin: 0;
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 600;
         }
         .content {
             padding: 40px 30px;
         }
         .content h2 {
-            color: #667eea;
-            font-size: 22px;
+            color: #5c6bc0;
+            font-size: 20px;
             margin-top: 0;
             margin-bottom: 20px;
         }
         .content p {
             margin: 15px 0;
             font-size: 16px;
+            color: #333333;
+        }
+        .form-info {
+            background: #f8f9fa;
+            border-left: 4px solid #5c6bc0;
+            padding: 15px 20px;
+            margin: 25px 0;
+        }
+        .form-info p {
+            margin: 5px 0;
+            font-size: 15px;
+        }
+        .form-info strong {
+            color: #5c6bc0;
+        }
+        
+        /* Button - using table for Outlook compatibility */
+        .button-wrapper {
+            text-align: center;
+            margin: 30px 0;
         }
         .button {
             display: inline-block;
             padding: 14px 32px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background-color: #5c6bc0;
+            color: #ffffff !important;
             text-decoration: none;
             border-radius: 6px;
             font-weight: 600;
-            margin: 20px 0;
-            transition: transform 0.2s;
+            font-size: 16px;
         }
-        .button:hover {
-            transform: translateY(-2px);
+        
+        /* Plain text link below button for email clients that don't render buttons well */
+        .plain-link {
+            margin-top: 15px;
+            font-size: 13px;
+            color: #666666;
+            word-break: break-all;
         }
-        .footer {
-            background: #f8f9fa;
-            padding: 20px 30px;
-            text-align: center;
+        .plain-link a {
+            color: #5c6bc0;
+            text-decoration: underline;
+        }
+        
+        .note {
             color: #6c757d;
             font-size: 14px;
-            border-top: 1px solid #e9ecef;
+            margin-top: 25px;
         }
-        .form-info {
-            background: #f8f9fa;
-            border-left: 4px solid #667eea;
-            padding: 15px 20px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .form-info strong {
-            color: #667eea;
-        }
+        
         .opt-out-box {
-            margin-top: 28px;
+            margin-top: 30px;
             padding: 16px 20px;
             background: #f8f9fa;
             border: 1px solid #e9ecef;
@@ -86,56 +126,94 @@
             color: #495057;
         }
         .opt-out-box a {
-            color: #667eea;
-            font-weight: 600;
-            text-decoration: none;
+            color: #5c6bc0;
+            text-decoration: underline;
         }
-        .opt-out-box a:hover {
+        
+        .footer {
+            background: #f8f9fa;
+            padding: 20px 30px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 13px;
+            border-top: 1px solid #e9ecef;
+        }
+        .footer p {
+            margin: 8px 0;
+        }
+        .footer a {
+            color: #5c6bc0;
             text-decoration: underline;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>📋 Form Reminder</h1>
-        </div>
-        <div class="content">
-            <h2>Hi there! 👋</h2>
-            <p>This is a friendly reminder that you have a form waiting to be completed.</p>
-            
-            <div class="form-info">
-                <p style="margin: 5px 0;"><strong>Form:</strong> {{ form_title }}</p>
-                <p style="margin: 5px 0;"><strong>Sent to:</strong> {{ recipient_email }}</p>
-            </div>
-            
-            <p>Your response would be greatly appreciated. Please take a moment to fill out the form at your earliest convenience.</p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-                <a href="{{ form_url }}" class="button">Complete Form Now →</a>
-            </div>
-            
-            <p style="color: #6c757d; font-size: 14px;">If you've already completed this form, please disregard this reminder.</p>
+    <div class="email-wrapper">
+        <table class="email-container" cellpadding="0" cellspacing="0" border="0" width="600" align="center">
+            <tr>
+                <td class="header">
+                    <h1>Form Reminder</h1>
+                </td>
+            </tr>
+            <tr>
+                <td class="content">
+                    <h2>You have a form to complete</h2>
+                    <p>This is a friendly reminder that you have been asked to fill out a form. Your response would be greatly appreciated.</p>
+                    
+                    <div class="form-info">
+                        <p><strong>Form:</strong> {{ form_title }}</p>
+                        <p><strong>Sent to:</strong> {{ recipient_email }}</p>
+                    </div>
+                    
+                    {% if custom_message %}
+                    <div style="background: #e8f4fd; border-left: 4px solid #2196f3; padding: 15px 20px; margin: 25px 0; border-radius: 0 6px 6px 0;">
+                        <p style="margin: 0; font-style: italic; color: #1565c0;"><strong>Message from sender:</strong></p>
+                        <p style="margin: 10px 0 0 0; color: #333;">{{ custom_message }}</p>
+                    </div>
+                    {% endif %}
+                    
+                    <p>Please take a moment to complete this form at your earliest convenience.</p>
+                    
+                    <!-- Button with Outlook-compatible table fallback -->
+                    <div class="button-wrapper">
+                        <!--[if mso]>
+                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ form_url }}" style="height:48px;v-text-anchor:middle;width:200px;" arcsize="13%" strokecolor="#5c6bc0" fillcolor="#5c6bc0">
+                            <w:anchorlock/>
+                            <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Complete Form</center>
+                        </v:roundrect>
+                        <![endif]-->
+                        <!--[if !mso]><!-->
+                        <a href="{{ form_url }}" class="button" target="_blank">Complete Form</a>
+                        <!--<![endif]-->
+                    </div>
+                    
+                    <!-- Plain text link as fallback -->
+                    <div class="plain-link">
+                        Or copy and paste this link into your browser:<br>
+                        <a href="{{ form_url }}">{{ form_url }}</a>
+                    </div>
+                    
+                    <p class="note">If you have already completed this form, please disregard this reminder.</p>
 
-            {% if unsubscribe_url %}
-            <div class="opt-out-box">
-                <strong>Don't want these emails?</strong><br>
-                You can leave this organization and stop receiving reminders:
-                <a href="{{ unsubscribe_url }}">Leave organization (opt out)</a>
-            </div>
-            {% endif %}
-        </div>
-        <div class="footer">
-            <p>This reminder was sent via FormReminder</p>
-            <p style="margin-top: 10px;">You're receiving this because you're part of a form request group.</p>
-            {% if unsubscribe_url %}
-            <p style="margin-top: 12px;">
-                <a href="{{ unsubscribe_url }}" style="color: #667eea; font-weight: 600; text-decoration: none;">
-                    Leave this organization (opt out of future emails)
-                </a>
-            </p>
-            {% endif %}
-        </div>
+                    {% if unsubscribe_url %}
+                    <div class="opt-out-box">
+                        <strong>Don't want to receive these emails?</strong><br>
+                        You can opt out and stop receiving reminders from this sender:<br>
+                        <a href="{{ unsubscribe_url }}">Unsubscribe from future emails</a>
+                    </div>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td class="footer">
+                    <p>This reminder was sent via FormReminder</p>
+                    <p>You are receiving this because you are part of a form request group.</p>
+                    {% if unsubscribe_url %}
+                    <p><a href="{{ unsubscribe_url }}">Unsubscribe</a></p>
+                    {% endif %}
+                </td>
+            </tr>
+        </table>
     </div>
 </body>
 </html>

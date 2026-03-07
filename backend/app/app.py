@@ -18,6 +18,7 @@ from routes.utilities import utilities_bp
 from routes.email import email_bp
 from routes.organizations import orgs_bp
 from routes.settings import settings_bp
+from routes.notifications import notifications_bp
 from utils.scheduler import init_scheduler  # Automatic reminder scheduler
 # -------------------------
 
@@ -62,6 +63,7 @@ app.register_blueprint(utilities_bp) # Utils handles its own prefixes (/time, /a
 app.register_blueprint(email_bp)
 app.register_blueprint(orgs_bp)
 app.register_blueprint(settings_bp)
+app.register_blueprint(notifications_bp)
 
 
 @app.get("/")

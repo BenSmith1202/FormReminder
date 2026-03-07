@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Paper, Typography, Button, Box, CircularProgress, Alert, Card, CardContent, CardActions } from '@mui/material';
+import { Paper, Typography, Button, Box, CircularProgress, Alert, Card, CardContent, CardActions, IconButton, Tooltip } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 const API_URL = 'http://localhost:5000';
 
@@ -19,6 +20,7 @@ export default function Groups() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadGroups();
@@ -43,6 +45,26 @@ export default function Groups() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Duplicate a group and navigate to the new one
+  const handleDuplicate = async (groupId: string) => {
+    try {
+      setDuplicatingId(groupId);
+      const response = await fetch(`${API_URL}/api/groups/${groupId}/duplicate`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to duplicate');
+      
+      const result = await response.json();
+      // Navigate to the new duplicated group
+      navigate(`/groups/${result.group.id}`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -124,6 +146,20 @@ export default function Groups() {
                 <Button size="small" onClick={() => navigate(`/groups/${group.id}`)}>
                   View Details
                 </Button>
+                <Tooltip title="Duplicate this group">
+                  <IconButton
+                    size="small"
+                    onClick={() => handleDuplicate(group.id)}
+                    disabled={duplicatingId === group.id}
+                    sx={{ color: 'grey.600', ml: 'auto' }}
+                  >
+                    {duplicatingId === group.id ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <ContentCopyIcon fontSize="small" />
+                    )}
+                  </IconButton>
+                </Tooltip>
               </CardActions>
             </Card>
           ))}
