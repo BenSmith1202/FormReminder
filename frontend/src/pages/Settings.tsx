@@ -12,7 +12,12 @@ import {
   Alert,
   CircularProgress,
   TextField,
-  Divider
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
+  Switch
 } from '@mui/material';
 
 const API_URL = 'http://localhost:5000';
@@ -22,6 +27,7 @@ export default function Settings() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [user, setUser] = useState<any>(null);
+    const [forms, setForms] = useState<any[]>([]);
     const [newUsername, setNewUsername] = useState('');
     const [deletePassword, setDeletePassword] = useState('');
     const [loading, setLoading] = useState(true);
@@ -50,6 +56,28 @@ export default function Settings() {
     
         checkAuth();
     }, [navigate]);
+
+    useEffect(() => {
+    const fetchUserForms = async () => {
+      if (!user?.id) return; // Guard clause
+
+      try {
+        // We pass the user.id to the backend to filter the forms
+        const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
+          credentials: 'include',
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          setForms(data.forms || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch forms:', err);
+      }
+    };
+
+  fetchUserForms();
+}, [user]); // Re-runs whenever the 'user' state changes
     
     const handleDelete = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -101,6 +129,30 @@ export default function Settings() {
         setActionLoading(false);
       }
     };
+
+
+    const handleToggleNotification = async (formId: string, enabled: boolean) => {
+  setActionLoading(true);
+  try {
+    const response = await fetch(`${API_URL}/api/toggle-notification`, { //TODO DAVID: Change to appropriate URL and params as necessary
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ formId, enabled })
+    });
+
+    if (response.ok) {
+      // Update local state so the switch flips immediately
+      setForms(prev => prev.map(f => f.id === formId ? { ...f, notificationsEnabled: enabled } : f));
+    } else {
+      setError('Could not update notification.');
+    }
+  } catch (err) {
+    setError('Connection error.');
+  } finally {
+    setActionLoading(false);
+  }
+};
     
     if (loading) {
         return (
@@ -139,12 +191,40 @@ export default function Settings() {
 
       {/* Notifications Card */}
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Forms and Notifications" 
-            subheader="WIP"
-        />
-        <Divider />
-      </Card>
+  <CardHeader 
+      title="Forms and Notifications" 
+      subheader="Manage email alerts for your active forms"
+  />
+  <Divider />
+  <CardContent sx={{ p: 0 }}>
+    {forms.length > 0 ? (
+      <List disablePadding>
+        {forms.map((form) => (
+          <ListItem key={form.id} divider>
+            <ListItemText 
+              primary={form.title || "Untitled Form"} 
+              primaryTypographyProps={{ variant: 'body1', fontWeight: 500 }}
+            />
+            <ListItemSecondaryAction>
+              <Switch
+                edge="end"
+                onChange={(e) => handleToggleNotification(form.id, e.target.checked)}
+                checked={!!form.notificationsEnabled}
+                disabled={actionLoading}
+              />
+            </ListItemSecondaryAction>
+          </ListItem>
+        ))}
+      </List>
+    ) : (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <Typography variant="body2" color="text.secondary">
+          No forms found for your account.
+        </Typography>
+      </Box>
+    )}
+  </CardContent>
+</Card>
 
       {/* Change Username Card */}
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
@@ -216,3 +296,8 @@ export default function Settings() {
     </Container>
   );
 }
+
+// TODO: Notifications: implement notification frontend; enable disable for each form
+// Orgs: Add/remove members from organization
+// Security: reset password, view permissions from organizations
+// Profile: not much tbh
