@@ -261,6 +261,43 @@ export default function Settings() {
   </CardContent>
 </Card>
 
+<Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+        <CardHeader 
+            title="Custom Email Message" 
+            subheader="Add a personal message to your reminder emails (max 200 characters)"
+        />
+        <Divider />
+        <CardContent>
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Your custom message"
+            placeholder="e.g., Please complete this form by end of day. Thank you!"
+            variant="outlined"
+            value={customMessage}
+            onChange={(e) => {
+              setCustomMessage(e.target.value);
+              setCustomMessageSaved(false);
+            }}
+            inputProps={{ maxLength: 200 }}
+            helperText={`${customMessage.length}/200 characters`}
+          />
+        </CardContent>
+        <CardActions sx={{ px: 2, pb: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={customMessageLoading ? <CircularProgress size={18} /> : <SaveIcon />}
+            onClick={saveCustomMessage}
+            disabled={customMessageLoading || customMessageSaved}
+            fullWidth
+          >
+            {customMessageSaved ? 'Saved' : 'Save Message'}
+          </Button>
+        </CardActions>
+      </Card>
+
       {/* Change Username Card */}
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
         <CardHeader 
