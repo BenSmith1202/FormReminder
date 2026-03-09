@@ -3,7 +3,7 @@ import { Paper, Typography, TextField, Button, Box, Alert, CircularProgress } fr
 import { useParams } from 'react-router-dom';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 export default function JoinGroup() {
   const { token } = useParams<{ token: string }>();

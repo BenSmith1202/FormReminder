@@ -32,7 +32,7 @@ import EventIcon from '@mui/icons-material/Event';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface FormRequest {
   id: string;

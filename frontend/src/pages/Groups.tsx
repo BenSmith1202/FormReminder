@@ -5,7 +5,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface Group {
   id: string;

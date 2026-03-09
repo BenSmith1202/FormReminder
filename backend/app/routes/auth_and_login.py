@@ -1,27 +1,18 @@
 from flask import Blueprint, request, jsonify, session
-from datetime import datetime
-import traceback
 import requests
 import os
-from firebase_admin import _auth_utils
 from dotenv import load_dotenv
+from config import settings
 
 # Import your models and database tools
-import firebase_admin
+
 from models.user import User
-from firebase_admin import auth, credentials
+from firebase_admin import auth
 from utils.google_forms_service import GoogleFormsService
 
 # Define the Blueprint
 auth_bp = Blueprint('auth_and_login', __name__)
 
-# Initialize SDK
-current_dir = os.path.dirname(os.path.abspath(__file__))
-key_path = os.path.join(current_dir, "..", "..", "..", "firebase-credentials.json")
-final_path = os.path.normpath(key_path)
-
-cred = credentials.Certificate(final_path)
-firebase_admin.initialize_app(cred)
 
 # Load the environment variables
 load_dotenv()
@@ -105,7 +96,7 @@ def reset():
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 def trigger_password_reset(email):
-    API_KEY = os.getenv("FIREBASE_WEB_API_KEY")
+    API_KEY = os.getenv("FIREBASE_WEB_API_KEY") #Where is this set?
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={API_KEY}"
     
     payload = {
@@ -272,7 +263,7 @@ def oauth_callback():
         
         if error:
             print(f"OAuth error: {error}")
-            return f"<html><body><h1>Authorization Failed</h1><p>{error}</p><a href='http://localhost:5173'>Return to app</a></body></html>", 400
+            return f"<html><body><h1>Authorization Failed</h1><p>{error}</p><a href='{settings.FRONTEND_URL}'>Return to app</a></body></html>", 400
         
         if not code:
             return "<html><body><h1>No authorization code received</h1></body></html>", 400
@@ -306,16 +297,16 @@ def oauth_callback():
         
         if success:
             print(f"Successfully stored Google tokens for user {user_id}")
-            return """
+            return f"""
             <html>
             <body>
                 <h1>Successfully connected Google account!</h1>
                 <p>You can now close this window and return to the app.</p>
                 <script>
-                    setTimeout(function() {
+                    setTimeout(function() {{
                         window.close();
-                        window.location.href = 'http://localhost:5173';
-                    }, 2000);
+                        window.location.href = '{settings.FRONTEND_URL}';
+                    }}, 2000);
                 </script>
             </body>
             </html>

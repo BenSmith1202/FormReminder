@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 export default function Settings() {
     const navigate = useNavigate();

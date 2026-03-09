@@ -25,7 +25,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import PersonIcon from '@mui/icons-material/Person';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface Member {
   email: string;
@@ -50,7 +50,7 @@ export default function ViewGroup() {
   const [group, setGroup] = useState<Group | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+
 
   useEffect(() => {
     loadGroup();
@@ -121,7 +121,7 @@ export default function ViewGroup() {
 
       <Grid container spacing={3}>
         {/* Left Column: Group Info & Stats */}
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
             <Stack spacing={3}>
                 <Paper sx={{ p: 3 }}>
                     <Box display="flex" alignItems="center" mb={2} color="primary.main">
@@ -190,7 +190,7 @@ export default function ViewGroup() {
         </Grid>
 
         {/* Right Column: Immutable Members List */}
-        <Grid item xs={12} md={8}>
+        <Grid size={{ xs: 12, md: 8 }}>
             <Paper sx={{ p: 0, overflow: 'hidden', height: '100%' }}>
                 <Box p={3} borderBottom={1} borderColor="divider" display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="h6">

@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { 
   Paper, Typography, Box, CircularProgress, Chip, Stack, Button, 
-  Link, Alert, IconButton, Grid, Card, CardContent, LinearProgress, 
-  Tooltip, Container, Fade 
+  IconButton, Grid, Card, CardContent, LinearProgress, 
+  Tooltip, Container
 } from '@mui/material';
 import { 
   DataGrid, type GridColDef, type GridRenderCellParams 
@@ -20,7 +20,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 // --- Interfaces ---
 interface HealthResponse {
@@ -398,7 +398,7 @@ export default function Dashboard() {
 
       {/* Metrics Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard 
             title="Active Forms" 
             value={stats.activeForms} 
@@ -407,7 +407,7 @@ export default function Dashboard() {
             color="primary"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard 
             title="Total Responses" 
             value={stats.totalResponses} 
@@ -416,7 +416,7 @@ export default function Dashboard() {
             color="info"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard 
             title="Response Rate" 
             value={`${stats.overallRate}%`} 
@@ -425,7 +425,7 @@ export default function Dashboard() {
             color="success"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard 
             title="System Status" 
             value={data?.status === 'healthy' ? 'Healthy' : 'Issues'} 

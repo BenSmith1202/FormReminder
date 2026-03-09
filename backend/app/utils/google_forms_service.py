@@ -9,8 +9,9 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from config import settings
+import json, tempfile
 
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 
 
 class GoogleFormsService:
@@ -25,27 +26,37 @@ class GoogleFormsService:
     
     @staticmethod
     def create_oauth_flow():
-        """Create OAuth flow for Google authentication"""
         try:
-            # Get the client secret file path
-            client_secret_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                'client_secret.json'
-            )
-            
-            print(f"Looking for client_secret.json at: {client_secret_path}")
-            
+            # Try env var first (Cloud Run / production)
+            client_secret_str = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
+            if client_secret_str:
+                tmp = tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.json', delete=False
+                )
+                json.dump(json.loads(client_secret_str), tmp)
+                tmp.close()
+                client_secret_path = tmp.name
+            else:
+                # Fall back to file on disk (local dev)
+                client_secret_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                    'client_secret.json'
+                )
+
+            print(f"Loading client_secret from: {client_secret_path}")
+
             if not os.path.exists(client_secret_path):
-                raise FileNotFoundError(f"client_secret.json not found at {client_secret_path}")
-            
+                raise FileNotFoundError(
+                    f"client_secret.json not found at {client_secret_path} "
+                    f"and GOOGLE_CLIENT_SECRET_JSON env var is not set"
+                )
+
             flow = Flow.from_client_secrets_file(
                 client_secret_path,
                 scopes=GoogleFormsService.SCOPES,
                 redirect_uri=settings.GOOGLE_REDIRECT_URI
             )
-            
             return flow
-            
         except Exception as e:
             print(f"Error creating OAuth flow: {e}")
             import traceback

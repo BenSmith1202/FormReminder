@@ -10,7 +10,7 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 function Reset() {
   const [email, setEmail] = useState('');

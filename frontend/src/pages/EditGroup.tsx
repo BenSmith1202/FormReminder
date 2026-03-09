@@ -24,7 +24,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import GroupIcon from '@mui/icons-material/Group';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface Member {
   email: string;
@@ -235,7 +235,7 @@ export default function EditGroup() {
       <Grid container spacing={4}>
         
         {/* Left Column: Group Settings */}
-        <Grid item xs={12} md={5}>
+        <Grid size={{ xs: 12, md: 5 }}>
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box display="flex" alignItems="center" mb={2}>
               <GroupIcon color="primary" sx={{ mr: 1 }} />
@@ -287,7 +287,7 @@ export default function EditGroup() {
         </Grid>
 
         {/* Right Column: Member Management */}
-        <Grid item xs={12} md={7}>
+        <Grid size={{ xs: 12, md: 7 }}>
           {/* Add Members */}
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box display="flex" alignItems="center" mb={2}>

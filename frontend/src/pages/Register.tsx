@@ -11,7 +11,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 function Register() {
   const [username, setUsername] = useState('');

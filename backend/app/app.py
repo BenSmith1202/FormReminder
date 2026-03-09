@@ -1,5 +1,5 @@
 import os
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
 import sys
 from flask import Flask, request, session
 from flask_cors import CORS
@@ -26,11 +26,22 @@ from utils.scheduler import init_scheduler  # Automatic reminder scheduler
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
 
+# 2. CORS Configuration
+is_production = not settings.DEBUG
+
+# CORS settings - adjust as needed for your frontend URL and security requirements
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_production else 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = is_production
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
 # disable strict slashes globally
 app.url_map.strict_slashes = False
 
-CORS(app, 
-     origins=["http://localhost:5173"],  # Frontend URL
+#TODO: this does not work right now. For some reason the frontend is defaulting here or something.
+frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+CORS(app,
+     # for now i am hardcoding the frontend URL here since CORS is being weird and blocking requests from the frontend. We can make this more flexible later if needed.
+     origins=[frontend_url, "http://localhost:5173", "https://formreminder-frontend-176029126556.us-central1.run.app"],
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

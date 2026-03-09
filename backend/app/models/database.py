@@ -8,6 +8,7 @@ from google.cloud import firestore as gcp_firestore
 from google.oauth2 import service_account
 from typing import Optional
 import os
+import json, tempfile
 
 # Import settings - use simple import to avoid circular dependency
 from config import settings
@@ -21,52 +22,36 @@ class FirestoreDB:
     
     @classmethod
     def initialize(cls):
-        # Initialize Firebase Admin SDK
-        # Initialize Firestore client
-        # If both app and db are already initialized, return db
         if cls._app is not None and cls._db is not None:
             return cls._db
         
         try:
-            # Resolve credentials path - check multiple possible locations
             cred_path = None
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+            # --- CLOUD RUN: credentials arrive as a JSON string via Secret Manager ---
+            import json, tempfile
+            creds_json_str = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+            if creds_json_str:
+                tmp = tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.json', delete=False
+                )
+                json.dump(json.loads(creds_json_str), tmp)
+                tmp.close()
+                cred_path = tmp.name  # Set cred_path DIRECTLY, bypass settings lookup
+                print(f"Loaded Firebase credentials from FIREBASE_CREDENTIALS_JSON env var")
             
-            if settings.FIREBASE_CREDENTIALS_PATH:
-                # Try the path as-is first
-                if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
-                    cred_path = settings.FIREBASE_CREDENTIALS_PATH
-                else:
-                    # Try relative to project root
-                    alt_path = os.path.join(project_root, settings.FIREBASE_CREDENTIALS_PATH)
-                    if os.path.exists(alt_path):
-                        cred_path = alt_path
-                    else:
-                        # Try just the filename in project root
-                        alt_path2 = os.path.join(project_root, os.path.basename(settings.FIREBASE_CREDENTIALS_PATH))
-                        if os.path.exists(alt_path2):
-                            cred_path = alt_path2
-            
-            # If no configured path, try default locations
             if not cred_path:
-                # Try project root: firestore-credentials.json or firebase-credentials.json
-                for name in ('firestore-credentials.json', 'firebase-credentials.json'):
-                    root_cred_path = os.path.join(project_root, name)
-                    if os.path.exists(root_cred_path):
-                        cred_path = root_cred_path
-                        break
-                if not cred_path:
-                    # Try backend/firebase-credentials.json (one level up from app/models)
-                    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                    default_path = os.path.join(backend_dir, 'firebase-credentials.json')
-                    if os.path.exists(default_path):
-                        cred_path = default_path
-                    else:
-                        # Try backend/app/firebase-credentials.json
-                        app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                        default_path2 = os.path.join(app_dir, 'firebase-credentials.json')
-                        if os.path.exists(default_path2):
-                            cred_path = default_path2
+                # Try backend/firebase-credentials.json (one level up from app/models)
+                backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                default_path = os.path.join(backend_dir, 'firebase-credentials.json')
+                if os.path.exists(default_path):
+                    cred_path = default_path
+                else:
+                    # Try backend/app/firebase-credentials.json
+                    app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                    default_path2 = os.path.join(app_dir, 'firebase-credentials.json')
+                    if os.path.exists(default_path2):
+                        cred_path = default_path2
             
             if cred_path and os.path.exists(cred_path):
                 print(f"Using credentials from: {cred_path}")

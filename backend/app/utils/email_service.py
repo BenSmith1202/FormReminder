@@ -21,7 +21,7 @@ class EmailService:
     SMTP_SERVER = "smtp.gmail.com"
     SMTP_PORT = 465  # Use SSL port instead of TLS port 587
     SMTP_USERNAME = "reminderform0@gmail.com"
-    SMTP_PASSWORD = "mngnsqitifheoiid"  # Gmail App Password (spaces removed)
+    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "mngnsqitifheoiid")  # Must be set in env for production; default is for local testing only
     FROM_EMAIL = "reminderform0@gmail.com"
     FROM_NAME = "FormReminder"
     

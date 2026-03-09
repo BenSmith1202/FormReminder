@@ -8,7 +8,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import SettingsIcon from '@mui/icons-material/Settings';
 import NotificationBell from './NotificationBell';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 export default function Layout() {
   const navigate = useNavigate();
