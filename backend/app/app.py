@@ -10,7 +10,7 @@ from flask_cors import CORS
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models.database import get_db, FirestoreDB
+from models.database import get_db, FirestoreDB, Collections
 from models.user import User
 from models.group import Group
 from models.org_membership import OrgMembership
@@ -2013,6 +2013,124 @@ def get_opt_out_events(owner_id: str):
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Failed to get events", "details": str(e)}), 500
+
+
+@app.get("/api/analytics/submissions-over-time")
+def get_submissions_over_time():
+    """Owner-only: Aggregate form submissions over time for Analytics graphs."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        db = get_db()
+
+        # Collect all form requests for this owner.
+        request_query = db.collection(Collections.FORM_REQUESTS)\
+            .where("owner_id", "==", user_id)\
+            .stream()
+
+        from datetime import datetime
+
+        def _parse_iso(ts: str) -> datetime | None:
+            if not ts:
+                return None
+            try:
+                cleaned = ts.rstrip("Z")
+                return datetime.fromisoformat(cleaned)
+            except Exception:
+                return None
+
+        now = datetime.utcnow()
+        this_month_start = datetime(now.year, now.month, 1)
+
+        # Pre-compute the last 6 month keys, oldest → newest.
+        month_keys: list[str] = []
+        month_counts: dict[str, int] = {}
+        for i in range(5, -1, -1):
+            d = datetime(now.year, now.month, 1)
+            year = d.year
+            month = d.month - i
+            while month <= 0:
+                year -= 1
+                month += 12
+            key = f"{year}-{month:02d}"
+            if key not in month_counts:
+                month_keys.append(key)
+                month_counts[key] = 0
+
+        total_submissions = 0
+        submissions_this_month = 0
+        per_form_counts: dict[str, dict[str, object]] = {}
+
+        for req in request_query:
+            req_data = req.to_dict() or {}
+            req_id = req.id
+            title = req_data.get("title") or req_data.get("form_title") or f"Form {req_id[:8]}"
+
+            responses_stream = db.collection(Collections.RESPONSES)\
+                .where("request_id", "==", req_id)\
+                .stream()
+
+            for resp in responses_stream:
+                resp_data = resp.to_dict() or {}
+                ts = (
+                    resp_data.get("submitted_at")
+                    or resp_data.get("last_submitted_at")
+                    or resp_data.get("created_at", "")
+                )
+                dt = _parse_iso(ts)
+                if not dt:
+                    continue
+
+                total_submissions += 1
+                if dt >= this_month_start:
+                    submissions_this_month += 1
+
+                month_key = f"{dt.year}-{dt.month:02d}"
+                if month_key in month_counts:
+                    month_counts[month_key] += 1
+
+                if req_id not in per_form_counts:
+                    per_form_counts[req_id] = {
+                        "form_request_id": req_id,
+                        "form_title": title,
+                        "count": 0,
+                    }
+                per_form_counts[req_id]["count"] = int(per_form_counts[req_id]["count"]) + 1
+
+        monthly = []
+        for key in sorted(month_keys):
+            year, month = key.split("-")
+            label_dt = datetime(int(year), int(month), 1)
+            label = label_dt.strftime("%b '%y")
+            monthly.append({
+                "month": key,
+                "label": label,
+                "count": month_counts.get(key, 0),
+            })
+
+        per_form_list = sorted(
+            per_form_counts.values(),
+            key=lambda item: int(item["count"]),  # type: ignore[arg-type]
+            reverse=True,
+        )
+
+        print(
+            f"get_submissions_over_time: owner_id={user_id!r} "
+            f"total={total_submissions} this_month={submissions_this_month}"
+        )
+
+        return jsonify({
+            "total_submissions": total_submissions,
+            "submissions_this_month": submissions_this_month,
+            "per_form": per_form_list,
+            "monthly": monthly,
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get submissions analytics", "details": str(e)}), 500
 
 
 # ============= END GROUPS ROUTES =============

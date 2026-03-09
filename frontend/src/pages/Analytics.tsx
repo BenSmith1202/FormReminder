@@ -39,6 +39,25 @@ interface OptOutEventRow {
   timestamp: string;
 }
 
+interface SubmissionPerFormRow {
+  form_request_id: string;
+  form_title: string;
+  count: number;
+}
+
+interface SubmissionMonthlyRow {
+  month: string;
+  label: string;
+  count: number;
+}
+
+interface SubmissionAnalytics {
+  total_submissions: number;
+  submissions_this_month: number;
+  per_form: SubmissionPerFormRow[];
+  monthly: SubmissionMonthlyRow[];
+}
+
 function formatTimestamp(ts: string): string {
   try {
     const d = new Date(ts);
@@ -69,6 +88,7 @@ export default function Analytics() {
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
   const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
+  const [submissionStats, setSubmissionStats] = useState<SubmissionAnalytics | null>(null);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -107,9 +127,32 @@ export default function Analytics() {
       }
     };
 
+    const loadSubmissions = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/analytics/submissions-over-time`, {
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          // Do not override existing error state with this; just log for debugging.
+          // eslint-disable-next-line no-console
+          console.error('Failed to load submissions analytics', res.status);
+          return;
+        }
+        const data: SubmissionAnalytics = await res.json();
+        setSubmissionStats(data);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load submissions analytics', e);
+      }
+    };
+
     loadUser().then((ownerId) => {
-      if (ownerId) loadEvents(ownerId);
-      else setLoading(false);
+      if (ownerId) {
+        loadEvents(ownerId);
+        loadSubmissions();
+      } else {
+        setLoading(false);
+      }
     });
   }, []);
 
@@ -165,37 +208,21 @@ export default function Analytics() {
   }, [events]);
 
   const barData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of events) {
-      if (e.event_type !== 'opted_out' && e.event_type !== 'left_group') continue;
-      const name = e.group_name || 'No group';
-      counts[name] = (counts[name] || 0) + 1;
-    }
-    return Object.entries(counts).map(([name, count]) => ({ name, count }));
-  }, [events]);
+    if (!submissionStats) return [];
+    return submissionStats.per_form.map((row) => ({
+      name: row.form_title || 'Untitled',
+      count: row.count,
+    }));
+  }, [submissionStats]);
 
   const lineData = useMemo(() => {
-    const months: Record<string, number> = {};
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      months[key] = 0;
-    }
-    for (const e of events) {
-      if (e.event_type !== 'opted_out') continue;
-      const d = new Date(e.timestamp);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in months) months[key]++;
-    }
-    return Object.entries(months)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, count]) => ({
-        month: month.slice(0, 7),
-        label: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-        optOuts: count,
-      }));
-  }, [events]);
+    if (!submissionStats) return [];
+    return submissionStats.monthly.map((row) => ({
+      month: row.month,
+      label: row.label,
+      submissions: row.count,
+    }));
+  }, [submissionStats]);
 
   const handleResubscribe = async (email: string) => {
     if (!user?.id) return;
@@ -389,21 +416,21 @@ export default function Analytics() {
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
           <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Opt-outs per group</Typography>
+            <Typography variant="subtitle1" gutterBottom>Submissions per form</Typography>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={barData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#1976d2" name="Count" />
+                <Bar dataKey="count" fill="#1976d2" name="Submissions" />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
         </Box>
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
           <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Total opt-outs over time (last 6 months)</Typography>
+            <Typography variant="subtitle1" gutterBottom>Submissions over time (last 6 months)</Typography>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={lineData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -411,7 +438,7 @@ export default function Analytics() {
                 <YAxis allowDecimals={false} />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="optOuts" name="Opt-outs" stroke="#1976d2" strokeWidth={2} dot />
+                <Line type="monotone" dataKey="submissions" name="Submissions" stroke="#1976d2" strokeWidth={2} dot />
               </LineChart>
             </ResponsiveContainer>
           </Paper>
