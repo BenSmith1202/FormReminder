@@ -19,6 +19,9 @@ import {
   IconButton,
   Tabs,
   Tab,
+  Grid,
+  Link,
+  Tooltip,
   Snackbar,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -27,6 +30,10 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import EmailIcon from '@mui/icons-material/Email';
 import SendIcon from '@mui/icons-material/Send';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import EditIcon from '@mui/icons-material/Edit';
+import EventIcon from '@mui/icons-material/Event';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
 
 const API_URL = 'http://localhost:5000';
 
@@ -87,7 +94,10 @@ export default function ViewRequest() {
   const [optOutLoading, setOptOutLoading] = useState(false);
   const [optOutFetched, setOptOutFetched] = useState(false);
   const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>(
+    { open: false, message: '', severity: 'success' }
+  );
   const [ownerId, setOwnerId] = useState<string | null>(null);
 
   const loadFormRequestData = async (showLoadingSpinner = true) => {
@@ -188,6 +198,31 @@ export default function ViewRequest() {
       alert(`Failed to send reminders: ${err.message}`);
     } finally {
       setSendingBulk(false);
+    }
+  };
+
+  // Add unrecognized email to the form's group
+  const handleAddEmailToGroup = async (email: string) => {
+    setAddingEmail(email);
+    try {
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/add-email-to-group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to add email');
+      
+      setSnackbar({ open: true, message: result.message, severity: 'success' });
+      
+      // Reload data to reflect the change
+      loadFormRequestData();
+    } catch (err: any) {
+      setSnackbar({ open: true, message: err.message, severity: 'error' });
+    } finally {
+      setAddingEmail(null);
     }
   };
 
@@ -334,17 +369,17 @@ export default function ViewRequest() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setSnackbar({ open: true, message: data.error || 'Failed to re-subscribe', isError: true });
+        setSnackbar({ open: true, message: data.error || 'Failed to re-subscribe', severity: 'error' });
         return;
       }
-      setSnackbar({ open: true, message: 'Recipient re-subscribed successfully' });
+      setSnackbar({ open: true, message: 'Recipient re-subscribed successfully', severity: 'success' });
       const eventsRes = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, { credentials: 'include' });
       if (eventsRes.ok) {
         const eventsData = await eventsRes.json();
         setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
       }
     } catch (e: any) {
-      setSnackbar({ open: true, message: e.message || 'Failed to re-subscribe', isError: true });
+      setSnackbar({ open: true, message: e.message || 'Failed to re-subscribe', severity: 'error' });
     } finally {
       setResubscribingEmail(null);
     }
@@ -733,6 +768,7 @@ export default function ViewRequest() {
                   <TableCell>Email</TableCell>
                   <TableCell>Submitted At</TableCell>
                   <TableCell width="120" align="center">Status</TableCell>
+                  <TableCell width="120" align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -755,6 +791,23 @@ export default function ViewRequest() {
                         color="warning" 
                         size="small" 
                       />
+                    </TableCell>
+                    <TableCell align="center">
+                      {response.respondent_email && (
+                        <Tooltip title="Add this email to the group">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleAddEmailToGroup(response.respondent_email)}
+                            disabled={addingEmail === response.respondent_email}
+                          >
+                            {addingEmail === response.respondent_email ? (
+                              <CircularProgress size={20} />
+                            ) : (
+                              <PersonAddIcon />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -826,11 +879,16 @@ export default function ViewRequest() {
         open={snackbar.open}
         autoHideDuration={6000}
         onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        message={snackbar.message}
-        ContentProps={{
-          sx: snackbar.isError ? { bgcolor: 'error.main', color: 'white' } : undefined,
-        }}
-      />
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

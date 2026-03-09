@@ -1,28 +1,22 @@
 from flask import Blueprint, jsonify
 from datetime import datetime
 from models.database import get_db
+from models.notification import Notification
 
 # Define the Blueprint
 utilities_bp = Blueprint('utilities', __name__)
 
 
-# Helper function to create notifications
-def create_notification(owner_id: str, notif_type: str, message: str, data=None) -> None:
-    """Persist a simple in-app notification for an org owner/admin."""
+# Helper function to create notifications (used by other routes)
+def create_notification(owner_id: str, notif_type: str, message: str, data=None, form_reminder_id=None) -> None:
+    """Create an in-app notification using the Notification model."""
     try:
-        from models.database import Collections
-        from datetime import datetime
-
-        db = get_db()
-        db.collection(Collections.NOTIFICATIONS).add(
-            {
-                "owner_id": owner_id,
-                "type": notif_type,
-                "message": message,
-                "data": data or {},
-                "read": False,
-                "created_at": datetime.utcnow().isoformat() + "Z",
-            }
+        Notification.create(
+            user_id=owner_id,
+            notification_type=notif_type,
+            message=message,
+            form_reminder_id=form_reminder_id,
+            metadata=data or {}
         )
     except Exception as e:
         print(f"Warning: failed to create notification: {e}")

@@ -16,7 +16,8 @@ class User:
                  google_access_token: str = None,
                  google_refresh_token: str = None,
                  token_expiry: str = None,
-                 created_at: str = None):
+                 created_at: str = None,
+                 email_custom_message: str = None):
         self.id = user_id
         self.username = username
         self.email = email
@@ -25,6 +26,7 @@ class User:
         self.google_refresh_token = google_refresh_token
         self.token_expiry = token_expiry
         self.created_at = created_at or datetime.utcnow().isoformat() + 'Z'
+        self.email_custom_message = email_custom_message  # Custom message for reminder emails (max 200 chars)
     
     def to_dict(self):
         """Convert user to dictionary for storage"""
@@ -35,7 +37,8 @@ class User:
             'google_access_token': self.google_access_token,
             'google_refresh_token': self.google_refresh_token,
             'token_expiry': self.token_expiry,
-            'created_at': self.created_at
+            'created_at': self.created_at,
+            'email_custom_message': self.email_custom_message
         }
     
     def to_safe_dict(self):
@@ -45,7 +48,8 @@ class User:
             'username': self.username,
             'email': self.email,
             'has_google_auth': bool(self.google_access_token),
-            'created_at': self.created_at
+            'created_at': self.created_at,
+            'email_custom_message': self.email_custom_message
         }
     
     @staticmethod
@@ -133,6 +137,12 @@ class User:
             db = get_db()
             users_ref = db.collection(Collections.USERS)
             thisUser = User.get_by_username(username)
+            
+            # Check if user exists before proceeding
+            if not thisUser:
+                print(f"User not found: {username}")
+                return None
+                
             thisUserDoc = users_ref.document(thisUser.id)
             
 
@@ -176,7 +186,8 @@ class User:
                     google_access_token=user_data.get('google_access_token'),
                     google_refresh_token=user_data.get('google_refresh_token'),
                     token_expiry=user_data.get('token_expiry'),
-                    created_at=user_data.get('created_at')
+                    created_at=user_data.get('created_at'),
+                    email_custom_message=user_data.get('email_custom_message')
                 )
             
             return None
@@ -207,7 +218,8 @@ class User:
                 google_access_token=user_data.get('google_access_token'),
                 google_refresh_token=user_data.get('google_refresh_token'),
                 token_expiry=user_data.get('token_expiry'),
-                created_at=user_data.get('created_at')
+                created_at=user_data.get('created_at'),
+                email_custom_message=user_data.get('email_custom_message')
             )
             
         except Exception as e:
@@ -215,6 +227,23 @@ class User:
             import traceback
             traceback.print_exc()
             return None
+
+    @staticmethod
+    def update_custom_message(user_id: str, message: str) -> bool:
+        """Update user's custom email message (max 200 characters)"""
+        try:
+            # Enforce 200 character limit
+            if message and len(message) > 200:
+                message = message[:200]
+            
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(user_id)
+            user_ref.update({'email_custom_message': message})
+            print(f"Custom message updated for user {user_id}")
+            return True
+        except Exception as e:
+            print(f"Error updating custom message: {e}")
+            return False
     
     @staticmethod
     def delete_user(user_id: str, provided_password: str):

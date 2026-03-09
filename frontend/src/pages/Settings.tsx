@@ -14,6 +14,7 @@ import {
   TextField,
   Divider
 } from '@mui/material';
+import SaveIcon from '@mui/icons-material/Save';
 
 const API_URL = 'http://localhost:5000';
 
@@ -26,6 +27,11 @@ export default function Settings() {
     const [deletePassword, setDeletePassword] = useState('');
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
+    
+    // Custom email message state
+    const [customMessage, setCustomMessage] = useState('');
+    const [customMessageLoading, setCustomMessageLoading] = useState(false);
+    const [customMessageSaved, setCustomMessageSaved] = useState(true);
 
     useEffect(() => {
         const checkAuth = async () => {
@@ -37,6 +43,8 @@ export default function Settings() {
             
             if (data.authenticated) {
               setUser(data.user);
+              // Load custom message from user data
+              setCustomMessage(data.user.email_custom_message || '');
             } else {
               navigate('/login');
             }
@@ -50,6 +58,33 @@ export default function Settings() {
     
         checkAuth();
     }, [navigate]);
+
+    // Save custom email message
+    const saveCustomMessage = async () => {
+      setCustomMessageLoading(true);
+      setError('');
+      setSuccess('');
+      try {
+        const response = await fetch(`${API_URL}/api/settings/custom-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ custom_message: customMessage })
+        });
+        
+        if (response.ok) {
+          setSuccess('Custom message saved!');
+          setCustomMessageSaved(true);
+        } else {
+          const data = await response.json();
+          setError(data.error || 'Failed to save message');
+        }
+      } catch (error) {
+        setError('Connection failed.');
+      } finally {
+        setCustomMessageLoading(false);
+      }
+    };
     
     const handleDelete = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -144,6 +179,44 @@ export default function Settings() {
             subheader="WIP"
         />
         <Divider />
+      </Card>
+
+      {/* Custom Email Message Card */}
+      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+        <CardHeader 
+            title="Custom Email Message" 
+            subheader="Add a personal message to your reminder emails (max 200 characters)"
+        />
+        <Divider />
+        <CardContent>
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Your custom message"
+            placeholder="e.g., Please complete this form by end of day. Thank you!"
+            variant="outlined"
+            value={customMessage}
+            onChange={(e) => {
+              setCustomMessage(e.target.value);
+              setCustomMessageSaved(false);
+            }}
+            inputProps={{ maxLength: 200 }}
+            helperText={`${customMessage.length}/200 characters`}
+          />
+        </CardContent>
+        <CardActions sx={{ px: 2, pb: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={customMessageLoading ? <CircularProgress size={18} /> : <SaveIcon />}
+            onClick={saveCustomMessage}
+            disabled={customMessageLoading || customMessageSaved}
+            fullWidth
+          >
+            {customMessageSaved ? 'Saved' : 'Save Message'}
+          </Button>
+        </CardActions>
       </Card>
 
       {/* Change Username Card */}

@@ -8,6 +8,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import LogoutIcon from '@mui/icons-material/Logout';
+import NotificationBell from './NotificationBell';
 
 const API_URL = 'http://localhost:5000';
 
@@ -138,6 +139,7 @@ export default function Layout() {
             >
               {!isMobile && 'Settings'}
             </Button>
+            <NotificationBell />
             <Button
               color="inherit"
               onClick={handleLogout}
