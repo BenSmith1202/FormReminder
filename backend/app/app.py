@@ -682,15 +682,17 @@ def get_form_requests():
                     "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
                 )
             
-            # Merge form data into request_data
+            # Merge form data into request_data. Prefer form_request's own title so multiple
+            # requests for the same Google Form each show their correct name (form doc is shared).
             merged_data = {
                 **request_data,
-                **form_data,  # Merge form data (form_url, title, description, last_synced_at, etc.)
-                "response_count": response_count,  # Include dynamically calculated response_count
-                "total_recipients": total_recipients,  # Always include fresh count
-                "warnings": warnings  # Include dynamically calculated warnings
+                **form_data,  # form_url, description, last_synced_at, etc.
+                "response_count": response_count,
+                "total_recipients": total_recipients,
+                "warnings": warnings
             }
-            
+            merged_data["title"] = request_data.get("title") or form_data.get("title") or "Untitled Form"
+
             requests_list.append({
                 "id": req.id,
                 **merged_data
@@ -1320,11 +1322,11 @@ def create_form_request():
         form_ref = db.collection(Collections.FORMS).document(form_doc_id)
         form_doc = form_ref.get()
         if form_doc.exists:
-            # Update existing form document (don't update last_synced_at unless syncing)
+            # Update existing form document. Do not overwrite title/description so that
+            # other form requests for this same form keep showing their own or the
+            # original form doc title (each form_request stores its own title for display).
             form_ref.update({
                 'form_url': form_url,
-                'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
-                'description': metadata.get('description', ''),
                 'updated_at': now,
                 'api_access_available': api_access_available,
                 'form_settings': form_data['form_settings']
@@ -1333,12 +1335,16 @@ def create_form_request():
             # Create new form document (without last_synced_at - will be set on first sync)
             form_ref.set(form_data)
         
-        # Create form request document with enhanced metadata
+        # Create form request document with enhanced metadata.
+        # Store title on the form_request so multiple requests for the same Google Form
+        # each keep their own display name (the shared form doc would otherwise overwrite).
+        request_title = data.get('title') or metadata.get('title', f"Form {form_id[:8]}") or 'Untitled Form'
         form_request_data = {
             'form_id': form_doc_id,  # Reference to forms collection
             'google_form_id': form_id,
             'owner_id': effective_owner_id,
             'group_id': group_id,
+            'title': request_title,
             'created_at': now,
             'status': 'Active',
             'is_active': True,
@@ -1999,6 +2005,7 @@ def get_opt_out_events(owner_id: str):
             return jsonify({"error": "Unauthorized"}), 403
 
         events = OptOutEvent.get_events_for_owner(owner_id)
+        print(f"get_opt_out_events: owner_id={owner_id!r} count={len(events)}")
         return jsonify({
             "events": [e.to_dict() for e in events],
         }), 200

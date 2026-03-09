@@ -74,8 +74,9 @@ export default function Analytics() {
     const loadUser = async () => {
       try {
         const res = await fetch(`${API_URL}/api/current-user`, { credentials: 'include' });
-        const data = await res.json();
-        if (data.authenticated && data.user?.id) {
+        const raw = await res.json();
+        const data = Array.isArray(raw) && raw.length > 0 ? raw[0] : raw;
+        if (data?.authenticated && data?.user?.id) {
           setUser(data.user);
           return data.user.id;
         }
@@ -92,9 +93,12 @@ export default function Analytics() {
         const res = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, {
           credentials: 'include',
         });
-        if (!res.ok) throw new Error('Failed to load events');
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody?.error || `Failed to load events (${res.status})`);
+        }
         const data = await res.json();
-        setEvents(Array.isArray(data.events) ? data.events : []);
+        setEvents(Array.isArray(data?.events) ? data.events : []);
       } catch (e: any) {
         setError(e.message || 'Failed to load events');
         setEvents([]);

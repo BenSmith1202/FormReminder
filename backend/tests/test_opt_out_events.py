@@ -228,3 +228,47 @@ def test_get_events_for_owner_returns_events(client, fake_db):
     assert opted_out_events[0].get("owner_id") == owner_id
     assert "id" in opted_out_events[0]
     assert "timestamp" in opted_out_events[0]
+
+
+def test_analytics_shows_opt_out_after_recipient_leaves(client, fake_db):
+    """
+    End-to-end: a recipient opts out via the email link; the owner's Analytics
+    (opt-out-events API) then shows the opted_out event. Use this to verify
+    analytics is working.
+    """
+    from utils.email_service import EmailService
+
+    resp = client.post(
+        "/api/register",
+        json={"username": "analytics_owner", "email": "analytics_owner@example.com", "password": "pass1234"},
+    )
+    assert resp.status_code == 201
+    owner_id = resp.get_json()["user"]["id"]
+
+    resp = client.post("/api/groups", json={"name": "Test Group", "description": "For analytics test"})
+    assert resp.status_code == 201
+    invite_token = resp.get_json()["group"]["invite_token"]
+    recipient_email = "recipient_who_opts_out@example.com"
+    resp = client.post(f"/api/groups/join/{invite_token}", json={"email": recipient_email})
+    assert resp.status_code == 200
+
+    leave_url = EmailService.build_unsubscribe_url(owner_id, recipient_email)
+    parsed = urlparse(leave_url)
+    qs = parse_qs(parsed.query)
+    token = qs["token"][0]
+
+    resp = client.get(f"/api/organizations/{owner_id}/leave?email={recipient_email}&token={token}")
+    assert resp.status_code == 200, "Opt-out request should succeed"
+
+    resp = client.get(f"/api/organizations/{owner_id}/opt-out-events")
+    assert resp.status_code == 200, "Analytics (opt-out-events) should be reachable by owner"
+    data = resp.get_json()
+    assert "events" in data
+    events = data["events"]
+    opted_out = [e for e in events if e.get("event_type") == "opted_out" and e.get("recipient_email") == recipient_email]
+    assert len(opted_out) == 1, (
+        f"Analytics should show exactly one opted_out event for {recipient_email}; got {len(opted_out)}"
+    )
+    assert opted_out[0].get("performed_by") == "recipient"
+    assert opted_out[0].get("source") == "email_link"
+    assert "timestamp" in opted_out[0]

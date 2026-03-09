@@ -8,6 +8,7 @@ from .utilities import create_notification
 
 from models.group import Group
 from models.org_membership import OrgMembership
+from models.opt_out_event import OptOutEvent
 from utils.email_service import EmailService
 
 
@@ -43,6 +44,10 @@ def leave_organization(owner_id: str):
 
         # Mark opted out first (so even partial failures still suppress future emails).
         OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
+        try:
+            OptOutEvent.log(owner_id, email, "opted_out", "recipient", "email_link")
+        except Exception:
+            pass
 
         # Remove from all groups in this org (owner == org).
         removed_from_groups = 0

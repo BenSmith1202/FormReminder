@@ -66,7 +66,6 @@ export default function CreateRequest() {
   const [newDayInput, setNewDayInput] = useState<string>('');
   const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
-  const submittingRef = useRef(false);
 
   useEffect(() => {
     loadGroups();
@@ -166,7 +165,6 @@ export default function CreateRequest() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submittingRef.current) return;
     setError(null);
 
     if (!formUrl) {
@@ -189,7 +187,6 @@ export default function CreateRequest() {
       return;
     }
 
-    submittingRef.current = true;
     setLoading(true);
 
     try {
@@ -245,7 +242,6 @@ export default function CreateRequest() {
       setError(err.message || 'Failed to create form request');
     } finally {
       setLoading(false);
-      submittingRef.current = false;
     }
   };
 
