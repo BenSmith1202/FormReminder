@@ -35,6 +35,9 @@ from fake_firestore import FakeFirestore  # noqa: E402
 
 EMAILIT_API_URL = "https://api.emailit.com/v2/emails"
 
+# Emailit may return 200 or 201 for accepted emails.
+EMAILIT_SUCCESS_CODES = (200, 201)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -192,12 +195,12 @@ class TestRawApiSend:
             headers=_api_headers(),
             timeout=15,
         )
-        assert resp.status_code == 201, (
-            f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code in EMAILIT_SUCCESS_CODES, (
+            f"Expected {EMAILIT_SUCCESS_CODES}, got {resp.status_code}: {resp.text}"
         )
 
     def test_response_body_contains_expected_fields(self, recipient_email):
-        """The 201 response must include the documented fields."""
+        """The success response must include the documented fields."""
         resp = _requests.post(
             EMAILIT_API_URL,
             json={
@@ -209,11 +212,11 @@ class TestRawApiSend:
             headers=_api_headers(),
             timeout=15,
         )
-        assert resp.status_code == 201
+        assert resp.status_code in EMAILIT_SUCCESS_CODES
         body = resp.json()
         assert "id" in body, f"Response missing 'id': {body}"
         assert "status" in body, f"Response missing 'status': {body}"
-        assert body.get("status") in ("pending", "queued", "sent"), (
+        assert body.get("status") in ("pending", "queued", "sent", "accepted"), (
             f"Unexpected status value: {body.get('status')}"
         )
 
@@ -231,7 +234,7 @@ class TestRawApiSend:
             headers=_api_headers(),
             timeout=15,
         )
-        assert resp.status_code == 201, (
+        assert resp.status_code in EMAILIT_SUCCESS_CODES, (
             f"'Name <email>' from format rejected ({resp.status_code}): {resp.text}"
         )
 
@@ -249,7 +252,7 @@ class TestRawApiSend:
             headers=_api_headers(),
             timeout=15,
         )
-        assert resp.status_code == 201, (
+        assert resp.status_code in EMAILIT_SUCCESS_CODES, (
             f"Tracking flags caused error ({resp.status_code}): {resp.text}"
         )
         body = resp.json()
@@ -270,7 +273,7 @@ class TestRawApiSend:
             headers=_api_headers(),
             timeout=15,
         )
-        assert resp.status_code == 201
+        assert resp.status_code in EMAILIT_SUCCESS_CODES
         body = resp.json()
         ids = body.get("ids", {})
         assert recipient_email in ids, (

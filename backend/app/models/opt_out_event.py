@@ -87,6 +87,7 @@ class OptOutEvent:
                     "timestamp": _now_iso(),
                 }
             )
+            print(f"OptOutEvent.log: stored id={eid} owner_id={owner_id!r} event_type={event_type}")
         except Exception as e:
             print(f"OptOutEvent.log failed (non-fatal): {e}")
 

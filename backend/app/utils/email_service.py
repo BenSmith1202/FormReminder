@@ -156,6 +156,7 @@ class EmailService:
         }
 
         try:
+            print(f"[Emailit] POST {EMAILIT_API_URL} to={to_email} subject={subject[:50]}...")
             response = requests.post(
                 EMAILIT_API_URL,
                 json=payload,
@@ -165,8 +166,9 @@ class EmailService:
                 },
                 timeout=15,
             )
+            print(f"[Emailit] Response {response.status_code} for {to_email}")
 
-            if response.status_code == 201:
+            if response.status_code in (200, 201):
                 print(f"Email sent successfully to {to_email}")
                 return {"success": True}
 

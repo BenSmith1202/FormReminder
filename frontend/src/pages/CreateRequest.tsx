@@ -66,6 +66,7 @@ export default function CreateRequest() {
   const [newDayInput, setNewDayInput] = useState<string>('');
   const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     loadGroups();
@@ -165,18 +166,19 @@ export default function CreateRequest() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError(null);
-    
+
     if (!formUrl) {
       setError('Please enter a form URL');
       return;
     }
-    
+
     if (!groupId) {
       setError('Please select a group');
       return;
     }
-    
+
     if (!dueDate) {
       setError('Please select a due date');
       return;
@@ -187,8 +189,9 @@ export default function CreateRequest() {
       return;
     }
 
+    submittingRef.current = true;
     setLoading(true);
-    
+
     try {
       // Prepare the request body with all form data
       const requestBody: any = {
@@ -242,6 +245,7 @@ export default function CreateRequest() {
       setError(err.message || 'Failed to create form request');
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 

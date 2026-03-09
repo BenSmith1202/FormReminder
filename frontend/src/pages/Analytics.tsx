@@ -340,6 +340,12 @@ export default function Analytics() {
       <Typography variant="h5" gutterBottom sx={{ fontWeight: 600 }}>
         Analytics
       </Typography>
+      {events.length === 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Showing data for your account. No opt-out events have been recorded yet. Events are added when recipients
+          unsubscribe from reminder emails, when you remove someone from a group, or when you re-subscribe someone here.
+        </Alert>
+      )}
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
