@@ -6,6 +6,9 @@ import traceback
 from models.user import User
 from utils.google_forms_service import GoogleFormsService
 
+from models.database import get_db
+from models.form import Form
+
 # Define the Blueprint
 settings_bp = Blueprint('settings', __name__)
 
@@ -78,6 +81,29 @@ def edit_username():
             "details": error_msg
         }), 500
 
+
+@settings_bp.get('/api/user-forms')
+def get_user_forms():
+    try:
+        user_id_query = request.args.get('userId')
+        print(f"=======THIS IS THE USER ID: {user_id_query}=========" )
+
+        logged_in_id = session.get('user_id')
+        if not logged_in_id or logged_in_id != user_id_query:
+            return jsonify({"error": "Unauthorized access"}), 403
+        
+        print(f"Calling get forms by uid...")
+        user_forms = Form.get_forms_by_userid(user_id_query)
+            
+        return jsonify({
+            "success": True,
+            "forms": user_forms
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Error fetching forms: {e}")
+        return jsonify({"error": "Failed to fetch forms", "details": str(e)}), 500
+        
 
 # ============= CUSTOM EMAIL MESSAGE ROUTES ===================
 
