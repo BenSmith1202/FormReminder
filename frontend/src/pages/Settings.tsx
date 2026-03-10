@@ -112,7 +112,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
-
+  const [memberships, setMemberships] = useState<any[]>([]);
   const [customMessage, setCustomMessage] = useState('');
   const [customMessageLoading, setCustomMessageLoading] = useState(false);
   const [customMessageSaved, setCustomMessageSaved] = useState(true);
@@ -150,6 +150,20 @@ export default function Settings() {
       } catch { /* silent */ }
     };
     fetchUserForms();
+  }, [user]);
+
+  useEffect(() => {
+    const fetchMemberships = async () => {
+      if (!user?.id) return;
+      try {
+        const response = await fetch(`${API_URL}/api/my-memberships`, {
+          credentials: 'include',
+        });
+        const data = await response.json();
+        if (response.ok) setMemberships(data);
+      } catch { /* silent */ }
+    };
+    fetchMemberships();
   }, [user]);
 
   // ── Actions ──
@@ -272,6 +286,28 @@ export default function Settings() {
       }
     } catch {
       setError('Connection error.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleLeaveOrg = async (membershipId: string) => {
+    if (!window.confirm("Are you sure you want to leave this organization?")) return;
+    
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/memberships/${membershipId}/leave`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        setMemberships((prev) => prev.filter((m) => m.membership_id !== membershipId));
+        setSuccess("You have successfully left the organization.");
+      } else {
+        setError("Failed to leave organization.");
+      }
+    } catch {
+      setError("Connection error.");
     } finally {
       setActionLoading(false);
     }
@@ -488,19 +524,49 @@ export default function Settings() {
           )}
         </Section>
 
-        {/* ── Team / Org (WIP placeholder) ── */}
+        {/* ── Team & Organization ── */}
         <Section
           icon={<GroupIcon sx={{ fontSize: 20 }} />}
           title="Team & Organization"
-          description="Manage members and org settings"
+          description="Organizations you have joined as a member"
           iconBg="grey.100"
           iconColor="text.secondary"
         >
-          <Box px={3} py={4} textAlign="center">
-            <Typography variant="body2" color="text.disabled">
-              Coming soon.
-            </Typography>
-          </Box>
+          {memberships.length === 0 ? (
+            <Box px={3} py={4} textAlign="center">
+              <Typography variant="body2" color="text.secondary">
+                You are not a member of any other organizations.
+              </Typography>
+            </Box>
+          ) : (
+            <List disablePadding>
+              {memberships.map((org, index) => (
+                <ListItem
+                  key={org.membership_id}
+                  divider={index < memberships.length - 1}
+                  sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}
+                >
+                  <ListItemText
+                    primary={org.org_name}
+                    secondary={`Role: ${org.role.charAt(0).toUpperCase() + org.role.slice(1)}`}
+                    primaryTypographyProps={{ variant: 'body1', fontWeight: 'bold' }}
+                  />
+                  <ListItemSecondaryAction>
+                    <Button
+                      size="small"
+                      color="error"
+                      variant="text"
+                      onClick={() => handleLeaveOrg(org.membership_id)}
+                      disabled={actionLoading}
+                      sx={{ fontWeight: 'bold' }}
+                    >
+                      Leave
+                    </Button>
+                  </ListItemSecondaryAction>
+                </ListItem>
+              ))}
+            </List>
+          )}
         </Section>
 
         {/* ── Danger Zone (collapsible) ── */}
