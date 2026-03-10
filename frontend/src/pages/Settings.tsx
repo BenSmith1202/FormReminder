@@ -29,6 +29,7 @@ export default function Settings() {
     const [success, setSuccess] = useState('');
     const [user, setUser] = useState<any>(null);
     const [forms, setForms] = useState<any[]>([]);
+    // const [orgs, setOrgs] = useState<any[]>([]);
     const [newUsername, setNewUsername] = useState('');
     const [deletePassword, setDeletePassword] = useState('');
     const [loading, setLoading] = useState(true);
@@ -75,7 +76,7 @@ export default function Settings() {
       try {
         // We pass the user.id to the backend to filter the forms
         const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
-          credentials: 'include',
+          credentials: 'include'
         });
         const data = await response.json();
         
@@ -86,9 +87,27 @@ export default function Settings() {
         console.error('Failed to fetch forms:', err);
       }
     };
-
   fetchUserForms();
 }, [user]); 
+
+ // fetches the organizations the user is a part of
+    // useEffect(() => {
+    //   const fetchUserOrgs = async () => {
+    //     if(!user?.id) return;
+    //     try {
+    //       const response = await fetch(`${API_URL}/api/org_memberships?userId=${user.id}`, {
+    //         credentials : 'include'
+    //       });
+
+    //       const data = await response.json();
+
+    //       if (response.ok) {
+    //         setOrgs(data.forms || [])
+    //       }
+    //     }
+    //   }
+    // })
+
 
     // sends the user's registed email a reset password email
     const resetPassword = async () => {
