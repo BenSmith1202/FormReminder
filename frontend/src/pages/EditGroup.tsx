@@ -204,7 +204,7 @@ export default function EditGroup() {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="lg" sx={{ py: 4 }} className="page-fade-in">
       {/* ── Top nav ── */}
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
         <Button

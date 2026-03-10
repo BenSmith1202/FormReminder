@@ -104,7 +104,7 @@ export default function ViewGroup() {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="lg" sx={{ py: 4 }} className="page-fade-in">
       {/* ── Back nav ── */}
       <Button
         startIcon={<ArrowBackIcon />}

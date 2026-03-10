@@ -1,23 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
-  Paper,
-  Typography,
-  Box,
-  CircularProgress,
-  Chip,
-  Button,
-  IconButton,
-  Card,
-  CardContent,
-  LinearProgress,
-  Tooltip,
-  Container,
-  Stack,
-  Avatar
+  Paper, Typography, Box, Chip, Button, IconButton, Card, CardContent,
+  LinearProgress, Tooltip, Container, Stack, Avatar
 } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
-import { useNavigate } from 'react-router-dom';
-
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -123,6 +110,8 @@ function RequestCard({
       : 0;
   const isActive = row.status === 'Active';
 
+
+  
   return (
     <Paper
       elevation={0}
@@ -224,21 +213,49 @@ function RequestCard({
   );
 }
 
+export async function dashboardLoader() {
+  try {
+    const [healthRes, requestsRes] = await Promise.all([
+      fetch(`${API_URL}/api/health`, { credentials: 'include' }),
+      fetch(`${API_URL}/api/form-requests`, { credentials: 'include' })
+    ]);
+
+    const healthData = healthRes.ok ? await healthRes.json() : { status: 'error', database: 'disconnected' };
+    const rawRequests = requestsRes.ok ? await requestsRes.json() : [];
+    
+    const transformedRows = Array.isArray(rawRequests) ? rawRequests.map((req: any) => ({
+      id: req.id,
+      title: req.title || 'Untitled Form',
+      response_count: req.response_count || 0,
+      total_recipients: req.total_recipients || 0,
+      created_at: req.created_at,
+      last_synced_at: req.last_synced_at,
+      status: req.is_active ? 'Active' : 'Inactive',
+      warnings: req.warnings || [],
+    })) : [];
+
+    return { initialHealth: healthData, initialRows: transformedRows };
+  } catch (error) {
+    return { initialHealth: { status: 'error', database: 'disconnected' }, initialRows: [] };
+  }
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [data, setData] = useState<HealthResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { initialHealth, initialRows } = useLoaderData() as any;
+
+  // Initialize state with loader data
+  const [data, setData] = useState<HealthResponse | null>(initialHealth);
+  const [rows, setRows] = useState<FormRequestRow[]>(initialRows);
   const [refreshing, setRefreshing] = useState(false);
-  const [rows, setRows] = useState<FormRequestRow[]>([]);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
 
   const stats = useMemo(() => {
     const activeForms = rows.filter((r) => r.status === 'Active').length;
     const totalResponses = rows.reduce((acc, curr) => acc + (curr.response_count || 0), 0);
     const totalRecipients = rows.reduce((acc, curr) => acc + (curr.total_recipients || 0), 0);
-    const overallRate =
-      totalRecipients > 0 ? Math.round((totalResponses / totalRecipients) * 100) : 0;
+    const overallRate = totalRecipients > 0 ? Math.round((totalResponses / totalRecipients) * 100) : 0;
     return { activeForms, totalResponses, overallRate };
   }, [rows]);
 
@@ -406,7 +423,7 @@ export default function Dashboard() {
         credentials: 'include',
       });
       if (!response.ok) throw new Error('Failed to delete');
-      loadFormRequests();
+      loadFormRequests(); // Re-fetch data after deleting
     } catch (error: any) {
       alert(`Failed to delete: ${error.message}`);
     }
@@ -465,18 +482,7 @@ export default function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    const initLoad = async () => {
-      fetch(`${API_URL}/api/health`, { credentials: 'include' })
-        .then((res) => (res.ok ? res.json() : { status: 'error' }))
-        .then(setData)
-        .catch(() => setData({ status: 'error', database: 'disconnected' }));
-      await loadFormRequests();
-      setLoading(false);
-    };
-    initLoad();
-  }, []);
-
+  // Polling useEffect remains
   useEffect(() => {
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') refreshAllFormRequests();
@@ -484,19 +490,11 @@ export default function Dashboard() {
     return () => clearInterval(pollInterval);
   }, []);
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="60vh">
-        <CircularProgress size={40} thickness={4} />
-      </Box>
-    );
-  }
-
   const isHealthy = data?.status === 'healthy';
   const isDbConnected = data?.database === 'connected';
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <Container maxWidth="xl" sx={{ py: 4 }} className="page-fade-in">
       {/* ── Page Header ── */}
       <Box
         display="flex"

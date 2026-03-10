@@ -1,19 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
-  Typography,
-  Button,
-  Box,
-  CircularProgress,
-  Alert,
-  Card,
-  CardContent,
-  CardActionArea,
-  IconButton,
-  Tooltip,
-  Divider,
-  Container,
+  Typography, Button, Box, CircularProgress, Alert, Card, CardContent,
+  CardActionArea, IconButton, Tooltip, Divider, Container
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
 import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -31,30 +21,24 @@ interface Group {
   created_at: string;
 }
 
+export async function groupsLoader() {
+  try {
+    const response = await fetch(`${API_URL}/api/groups`, { credentials: 'include' });
+    if (!response.ok) throw new Error('Failed to load groups');
+    const data = await response.json();
+    return { initialGroups: data.groups || [], loaderError: null };
+  } catch (err: any) {
+    return { initialGroups: [], loaderError: err.message };
+  }
+}
+
 export default function Groups() {
   const navigate = useNavigate();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { initialGroups, loaderError } = useLoaderData() as any;
+  
+  const [groups, setGroups] = useState<Group[]>(initialGroups);
+  const [error, setError] = useState<string | null>(loaderError);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadGroups();
-  }, []);
-
-  const loadGroups = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/api/groups`, { credentials: 'include' });
-      if (!response.ok) throw new Error('Failed to load groups');
-      const data = await response.json();
-      setGroups(data.groups || []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleDuplicate = async (e: React.MouseEvent, groupId: string) => {
     e.stopPropagation();
@@ -74,16 +58,8 @@ export default function Groups() {
     }
   };
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <Container maxWidth="xl" sx={{ py: 4 }} className="page-fade-in">
       {/* Page Header */}
       <Box mb={4}>
         <Typography variant="h4" fontWeight="bold" gutterBottom>
