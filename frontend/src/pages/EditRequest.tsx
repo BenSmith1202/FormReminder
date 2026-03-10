@@ -20,17 +20,18 @@ import {
   DialogActions,
   IconButton,
   Chip,
-  Stack,
-  Divider
+  Divider,
+  Container,
+  Skeleton,
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Description as DescriptionIcon,
-  CalendarToday as CalendarIcon,
-  Close as CloseIcon,
-  ArrowBack as ArrowBackIcon,
-  Save as SaveIcon,
-} from '@mui/icons-material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import SaveIcon from '@mui/icons-material/Save';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import CloseIcon from '@mui/icons-material/Close';
+import DescriptionIcon from '@mui/icons-material/Description';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import { TimePicker } from '@mui/x-date-pickers/TimePicker';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -54,14 +55,14 @@ export default function EditRequest() {
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
-  
+
   // Schedule State
   const [reminderSchedule, setReminderSchedule] = useState('normal');
   const [firstReminderTiming, setFirstReminderTiming] = useState('immediate');
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
-  
-  // Custom Schedule Logic
+
+  // Custom Schedule
   const [customScheduleOpen, setCustomScheduleOpen] = useState(false);
   const [customDays, setCustomDays] = useState<number[]>([]);
   const [newDayInput, setNewDayInput] = useState<string>('');
@@ -79,68 +80,53 @@ export default function EditRequest() {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      // 1. Load available groups
       const groupsRes = await fetch(`${API_URL}/api/groups`, { credentials: 'include' });
       const groupsData = await groupsRes.json();
       setGroups(groupsData.groups || []);
 
-      // 2. Load existing request details
-      const requestRes = await fetch(`${API_URL}/api/form-requests/${requestId}/responses`, { credentials: 'include' });
+      const requestRes = await fetch(
+        `${API_URL}/api/form-requests/${requestId}/responses`,
+        { credentials: 'include' }
+      );
       if (!requestRes.ok) throw new Error('Failed to load request details');
-      
       const requestData = await requestRes.json();
       const request = requestData.form_request;
 
-      // 3. Populate State
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
-      
-      // SAFE DATE PARSING
+
       if (request.due_date) {
-        // Handle ISO strings safely
         const parsedDate = new Date(request.due_date);
-        // Only set if valid
-        if (!isNaN(parsedDate.getTime())) {
-          setDueDate(parsedDate);
-        }
+        if (!isNaN(parsedDate.getTime())) setDueDate(parsedDate);
       }
 
-      // Populate Reminder Settings
       if (request.reminder_schedule) {
-        // Handle object vs string format
         if (typeof request.reminder_schedule === 'object' && request.reminder_schedule !== null) {
           setReminderSchedule(request.reminder_schedule.schedule_type || 'normal');
-          if (request.reminder_schedule.custom_days) {
+          if (request.reminder_schedule.custom_days)
             setCustomDays(request.reminder_schedule.custom_days);
-          }
         } else {
           setReminderSchedule(request.reminder_schedule);
         }
       }
 
-      // Populate Timing
       if (request.first_reminder_timing) {
-        // Handle object vs string format
         let timingType = 'immediate';
         if (typeof request.first_reminder_timing === 'object') {
-           timingType = request.first_reminder_timing.timing_type || 'immediate';
-           if (timingType === 'scheduled') {
-             if (request.first_reminder_timing.scheduled_date) {
-               setScheduledDate(new Date(request.first_reminder_timing.scheduled_date));
-             }
-             if (request.first_reminder_timing.scheduled_time) {
-               setScheduledTime(new Date(request.first_reminder_timing.scheduled_time));
-             }
-           }
+          timingType = request.first_reminder_timing.timing_type || 'immediate';
+          if (timingType === 'scheduled') {
+            if (request.first_reminder_timing.scheduled_date)
+              setScheduledDate(new Date(request.first_reminder_timing.scheduled_date));
+            if (request.first_reminder_timing.scheduled_time)
+              setScheduledTime(new Date(request.first_reminder_timing.scheduled_time));
+          }
         } else {
-           timingType = request.first_reminder_timing;
+          timingType = request.first_reminder_timing;
         }
         setFirstReminderTiming(timingType);
       }
-
     } catch (err: any) {
-      console.error('Failed to load data:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -150,11 +136,9 @@ export default function EditRequest() {
   const handleSave = async () => {
     setError(null);
     setSaving(true);
-
     try {
-      if (!formUrl || !groupId || !dueDate) {
+      if (!formUrl || !groupId || !dueDate)
         throw new Error('Please fill in all required fields');
-      }
 
       const requestBody: any = {
         title: requestTitle,
@@ -166,16 +150,14 @@ export default function EditRequest() {
       };
 
       if (reminderSchedule === 'custom') {
-        if (!customDays || customDays.length === 0) {
+        if (!customDays || customDays.length === 0)
           throw new Error('Please add at least one day for the custom schedule');
-        }
         requestBody.custom_days = customDays;
       }
 
       if (firstReminderTiming === 'scheduled') {
-        if (!scheduledDate || !scheduledTime) {
+        if (!scheduledDate || !scheduledTime)
           throw new Error('Please select a date and time for the scheduled reminder');
-        }
         const combined = new Date(scheduledDate);
         combined.setHours(scheduledTime.getHours());
         combined.setMinutes(scheduledTime.getMinutes());
@@ -186,18 +168,12 @@ export default function EditRequest() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
       });
-
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to update request');
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to update request');
-      }
-
-      // Navigate back to view page
       navigate(`/request/${requestId}`);
-
     } catch (err: any) {
       setError(err.message);
       setSaving(false);
@@ -206,23 +182,59 @@ export default function EditRequest() {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
-      </Box>
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 2, mb: 3 }} />
+        <Skeleton variant="rectangular" height={200} sx={{ borderRadius: 3, mb: 3 }} />
+        <Skeleton variant="rectangular" height={320} sx={{ borderRadius: 3 }} />
+      </Container>
     );
   }
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Box maxWidth="md" sx={{ mx: 'auto', py: 4, px: 2 }}>
-        
-        <Box display="flex" alignItems="center" mb={4}>
-          <IconButton onClick={() => navigate(`/request/${requestId}`)} sx={{ mr: 2 }}>
-            <ArrowBackIcon />
-          </IconButton>
-          <Typography variant="h4" fontWeight="bold">
-            Edit Request
-          </Typography>
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        {/* ── Top nav ── */}
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+          <Button
+            startIcon={<ArrowBackIcon />}
+            onClick={() => navigate(`/request/${requestId}`)}
+            sx={{ color: 'text.secondary' }}
+          >
+            Back to Request
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<VisibilityIcon />}
+            onClick={() => navigate(`/request/${requestId}`)}
+          >
+            View Request
+          </Button>
+        </Box>
+
+        {/* Title block */}
+        <Box display="flex" alignItems="center" gap={1.5} mb={3}>
+          <Box
+            sx={{
+              width: 44,
+              height: 44,
+              borderRadius: 2,
+              bgcolor: 'primary.50',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <AssignmentIcon color="primary" sx={{ fontSize: 22 }} />
+          </Box>
+          <Box>
+            <Typography variant="h5" fontWeight="bold">
+              Edit Request
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {requestTitle || 'Untitled Request'}
+            </Typography>
+          </Box>
         </Box>
 
         {error && (
@@ -231,30 +243,61 @@ export default function EditRequest() {
           </Alert>
         )}
 
-        <Stack spacing={3}>
-          <Paper sx={{ p: 4, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={3}>
-              <DescriptionIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">General Information</Typography>
+        {/* ── Section 1: General Information ── */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 3, sm: 4 },
+            mb: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 3,
+          }}
+        >
+          <Box display="flex" alignItems="center" gap={2} mb={3}>
+            <Box
+              sx={{
+                width: 44,
+                height: 44,
+                borderRadius: 2,
+                bgcolor: 'primary.50',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <DescriptionIcon color="primary" sx={{ fontSize: 22 }} />
             </Box>
-            
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                General Information
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Basic details for this form request.
+              </Typography>
+            </Box>
+          </Box>
+
+          <Divider sx={{ mb: 3 }} />
+
+          <Box display="grid" gap={2.5}>
             <TextField
               label="Request Title"
               fullWidth
+              size="small"
               value={requestTitle}
               onChange={(e) => setRequestTitle(e.target.value)}
-              sx={{ mb: 3 }}
             />
-
             <TextField
               label="Form URL"
               fullWidth
+              size="small"
               value={formUrl}
               onChange={(e) => setFormUrl(e.target.value)}
-              sx={{ mb: 3 }}
+              placeholder="https://forms.google.com/..."
             />
-
-            <FormControl fullWidth>
+            <FormControl fullWidth size="small">
               <InputLabel>Recipient Group</InputLabel>
               <Select
                 value={groupId}
@@ -268,26 +311,66 @@ export default function EditRequest() {
                 ))}
               </Select>
             </FormControl>
-          </Paper>
+          </Box>
+        </Paper>
 
-          <Paper sx={{ p: 4, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={3}>
-              <CalendarIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Schedule & Deadlines</Typography>
+        {/* ── Section 2: Schedule & Deadlines ── */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 3, sm: 4 },
+            mb: 3,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 3,
+          }}
+        >
+          <Box display="flex" alignItems="center" gap={2} mb={3}>
+            <Box
+              sx={{
+                width: 44,
+                height: 44,
+                borderRadius: 2,
+                bgcolor: 'info.50',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <CalendarTodayIcon sx={{ color: 'info.main', fontSize: 22 }} />
             </Box>
-
-            <Box sx={{ mb: 4 }}>
-              <Typography variant="subtitle2" gutterBottom>Due Date</Typography>
-              <DatePicker
-                value={dueDate}
-                onChange={(newValue) => setDueDate(newValue)}
-                slotProps={{ textField: { fullWidth: true } }}
-              />
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Schedule & Deadlines
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Set a due date and how often reminders are sent.
+              </Typography>
             </Box>
+          </Box>
 
-            <Divider sx={{ my: 3 }} />
+          <Divider sx={{ mb: 3 }} />
 
-            <Typography variant="subtitle2" gutterBottom>Reminder Frequency</Typography>
+          {/* Due Date */}
+          <Box mb={3}>
+            <Typography variant="body2" fontWeight="medium" gutterBottom>
+              Due Date
+            </Typography>
+            <DatePicker
+              value={dueDate}
+              onChange={(v) => setDueDate(v)}
+              slotProps={{ textField: { size: 'small', fullWidth: true } }}
+            />
+          </Box>
+
+          <Divider sx={{ mb: 3 }} />
+
+          {/* Reminder Frequency */}
+          <Box mb={3}>
+            <Typography variant="body2" fontWeight="medium" gutterBottom>
+              Reminder Frequency
+            </Typography>
             <FormControl component="fieldset" fullWidth>
               <RadioGroup
                 value={reminderSchedule}
@@ -296,16 +379,15 @@ export default function EditRequest() {
                   if (e.target.value !== 'custom') setCustomDays([]);
                 }}
               >
-                <FormControlLabel value="gentle" control={<Radio />} label="Gentle (3 and 1 days before)" />
-                <FormControlLabel value="normal" control={<Radio />} label="Normal (5, 3, and 1 days before)" />
-                <FormControlLabel value="frequent" control={<Radio />} label="Frequent (Daily last week)" />
-                
-                <Box display="flex" alignItems="center" gap={2}>
-                  <FormControlLabel value="custom" control={<Radio />} label="Custom" />
+                <FormControlLabel value="gentle" control={<Radio size="small" />} label="Gentle — 3 and 1 days before" />
+                <FormControlLabel value="normal" control={<Radio size="small" />} label="Normal — 5, 3, and 1 days before" />
+                <FormControlLabel value="frequent" control={<Radio size="small" />} label="Frequent — Daily for the last week" />
+                <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+                  <FormControlLabel value="custom" control={<Radio size="small" />} label="Custom" />
                   {reminderSchedule === 'custom' && (
-                    <Button 
-                      size="small" 
-                      variant="outlined" 
+                    <Button
+                      size="small"
+                      variant="outlined"
                       onClick={() => setCustomScheduleOpen(true)}
                     >
                       Edit Schedule ({customDays.length} days)
@@ -314,69 +396,86 @@ export default function EditRequest() {
                 </Box>
               </RadioGroup>
             </FormControl>
+          </Box>
 
-            <Divider sx={{ my: 3 }} />
+          <Divider sx={{ mb: 3 }} />
 
-            <Typography variant="subtitle2" gutterBottom>First Reminder Timing</Typography>
+          {/* First Reminder Timing */}
+          <Box>
+            <Typography variant="body2" fontWeight="medium" gutterBottom>
+              First Reminder Timing
+            </Typography>
             <FormControl component="fieldset">
               <RadioGroup
                 row
                 value={firstReminderTiming}
                 onChange={(e) => setFirstReminderTiming(e.target.value)}
               >
-                <FormControlLabel value="immediate" control={<Radio />} label="Immediate" />
-                <FormControlLabel value="scheduled" control={<Radio />} label="Scheduled" />
+                <FormControlLabel value="immediate" control={<Radio size="small" />} label="Send immediately" />
+                <FormControlLabel value="scheduled" control={<Radio size="small" />} label="Schedule for later" />
               </RadioGroup>
             </FormControl>
 
             {firstReminderTiming === 'scheduled' && (
-              <Box display="flex" gap={2} mt={2}>
+              <Box display="flex" gap={2} mt={2} flexWrap="wrap">
                 <DatePicker
                   label="Start Date"
                   value={scheduledDate}
-                  onChange={(newValue) => setScheduledDate(newValue)}
-                  slotProps={{ textField: { fullWidth: true } }}
+                  onChange={(v) => setScheduledDate(v)}
+                  slotProps={{ textField: { size: 'small', fullWidth: true, sx: { flex: 1, minWidth: 160 } } }}
                 />
                 <TimePicker
                   label="Start Time"
                   value={scheduledTime}
-                  onChange={(newValue) => setScheduledTime(newValue)}
-                  slotProps={{ textField: { fullWidth: true } }}
+                  onChange={(v) => setScheduledTime(v)}
+                  slotProps={{ textField: { size: 'small', fullWidth: true, sx: { flex: 1, minWidth: 160 } } }}
                 />
               </Box>
             )}
-          </Paper>
-
-          <Box display="flex" gap={2} justifyContent="flex-end" pt={2}>
-            <Button
-              variant="outlined"
-              size="large"
-              onClick={() => navigate(`/request/${requestId}`)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="contained"
-              size="large"
-              startIcon={saving ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />}
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? 'Saving...' : 'Save Changes'}
-            </Button>
           </Box>
-        </Stack>
+        </Paper>
 
-        <Dialog open={customScheduleOpen} onClose={() => setCustomScheduleOpen(false)} maxWidth="sm" fullWidth>
+        {/* ── Save / Cancel row ── */}
+        <Box display="flex" gap={2} justifyContent="flex-end">
+          <Button
+            variant="outlined"
+            onClick={() => navigate(`/request/${requestId}`)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={
+              saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />
+            }
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save Changes'}
+          </Button>
+        </Box>
+
+        {/* ── Custom Schedule Dialog ── */}
+        <Dialog
+          open={customScheduleOpen}
+          onClose={() => setCustomScheduleOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
           <DialogTitle>
             <Box display="flex" justifyContent="space-between" alignItems="center">
               Edit Custom Schedule
-              <IconButton size="small" onClick={() => setCustomScheduleOpen(false)}><CloseIcon /></IconButton>
+              <IconButton size="small" onClick={() => setCustomScheduleOpen(false)}>
+                <CloseIcon />
+              </IconButton>
             </Box>
           </DialogTitle>
           <DialogContent>
-            {customScheduleError && <Alert severity="error" sx={{ mb: 2 }}>{customScheduleError}</Alert>}
-            
+            {customScheduleError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {customScheduleError}
+              </Alert>
+            )}
             <Box display="flex" gap={1} mb={3} mt={1}>
               <TextField
                 label="Days before due date"
@@ -385,18 +484,28 @@ export default function EditRequest() {
                 fullWidth
                 value={newDayInput}
                 onChange={(e) => setNewDayInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const day = parseInt(newDayInput);
+                    if (isNaN(day) || day < 1 || day > 365) {
+                      setCustomScheduleError('Enter a number between 1 and 365');
+                      return;
+                    }
+                    if (!customDays.includes(day)) setCustomDays([...customDays, day]);
+                    setNewDayInput('');
+                    setCustomScheduleError(null);
+                  }
+                }}
               />
-              <Button 
+              <Button
                 variant="contained"
                 onClick={() => {
                   const day = parseInt(newDayInput);
                   if (isNaN(day) || day < 1 || day > 365) {
-                    setCustomScheduleError('Invalid day number');
+                    setCustomScheduleError('Enter a number between 1 and 365');
                     return;
                   }
-                  if (!customDays.includes(day)) {
-                    setCustomDays([...customDays, day]);
-                  }
+                  if (!customDays.includes(day)) setCustomDays([...customDays, day]);
                   setNewDayInput('');
                   setCustomScheduleError(null);
                 }}
@@ -404,22 +513,30 @@ export default function EditRequest() {
                 Add
               </Button>
             </Box>
-
             <Box display="flex" flexWrap="wrap" gap={1}>
-              {customDays.sort((a, b) => b - a).map((day) => (
-                <Chip
-                  key={day}
-                  label={`${day} days before`}
-                  onDelete={() => setCustomDays(customDays.filter(d => d !== day))}
-                />
-              ))}
+              {customDays
+                .sort((a, b) => b - a)
+                .map((day) => (
+                  <Chip
+                    key={day}
+                    label={`${day} days before`}
+                    onDelete={() => setCustomDays(customDays.filter((d) => d !== day))}
+                  />
+                ))}
+              {customDays.length === 0 && (
+                <Typography variant="body2" color="text.disabled">
+                  No days added yet.
+                </Typography>
+              )}
             </Box>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setCustomScheduleOpen(false)}>Done</Button>
+            <Button onClick={() => setCustomScheduleOpen(false)} variant="contained">
+              Done
+            </Button>
           </DialogActions>
         </Dialog>
-      </Box>
+      </Container>
     </LocalizationProvider>
   );
 }

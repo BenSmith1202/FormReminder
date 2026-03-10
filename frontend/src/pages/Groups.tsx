@@ -117,6 +117,7 @@ export default function Groups() {
         <Card
           variant="outlined"
           sx={{
+            borderRadius: 4,
             borderStyle: 'dashed',
             borderWidth: 2,
             borderColor: 'primary.main',
@@ -172,6 +173,7 @@ export default function Groups() {
           <Card
             key={group.id}
             sx={{
+              borderRadius: 4,
               display: 'flex',
               flexDirection: 'column',
               transition: 'all 0.2s ease',
