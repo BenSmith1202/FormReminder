@@ -80,14 +80,7 @@ export default function Layout() {
 
           {/* Navigation Links */}
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Button
-              color="inherit"
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/requests/new')}
-              variant={location.pathname === '/requests/new' ? 'outlined' : 'text'}
-            >
-              New Request
-            </Button>
+            
             <Button
               color="inherit"
               startIcon={<EmailIcon />}
