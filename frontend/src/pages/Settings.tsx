@@ -106,7 +106,7 @@ export default function Settings() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [user, setUser] = useState<any>(null);
-  const [forms, setForms] = useState<any[]>([]);
+  const [formRequests, setFormRequests] = useState<any[]>([]);
   const [newUsername, setNewUsername] = useState('');
   const [deletePassword, setDeletePassword] = useState('');
   const [loading, setLoading] = useState(true);
@@ -142,11 +142,11 @@ export default function Settings() {
     const fetchUserForms = async () => {
       if (!user?.id) return;
       try {
-        const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
+        const response = await fetch(`${API_URL}/api/form-requests`, {
           credentials: 'include',
         });
         const data = await response.json();
-        if (response.ok) setForms(data.forms || []);
+        if (response.ok) setFormRequests(data);
       } catch { /* silent */ }
     };
     fetchUserForms();
@@ -254,14 +254,17 @@ export default function Settings() {
   const handleToggleNotification = async (formId: string, enabled: boolean) => {
     setActionLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/toggle-notification`, {
+      const response = await fetch(`${API_URL}/api/settings/toggle-notification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ formId, enabled }),
+        body: JSON.stringify({ 
+          form_id: formId,
+          enabled: enabled 
+        }),
       });
       if (response.ok) {
-        setForms((prev) =>
+        setFormRequests((prev) =>
           prev.map((f) => (f.id === formId ? { ...f, notificationsEnabled: enabled } : f))
         );
       } else {
@@ -452,7 +455,7 @@ export default function Settings() {
           iconBg="warning.50"
           iconColor="warning.main"
         >
-          {forms.length === 0 ? (
+          {formRequests.length === 0 ? (
             <Box px={3} py={4} textAlign="center">
               <Typography variant="body2" color="text.secondary">
                 No active forms found.
@@ -460,10 +463,10 @@ export default function Settings() {
             </Box>
           ) : (
             <List disablePadding>
-              {forms.map((form, index) => (
+              {formRequests.map((form, index) => (
                 <ListItem
                   key={form.id}
-                  divider={index < forms.length - 1}
+                  divider={index < formRequests.length - 1}
                   sx={{ px: { xs: 2.5, sm: 3 }, py: 1.5 }}
                 >
                   <ListItemText
