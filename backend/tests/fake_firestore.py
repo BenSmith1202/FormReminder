@@ -75,6 +75,20 @@ class FakeQuery:
         return iter(matched)
 
 
+def _field_filter_to_tuple(filter_obj: Any) -> Tuple[str, str, Any]:
+    """Extract (field, op, value) from a Firestore FieldFilter-like object."""
+    field = getattr(filter_obj, "field_path", None)
+    if field is None:
+        field = getattr(filter_obj, "field", None)
+    if hasattr(field, "field_path"):
+        field = field.field_path
+    if isinstance(field, list):
+        field = ".".join(field)
+    op = getattr(filter_obj, "op_string", None) or getattr(filter_obj, "op", None) or "=="
+    value = getattr(filter_obj, "value", None)
+    return (str(field), str(op), value)
+
+
 class FakeCollectionRef:
     def __init__(self, name: str):
         self._name = name
@@ -90,7 +104,12 @@ class FakeCollectionRef:
         ref.set(data)
         return ref, None
 
-    def where(self, field: str, op: str, value: Any) -> FakeQuery:
+    def where(self, field: Optional[str] = None, op: Optional[str] = None, value: Any = None, **kwargs: Any) -> FakeQuery:
+        filter_obj = kwargs.get("filter")
+        if filter_obj is not None:
+            field, op, value = _field_filter_to_tuple(filter_obj)
+        if field is None or op is None:
+            raise TypeError("where() requires (field, op, value) or filter=FieldFilter(...)")
         return FakeQuery(self, [(field, op, value)])
 
     def stream(self) -> Iterable[FakeDocumentSnapshot]:

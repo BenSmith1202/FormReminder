@@ -166,17 +166,17 @@ export default function CreateRequest() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
+
     if (!formUrl) {
       setError('Please enter a form URL');
       return;
     }
-    
+
     if (!groupId) {
       setError('Please select a group');
       return;
     }
-    
+
     if (!dueDate) {
       setError('Please select a due date');
       return;
@@ -188,7 +188,7 @@ export default function CreateRequest() {
     }
 
     setLoading(true);
-    
+
     try {
       // Prepare the request body with all form data
       const requestBody: any = {

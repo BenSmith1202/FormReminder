@@ -155,6 +155,14 @@ class Collections:
     EMAIL_LOGS = "email_logs"
     # Org-level recipient membership / opt-out records (owner_id + recipient_email)
     ORG_MEMBERSHIPS = "org_memberships"
+    # Opt-out / group-leave / resubscribe analytics events
+    OPT_OUT_EVENTS = "opt_out_events"
+    # Emailit webhook delivery tracking events
+    EMAIL_EVENTS = "email_events"
+    # Bounced email addresses (skip future sends)
+    BOUNCED_EMAILS = "bounced_emails"
+    # Sub-user memberships within an owner's organization
+    ORG_MEMBERS = "org_members"
 
 # Helper function
 def get_db():
