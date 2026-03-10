@@ -1,0 +1,16 @@
+/* Layout.css */
+
+.page-fade-in {
+  animation: fadeIn 0.25s ease-in-out;
+  /* Optional: keeps the page from flashing full opacity before the animation starts */
+  animation-fill-mode: forwards; 
+}
+
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}

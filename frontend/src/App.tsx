@@ -1,10 +1,12 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+
+// Components & Pages
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
+import Dashboard, { dashboardLoader } from './pages/Dashboard';
+import Groups, { groupsLoader } from './pages/Groups';
 import CreateRequest from './pages/CreateRequest';
 import ServerTime from './pages/ServerTime';
-import Groups from './pages/Groups';
 import CreateGroup from './pages/CreateGroup';
 import JoinGroup from './pages/JoinGroup';
 import ViewGroup from './pages/ViewGroup';
@@ -19,49 +21,47 @@ import EditGroup from './pages/EditGroup';
 
 const theme = createTheme({
   palette: {
-    primary: {
-      main: '#1976d2', // Blue primary color
-    },
-    background: {
-      default: '#f5f5f5', // Light gray background
-    },
+    primary: { main: '#1976d2' },
+    background: { default: '#f5f5f5' },
   },
   typography: {
-    h4: {
-      fontWeight: 600,
-    },
+    h4: { fontWeight: 600 },
   },
 });
+
+const router = createBrowserRouter([
+  // Public routes
+  { path: '/login', element: <Login /> },
+  { path: '/register', element: <Register /> },
+  { path: '/reset', element: <Reset /> },
+  { path: '/groups/join/:token', element: <JoinGroup /> },
+  
+  // Protected routes
+  {
+    path: '/',
+    element: <Layout />,
+    children: [
+      { index: true, element: <Dashboard />, loader: dashboardLoader }, // Added loader
+      { path: 'requests/new', element: <CreateRequest /> },
+      { path: 'requests/:requestId', element: <ViewRequest /> },
+      { path: 'request/:requestId', element: <ViewRequest /> },
+      { path: 'requests/:requestId/edit', element: <EditRequest /> },
+      { path: 'analytics', element: <Analytics /> },
+      { path: 'time', element: <ServerTime /> },
+      { path: 'groups', element: <Groups />, loader: groupsLoader }, // Added loader
+      { path: 'groups/new', element: <CreateGroup /> },
+      { path: 'groups/:groupId', element: <ViewGroup /> },
+      { path: 'groups/:groupId/edit', element: <EditGroup /> },
+      { path: 'settings', element: <Settings /> },
+    ]
+  }
+]);
 
 function App() {
   return (
     <ThemeProvider theme={theme}>
-      <CssBaseline /> {/* Normalizes CSS */}
-      <BrowserRouter>
-        <Routes>
-          {/* Public routes (no Layout) */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/reset" element={<Reset />} />
-          <Route path="/groups/join/:token" element={<JoinGroup />} />
-          
-          {/* Protected routes (with Layout) */}
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/requests/new" element={<CreateRequest />} />
-            <Route path="/requests/:requestId" element={<ViewRequest />} />
-            <Route path="/request/:requestId" element={<ViewRequest />} />
-            <Route path="/requests/:requestId/edit" element={<EditRequest />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/time" element={<ServerTime />} />
-            <Route path="/groups" element={<Groups />} />
-            <Route path="/groups/new" element={<CreateGroup />} />
-            <Route path="/groups/:groupId" element={<ViewGroup />} />
-            <Route path="/groups/:groupId/edit" element={<EditGroup />} />
-            <Route path="/settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <CssBaseline />
+      <RouterProvider router={router} />
     </ThemeProvider>
   );
 }
