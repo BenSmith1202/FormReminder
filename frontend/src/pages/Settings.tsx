@@ -2,11 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Container,
-  Card,
-  CardHeader,
-  CardContent,
-  CardActions,
-  Button,
   Typography,
   Box,
   Alert,
@@ -17,429 +12,587 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  Switch
+  Switch,
+  Paper,
+  Button,
+  Avatar,
+  Skeleton,
+  Collapse,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
+import LockIcon from '@mui/icons-material/Lock';
+import GroupIcon from '@mui/icons-material/Group';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import MessageIcon from '@mui/icons-material/Message';
+import PersonIcon from '@mui/icons-material/Person';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const API_URL = 'http://localhost:5000';
 
+// ── Shared section wrapper ────────────────────────────────────────────────
+function Section({
+  icon,
+  title,
+  description,
+  iconBg = 'primary.50',
+  iconColor = 'primary.main',
+  children,
+  danger = false,
+}: {
+  icon: React.ReactNode;
+  title: React.ReactNode;
+  description?: string;
+  iconBg?: string;
+  iconColor?: string;
+  children: React.ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        border: '1px solid',
+        borderColor: danger ? 'error.light' : 'divider',
+        borderRadius: 3,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header */}
+      <Box
+        display="flex"
+        alignItems="center"
+        gap={2}
+        px={{ xs: 2.5, sm: 3 }}
+        py={2.5}
+        sx={{ borderBottom: '1px solid', borderColor: danger ? 'error.light' : 'divider', bgcolor: danger ? '#fff8f8' : 'grey.50' }}
+      >
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: 2,
+            bgcolor: danger ? 'error.50' : iconBg,
+            color: danger ? 'error.main' : iconColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </Box>
+        <Box>
+          <Typography variant="subtitle1" fontWeight="bold" color={danger ? 'error.main' : 'text.primary'}>
+            {title}
+          </Typography>
+          {description && (
+            <Typography variant="body2" color="text.secondary">
+              {description}
+            </Typography>
+          )}
+        </Box>
+      </Box>
+
+      {/* Body */}
+      <Box>{children}</Box>
+    </Paper>
+  );
+}
+
 export default function Settings() {
-    const navigate = useNavigate();
-    const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
-    const [user, setUser] = useState<any>(null);
-    const [forms, setForms] = useState<any[]>([]);
-    // const [orgs, setOrgs] = useState<any[]>([]);
-    const [newUsername, setNewUsername] = useState('');
-    const [deletePassword, setDeletePassword] = useState('');
-    const [loading, setLoading] = useState(true);
-    const [actionLoading, setActionLoading] = useState(false);
-    
-    // Custom email message state
-    const [customMessage, setCustomMessage] = useState('');
-    const [customMessageLoading, setCustomMessageLoading] = useState(false);
-    const [customMessageSaved, setCustomMessageSaved] = useState(true);
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [user, setUser] = useState<any>(null);
+  const [forms, setForms] = useState<any[]>([]);
+  const [newUsername, setNewUsername] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [dangerOpen, setDangerOpen] = useState(false);
 
+  const [customMessage, setCustomMessage] = useState('');
+  const [customMessageLoading, setCustomMessageLoading] = useState(false);
+  const [customMessageSaved, setCustomMessageSaved] = useState(true);
 
-    // checks if the user is currently logged in; redirect to login if not
-    useEffect(() => {
-        const checkAuth = async () => {
-          try {
-            const response = await fetch(`${API_URL}/api/current-user`, {
-              credentials: 'include',
-            });
-            const data = await response.json();
-            
-            if (data.authenticated) {
-              setUser(data.user);
-              // Load custom message from user data
-              setCustomMessage(data.user.email_custom_message || '');
-            } else {
-              navigate('/login');
-            }
-          } catch (error) {
-            console.error('Auth check failed:', error);
-            navigate('/login');
-          } finally {
-            setLoading(false);
-          }
-        };
-    
-        checkAuth();
-    }, [navigate]);
-
-    // fetches the user's currently active form and populates the frontend with them
-    useEffect(() => {
-    const fetchUserForms = async () => {
-      if (!user?.id) return; // Guard clause
-
+  // ── Auth & data loading ──
+  useEffect(() => {
+    const checkAuth = async () => {
       try {
-        // We pass the user.id to the backend to filter the forms
-        const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
-          credentials: 'include'
-        });
+        const response = await fetch(`${API_URL}/api/current-user`, { credentials: 'include' });
         const data = await response.json();
-        
-        if (response.ok) {
-          setForms(data.forms || []);
-        }
-      } catch (err) {
-        console.error('Failed to fetch forms:', err);
-      }
-    };
-  fetchUserForms();
-}, [user]); 
-
- // fetches the organizations the user is a part of
-    // useEffect(() => {
-    //   const fetchUserOrgs = async () => {
-    //     if(!user?.id) return;
-    //     try {
-    //       const response = await fetch(`${API_URL}/api/org_memberships?userId=${user.id}`, {
-    //         credentials : 'include'
-    //       });
-
-    //       const data = await response.json();
-
-    //       if (response.ok) {
-    //         setOrgs(data.forms || [])
-    //       }
-    //     }
-    //   }
-    // })
-
-
-    // sends the user's registed email a reset password email
-    const resetPassword = async () => {
-      // Clear previous status messages
-      setError('');
-      setLoading(true);
-
-      try {
-        // We use user.email directly from the authenticated session
-        const response = await fetch(`${API_URL}/api/reset`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: user.email }) 
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-          setSuccess(`A password reset link has been sent to ${user.email}`);
+        if (data.authenticated) {
+          setUser(data.user);
+          setCustomMessage(data.user.email_custom_message || '');
         } else {
-          setError(data.error || 'Failed to send reset email');
+          navigate('/login');
         }
-      } catch (err) {
-        setError('Server connection failed');
+      } catch {
+        navigate('/login');
       } finally {
         setLoading(false);
       }
     };
+    checkAuth();
+  }, [navigate]);
 
-    // Save custom email message
-    const saveCustomMessage = async () => {
-      setCustomMessageLoading(true);
-      setError('');
-      setSuccess('');
+  useEffect(() => {
+    const fetchUserForms = async () => {
+      if (!user?.id) return;
       try {
-        const response = await fetch(`${API_URL}/api/settings/custom-message`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
           credentials: 'include',
-          body: JSON.stringify({ custom_message: customMessage })
         });
-        
-        if (response.ok) {
-          setSuccess('Custom message saved!');
-          setCustomMessageSaved(true);
-        } else {
-          const data = await response.json();
-          setError(data.error || 'Failed to save message');
-        }
-      } catch (error) {
-        setError('Connection failed.');
-      } finally {
-        setCustomMessageLoading(false);
+        const data = await response.json();
+        if (response.ok) setForms(data.forms || []);
+      } catch { /* silent */ }
+    };
+    fetchUserForms();
+  }, [user]);
+
+  // ── Actions ──
+  const resetPassword = async () => {
+    setError('');
+    setSuccess('');
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setSuccess(`A password reset link has been sent to ${user.email}`);
+      } else {
+        setError(data.error || 'Failed to send reset email');
       }
-    };
-    
-    // delete the user account
-    const handleDelete = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError('');
-        setActionLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/api/delete`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ user, password: deletePassword })
-            });
-            
-            const data = await response.json();
-            if (response.ok) {
-                localStorage.removeItem('user');
-                navigate('/login');
-            } else {
-                setError(data.error || 'Deletion failed. Check your password.');
-            }
-        } catch (error) {
-            setError('Connection failed. Please try again.');
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-
-    // edit the user's username
-    const editUsername = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setError('');
-      setSuccess('');
-      setActionLoading(true);
-      try {
-        const response = await fetch(`${API_URL}/api/edit_username`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ user, newUsername })
-        });
-        if (response.ok) {
-            setSuccess('Username updated successfully!');
-            setNewUsername('');
-        } else {
-            setError('Failed to update username.');
-        }
-      } catch (error) {
-        setError('Connection failed.');
-      } finally {
-        setActionLoading(false);
-      }
-    };
-
-    // handles notification toggling
-    // TODO: This is just a placeholder; David needs to replace/edit it with the actual logic
-    const handleToggleNotification = async (formId: string, enabled: boolean) => {
-  setActionLoading(true);
-  try {
-    const response = await fetch(`${API_URL}/api/toggle-notification`, { //TODO DAVID: Change to appropriate URL and params as necessary
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ formId, enabled })
-    });
-
-    if (response.ok) {
-      // Update local state so the switch flips immediately
-      setForms(prev => prev.map(f => f.id === formId ? { ...f, notificationsEnabled: enabled } : f));
-    } else {
-      setError('Could not update notification.');
+    } catch {
+      setError('Server connection failed');
+    } finally {
+      setActionLoading(false);
     }
-  } catch (err) {
-    setError('Connection error.');
-  } finally {
-    setActionLoading(false);
-  }
-};
-    
-    if (loading) {
-        return (
-            <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
-                <CircularProgress />
-            </Box>
+  };
+
+  const saveCustomMessage = async () => {
+    setCustomMessageLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch(`${API_URL}/api/settings/custom-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ custom_message: customMessage }),
+      });
+      if (response.ok) {
+        setSuccess('Custom message saved!');
+        setCustomMessageSaved(true);
+      } else {
+        const data = await response.json();
+        setError(data.error || 'Failed to save message');
+      }
+    } catch {
+      setError('Connection failed.');
+    } finally {
+      setCustomMessageLoading(false);
+    }
+  };
+
+  const editUsername = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/edit_username`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ user, newUsername }),
+      });
+      if (response.ok) {
+        setSuccess('Username updated successfully!');
+        setNewUsername('');
+      } else {
+        setError('Failed to update username.');
+      }
+    } catch {
+      setError('Connection failed.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ user, password: deletePassword }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        localStorage.removeItem('user');
+        navigate('/login');
+      } else {
+        setError(data.error || 'Deletion failed. Check your password.');
+      }
+    } catch {
+      setError('Connection failed. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleNotification = async (formId: string, enabled: boolean) => {
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/toggle-notification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ formId, enabled }),
+      });
+      if (response.ok) {
+        setForms((prev) =>
+          prev.map((f) => (f.id === formId ? { ...f, notificationsEnabled: enabled } : f))
         );
+      } else {
+        setError('Could not update notification.');
+      }
+    } catch {
+      setError('Connection error.');
+    } finally {
+      setActionLoading(false);
     }
+  };
 
+  // ── Loading skeleton ──
+  if (loading) {
     return (
-    <Container maxWidth="sm" sx={{ py: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom align="center" sx={{ mb: 4, fontWeight: 'bold' }}>
-        Account Settings
-      </Typography>
-
-      {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 3 }}>{success}</Alert>}
-
-      {/* Security Card */}
-      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Security Settings" 
-            subheader="Manage your account security and credentials"
-        />
-        <Divider />
-        <CardContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Need to update your password? Click the button below, and we will send a secure reset link to your registered email address: <strong>{user?.email}</strong>.
-          </Typography>
-        </CardContent>
-        <CardActions sx={{ px: 2, pb: 2 }}>
-          <Button
-            variant="outlined"
-            color="primary"
-            fullWidth
-            onClick={resetPassword}
-            disabled={loading}
-            startIcon={loading ? <CircularProgress size={18} /> : null}
-          >
-            {loading ? 'Sending...' : 'Send Password Reset Email'}
-          </Button>
-        </CardActions>
-      </Card>
-
-      {/* Team Members Card */}
-      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Team Members and Organization" 
-            subheader="WIP"
-        />
-        <Divider />
-      </Card>
-
-      {/* Notifications Card */}
-      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-  <CardHeader 
-      title="Forms and Notifications" 
-      subheader="Manage email alerts for your active forms"
-  />
-  <Divider />
-  <CardContent sx={{ p: 0 }}>
-    {forms.length > 0 ? (
-      <List disablePadding>
-        {forms.map((form) => (
-          <ListItem key={form.id} divider>
-            <ListItemText 
-              primary={form.title || "Untitled Form"} 
-              primaryTypographyProps={{ variant: 'body1', fontWeight: 500 }}
-            />
-            <ListItemSecondaryAction>
-              <Switch
-                edge="end"
-                onChange={(e) => handleToggleNotification(form.id, e.target.checked)}
-                checked={!!form.notificationsEnabled}
-                disabled={actionLoading}
-              />
-            </ListItemSecondaryAction>
-          </ListItem>
+      <Container maxWidth="sm" sx={{ py: 4 }}>
+        <Skeleton variant="rectangular" height={60} sx={{ borderRadius: 2, mb: 4 }} />
+        {[200, 120, 160, 140, 80].map((h, i) => (
+          <Skeleton key={i} variant="rectangular" height={h} sx={{ borderRadius: 3, mb: 3 }} />
         ))}
-      </List>
-    ) : (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="body2" color="text.secondary">
-          No forms found for your account.
-        </Typography>
-      </Box>
-    )}
-  </CardContent>
-</Card>
+      </Container>
+    );
+  }
 
-<Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Custom Email Message" 
-            subheader="Add a personal message to your reminder emails (max 200 characters)"
-        />
-        <Divider />
-        <CardContent>
-          <TextField
-            fullWidth
-            multiline
-            rows={3}
-            label="Your custom message"
-            placeholder="e.g., Please complete this form by end of day. Thank you!"
-            variant="outlined"
-            value={customMessage}
-            onChange={(e) => {
-              setCustomMessage(e.target.value);
-              setCustomMessageSaved(false);
+  return (
+    <Container maxWidth="sm" sx={{ py: 4 }} className="page-fade-in">
+      {/* ── Page header ── */}
+      <Box mb={4}>
+        {/* User identity card */}
+        <Box
+          display="flex"
+          alignItems="center"
+          gap={2}
+          p={2.5}
+          sx={{
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 3,
+            bgcolor: 'background.paper',
+            background: 'linear-gradient(135deg, #f0f4ff 0%, #ffffff 60%)',
+          }}
+        >
+          <Avatar
+            sx={{
+              width: 52,
+              height: 52,
+              bgcolor: 'primary.main',
+              fontSize: '1.2rem',
+              fontWeight: 'bold',
+              flexShrink: 0,
             }}
-            inputProps={{ maxLength: 200 }}
-            helperText={`${customMessage.length}/200 characters`}
-          />
-        </CardContent>
-        <CardActions sx={{ px: 2, pb: 2 }}>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={customMessageLoading ? <CircularProgress size={18} /> : <SaveIcon />}
-            onClick={saveCustomMessage}
-            disabled={customMessageLoading || customMessageSaved}
-            fullWidth
           >
-            {customMessageSaved ? 'Saved' : 'Save Message'}
-          </Button>
-        </CardActions>
-      </Card>
+            {user?.username?.[0]?.toUpperCase()}
+          </Avatar>
+          <Box>
+            <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
+              {user?.username}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {user?.email}
+            </Typography>
+          </Box>
+        </Box>
+      </Box>
 
-      {/* Change Username Card */}
-      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Profile Information" 
-            subheader="Update your public display name"
-        />
-        <Divider />
-        <form onSubmit={editUsername}>
-          <CardContent>
+      {/* ── Global alerts ── */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+      {success && (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess('')}
+          icon={<CheckCircleIcon fontSize="inherit" />}
+        >
+          {success}
+        </Alert>
+      )}
+
+      <Box display="flex" flexDirection="column" gap={3}>
+
+        {/* ── Security ── */}
+        <Section
+          icon={<LockIcon sx={{ fontSize: 20 }} />}
+          title="Security"
+          description="Manage your password and account credentials"
+        >
+          <Box px={{ xs: 2.5, sm: 3 }} py={3}>
+            <Typography variant="body2" color="text.secondary" mb={2.5}>
+              We'll send a secure reset link to{' '}
+              <Typography component="span" variant="body2" fontWeight="bold" color="text.primary">
+                {user?.email}
+              </Typography>
+              .
+            </Typography>
+            <Button
+              variant="outlined"
+              fullWidth
+              onClick={resetPassword}
+              disabled={actionLoading}
+              startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <LockIcon fontSize="small" />}
+            >
+              {actionLoading ? 'Sending…' : 'Send Password Reset Email'}
+            </Button>
+          </Box>
+        </Section>
+
+        {/* ── Profile ── */}
+        <Section
+          icon={<PersonIcon sx={{ fontSize: 20 }} />}
+          title="Profile"
+          description="Update your public display name"
+          iconBg="info.50"
+          iconColor="info.main"
+        >
+          <Box component="form" onSubmit={editUsername} px={{ xs: 2.5, sm: 3 }} py={3}>
             <TextField
               fullWidth
               label="New Username"
-              variant="outlined"
+              size="small"
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
               required
+              sx={{ mb: 2 }}
             />
-          </CardContent>
-          <CardActions sx={{ px: 2, pb: 2 }}>
             <Button
               type="submit"
               variant="contained"
-              disabled={actionLoading || !newUsername}
               fullWidth
+              disabled={actionLoading || !newUsername}
+              startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <SaveIcon fontSize="small" />}
             >
-              {actionLoading ? <CircularProgress size={24} /> : 'Save Changes'}
+              {actionLoading ? 'Saving…' : 'Save Username'}
             </Button>
-          </CardActions>
-        </form>
-      </Card>
+          </Box>
+        </Section>
 
-      {/* Delete Account Card */}
-      <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'error.light' }}>
-        <CardHeader 
-            title={<Typography color="error">Danger Zone</Typography>}
-            subheader="Deleting your account is permanent"
-        />
-        <Divider />
-        <form onSubmit={handleDelete}>
-          <CardContent>
-            <Typography variant="body2" sx={{ mb: 2, color: 'text.secondary' }}>
-              Please enter your password to confirm account deletion.
-            </Typography>
+        {/* ── Custom Email Message ── */}
+        <Section
+          icon={<MessageIcon sx={{ fontSize: 20 }} />}
+          title="Custom Email Message"
+          description="Appended to every reminder email you send"
+          iconBg="success.50"
+          iconColor="success.main"
+        >
+          <Box px={{ xs: 2.5, sm: 3 }} py={3}>
             <TextField
               fullWidth
-              label="Current Password"
-              type="password"
-              variant="outlined"
-              color="error"
-              value={deletePassword}
-              onChange={(e) => setDeletePassword(e.target.value)}
-              required
+              multiline
+              rows={3}
+              size="small"
+              placeholder="e.g. Please complete this form by end of day. Thank you!"
+              value={customMessage}
+              onChange={(e) => {
+                setCustomMessage(e.target.value);
+                setCustomMessageSaved(false);
+              }}
+              inputProps={{ maxLength: 200 }}
+              helperText={`${customMessage.length} / 200 characters`}
+              sx={{ mb: 2 }}
             />
-          </CardContent>
-          <CardActions sx={{ px: 2, pb: 2 }}>
             <Button
-              type="submit"
               variant="contained"
-              color="error"
-              disabled={actionLoading || !deletePassword}
+              color="success"
               fullWidth
+              onClick={saveCustomMessage}
+              disabled={customMessageLoading || customMessageSaved}
+              startIcon={
+                customMessageLoading ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : customMessageSaved ? (
+                  <CheckCircleIcon fontSize="small" />
+                ) : (
+                  <SaveIcon fontSize="small" />
+                )
+              }
             >
-              {actionLoading ? <CircularProgress size={24} /> : 'Permanently Delete Account'}
+              {customMessageSaved ? 'Saved' : 'Save Message'}
             </Button>
-          </CardActions>
-        </form>
-      </Card>
+          </Box>
+        </Section>
+
+        {/* ── Notifications ── */}
+        <Section
+          icon={<NotificationsIcon sx={{ fontSize: 20 }} />}
+          title="Notifications"
+          description="Toggle email alerts per active form"
+          iconBg="warning.50"
+          iconColor="warning.main"
+        >
+          {forms.length === 0 ? (
+            <Box px={3} py={4} textAlign="center">
+              <Typography variant="body2" color="text.secondary">
+                No active forms found.
+              </Typography>
+            </Box>
+          ) : (
+            <List disablePadding>
+              {forms.map((form, index) => (
+                <ListItem
+                  key={form.id}
+                  divider={index < forms.length - 1}
+                  sx={{ px: { xs: 2.5, sm: 3 }, py: 1.5 }}
+                >
+                  <ListItemText
+                    primary={form.title || 'Untitled Form'}
+                    primaryTypographyProps={{ variant: 'body2', fontWeight: 'medium' }}
+                  />
+                  <ListItemSecondaryAction>
+                    <Switch
+                      edge="end"
+                      size="small"
+                      checked={!!form.notificationsEnabled}
+                      onChange={(e) => handleToggleNotification(form.id, e.target.checked)}
+                      disabled={actionLoading}
+                    />
+                  </ListItemSecondaryAction>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Section>
+
+        {/* ── Team / Org (WIP placeholder) ── */}
+        <Section
+          icon={<GroupIcon sx={{ fontSize: 20 }} />}
+          title="Team & Organization"
+          description="Manage members and org settings"
+          iconBg="grey.100"
+          iconColor="text.secondary"
+        >
+          <Box px={3} py={4} textAlign="center">
+            <Typography variant="body2" color="text.disabled">
+              Coming soon.
+            </Typography>
+          </Box>
+        </Section>
+
+        {/* ── Danger Zone (collapsible) ── */}
+        <Paper
+          elevation={0}
+          sx={{ border: '1px solid', borderColor: 'error.light', borderRadius: 3, overflow: 'hidden' }}
+        >
+          {/* Toggle header */}
+          <Box
+            display="flex"
+            alignItems="center"
+            justifyContent="space-between"
+            px={{ xs: 2.5, sm: 3 }}
+            py={2}
+            onClick={() => setDangerOpen((v) => !v)}
+            sx={{
+              cursor: 'pointer',
+              bgcolor: dangerOpen ? '#fff0f0' : 'transparent',
+              transition: 'background 0.2s',
+              '&:hover': { bgcolor: '#fff0f0' },
+            }}
+          >
+            <Box display="flex" alignItems="center" gap={1.5}>
+              <Box
+                sx={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 2,
+                  bgcolor: 'error.50',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <WarningAmberIcon color="error" sx={{ fontSize: 20 }} />
+              </Box>
+              <Box>
+                <Typography variant="subtitle1" fontWeight="bold" color="error.main">
+                  Danger Zone
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Permanent and irreversible actions
+                </Typography>
+              </Box>
+            </Box>
+            <ExpandMoreIcon
+              color="error"
+              sx={{
+                fontSize: 20,
+                transform: dangerOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s',
+                flexShrink: 0,
+              }}
+            />
+          </Box>
+
+          <Collapse in={dangerOpen}>
+            <Divider sx={{ borderColor: 'error.light' }} />
+            <Box
+              component="form"
+              onSubmit={handleDelete}
+              px={{ xs: 2.5, sm: 3 }}
+              py={3}
+            >
+              <Typography variant="body2" color="text.secondary" mb={2.5}>
+                Deleting your account is <strong>permanent</strong> and cannot be undone. All your
+                form requests, groups, and settings will be removed. Enter your password to
+                confirm.
+              </Typography>
+              <TextField
+                fullWidth
+                label="Current Password"
+                type="password"
+                size="small"
+                color="error"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                required
+                sx={{ mb: 2 }}
+              />
+              <Button
+                type="submit"
+                variant="outlined"
+                color="error"
+                fullWidth
+                disabled={actionLoading || !deletePassword}
+                startIcon={actionLoading ? <CircularProgress size={16} color="inherit" /> : <WarningAmberIcon fontSize="small" />}
+              >
+                {actionLoading ? 'Deleting…' : 'Permanently Delete Account'}
+              </Button>
+            </Box>
+          </Collapse>
+        </Paper>
+
+      </Box>
     </Container>
   );
 }
-
-// TODO:
-// Orgs: Add/remove members from organization
-// Security: reset password, view permissions from organizations
