@@ -12,7 +12,12 @@ import {
   Alert,
   CircularProgress,
   TextField,
-  Divider
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
+  Switch
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 
@@ -23,6 +28,8 @@ export default function Settings() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [user, setUser] = useState<any>(null);
+    const [forms, setForms] = useState<any[]>([]);
+    // const [orgs, setOrgs] = useState<any[]>([]);
     const [newUsername, setNewUsername] = useState('');
     const [deletePassword, setDeletePassword] = useState('');
     const [loading, setLoading] = useState(true);
@@ -33,6 +40,8 @@ export default function Settings() {
     const [customMessageLoading, setCustomMessageLoading] = useState(false);
     const [customMessageSaved, setCustomMessageSaved] = useState(true);
 
+
+    // checks if the user is currently logged in; redirect to login if not
     useEffect(() => {
         const checkAuth = async () => {
           try {
@@ -58,6 +67,75 @@ export default function Settings() {
     
         checkAuth();
     }, [navigate]);
+
+    // fetches the user's currently active form and populates the frontend with them
+    useEffect(() => {
+    const fetchUserForms = async () => {
+      if (!user?.id) return; // Guard clause
+
+      try {
+        // We pass the user.id to the backend to filter the forms
+        const response = await fetch(`${API_URL}/api/user-forms?userId=${user.id}`, {
+          credentials: 'include'
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          setForms(data.forms || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch forms:', err);
+      }
+    };
+  fetchUserForms();
+}, [user]); 
+
+ // fetches the organizations the user is a part of
+    // useEffect(() => {
+    //   const fetchUserOrgs = async () => {
+    //     if(!user?.id) return;
+    //     try {
+    //       const response = await fetch(`${API_URL}/api/org_memberships?userId=${user.id}`, {
+    //         credentials : 'include'
+    //       });
+
+    //       const data = await response.json();
+
+    //       if (response.ok) {
+    //         setOrgs(data.forms || [])
+    //       }
+    //     }
+    //   }
+    // })
+
+
+    // sends the user's registed email a reset password email
+    const resetPassword = async () => {
+      // Clear previous status messages
+      setError('');
+      setLoading(true);
+
+      try {
+        // We use user.email directly from the authenticated session
+        const response = await fetch(`${API_URL}/api/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: user.email }) 
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          setSuccess(`A password reset link has been sent to ${user.email}`);
+        } else {
+          setError(data.error || 'Failed to send reset email');
+        }
+      } catch (err) {
+        setError('Server connection failed');
+      } finally {
+        setLoading(false);
+      }
+    };
 
     // Save custom email message
     const saveCustomMessage = async () => {
@@ -86,6 +164,7 @@ export default function Settings() {
       }
     };
     
+    // delete the user account
     const handleDelete = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -112,6 +191,8 @@ export default function Settings() {
         }
     };
 
+
+    // edit the user's username
     const editUsername = async (e: React.FormEvent) => {
       e.preventDefault();
       setError('');
@@ -136,6 +217,31 @@ export default function Settings() {
         setActionLoading(false);
       }
     };
+
+    // handles notification toggling
+    // TODO: This is just a placeholder; David needs to replace/edit it with the actual logic
+    const handleToggleNotification = async (formId: string, enabled: boolean) => {
+  setActionLoading(true);
+  try {
+    const response = await fetch(`${API_URL}/api/toggle-notification`, { //TODO DAVID: Change to appropriate URL and params as necessary
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ formId, enabled })
+    });
+
+    if (response.ok) {
+      // Update local state so the switch flips immediately
+      setForms(prev => prev.map(f => f.id === formId ? { ...f, notificationsEnabled: enabled } : f));
+    } else {
+      setError('Could not update notification.');
+    }
+  } catch (err) {
+    setError('Connection error.');
+  } finally {
+    setActionLoading(false);
+  }
+};
     
     if (loading) {
         return (
@@ -158,9 +264,26 @@ export default function Settings() {
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
         <CardHeader 
             title="Security Settings" 
-            subheader="WIP"
+            subheader="Manage your account security and credentials"
         />
         <Divider />
+        <CardContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Need to update your password? Click the button below, and we will send a secure reset link to your registered email address: <strong>{user?.email}</strong>.
+          </Typography>
+        </CardContent>
+        <CardActions sx={{ px: 2, pb: 2 }}>
+          <Button
+            variant="outlined"
+            color="primary"
+            fullWidth
+            onClick={resetPassword}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={18} /> : null}
+          >
+            {loading ? 'Sending...' : 'Send Password Reset Email'}
+          </Button>
+        </CardActions>
       </Card>
 
       {/* Team Members Card */}
@@ -174,15 +297,42 @@ export default function Settings() {
 
       {/* Notifications Card */}
       <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
-        <CardHeader 
-            title="Forms and Notifications" 
-            subheader="WIP"
-        />
-        <Divider />
-      </Card>
+  <CardHeader 
+      title="Forms and Notifications" 
+      subheader="Manage email alerts for your active forms"
+  />
+  <Divider />
+  <CardContent sx={{ p: 0 }}>
+    {forms.length > 0 ? (
+      <List disablePadding>
+        {forms.map((form) => (
+          <ListItem key={form.id} divider>
+            <ListItemText 
+              primary={form.title || "Untitled Form"} 
+              primaryTypographyProps={{ variant: 'body1', fontWeight: 500 }}
+            />
+            <ListItemSecondaryAction>
+              <Switch
+                edge="end"
+                onChange={(e) => handleToggleNotification(form.id, e.target.checked)}
+                checked={!!form.notificationsEnabled}
+                disabled={actionLoading}
+              />
+            </ListItemSecondaryAction>
+          </ListItem>
+        ))}
+      </List>
+    ) : (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <Typography variant="body2" color="text.secondary">
+          No forms found for your account.
+        </Typography>
+      </Box>
+    )}
+  </CardContent>
+</Card>
 
-      {/* Custom Email Message Card */}
-      <Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+<Card variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
         <CardHeader 
             title="Custom Email Message" 
             subheader="Add a personal message to your reminder emails (max 200 characters)"
@@ -289,3 +439,7 @@ export default function Settings() {
     </Container>
   );
 }
+
+// TODO:
+// Orgs: Add/remove members from organization
+// Security: reset password, view permissions from organizations
