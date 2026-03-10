@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Paper,
@@ -14,31 +14,26 @@ import {
   TableHead,
   TableRow,
   Chip,
+  Stack,
+  Divider,
   IconButton,
+  Tabs,
+  Tab,
+  Grid,
   Link,
   Tooltip,
   Snackbar,
-  Container,
-  Avatar,
-  LinearProgress,
-  Skeleton,
-  InputAdornment,
-  TextField,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import EmailIcon from '@mui/icons-material/Email';
 import SendIcon from '@mui/icons-material/Send';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import EditIcon from '@mui/icons-material/Edit';
 import EventIcon from '@mui/icons-material/Event';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
-import LinkIcon from '@mui/icons-material/Link';
-import SearchIcon from '@mui/icons-material/Search';
-import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import AssignmentIcon from '@mui/icons-material/Assignment';
 
 const API_URL = 'http://localhost:5000';
 
@@ -50,11 +45,9 @@ interface FormRequest {
   response_count: number;
   total_recipients: number;
   created_at: string;
-  last_synced_at: string;
+  last_synced_at?: string;  // Optional - only set when form is synced
   status: string;
   warnings?: string[];
-  due_date?: string;
-  reminder_schedule?: string | { schedule_type: string; [key: string]: any };
 }
 
 interface Response {
@@ -71,10 +64,20 @@ interface MemberStatus {
   submitted_at?: string;
 }
 
+interface OptOutEventItem {
+  id: string;
+  recipient_email: string;
+  event_type: string;
+  group_name: string | null;
+  performed_by: string;
+  source: string;
+  timestamp: string;
+}
+
 export default function ViewRequest() {
   const { requestId } = useParams<{ requestId: string }>();
   const navigate = useNavigate();
-
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formRequest, setFormRequest] = useState<FormRequest | null>(null);
@@ -84,95 +87,137 @@ export default function ViewRequest() {
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0);
   const [sendingEmail, setSendingEmail] = useState<string | null>(null);
   const [sendingBulk, setSendingBulk] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
+  const [tabIndex, setTabIndex] = useState(0);
+  const [optOutEvents, setOptOutEvents] = useState<OptOutEventItem[]>([]);
+  const [optOutLoading, setOptOutLoading] = useState(false);
+  const [optOutFetched, setOptOutFetched] = useState(false);
+  const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
-  const [memberSearch, setMemberSearch] = useState('');
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: 'success' | 'error';
-  }>({ open: false, message: '', severity: 'success' });
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>(
+    { open: false, message: '', severity: 'success' }
+  );
+  const [ownerId, setOwnerId] = useState<string | null>(null);
 
-  const loadFormRequestData = async () => {
+  const loadFormRequestData = async (showLoadingSpinner = true) => {
     try {
-      if (!formRequest) setLoading(true);
+      if (showLoadingSpinner) {
+        setLoading(true);
+      }
       setError(null);
-      const response = await fetch(
-        `${API_URL}/api/form-requests/${requestId}/responses`,
-        { credentials: 'include' }
-      );
-      if (!response.ok) throw new Error(`Failed to load form request: ${response.status}`);
+
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/responses`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load form request: ${response.status}`);
+      }
+
       const data = await response.json();
-      setFormRequest(data.form_request);
-      setNonMemberResponses(data.non_member_responses || []);
-      setMemberStatus(data.member_status || []);
+
+      const formReq = data?.form_request;
+      if (!formReq) {
+        throw new Error('Invalid response: no form request data');
+      }
+
+      setFormRequest(formReq);
+      setNonMemberResponses(Array.isArray(data.non_member_responses) ? data.non_member_responses : []);
+      setMemberStatus(Array.isArray(data.member_status) ? data.member_status : []);
       setLastUpdated(new Date());
     } catch (err: any) {
+      console.error('Error loading form request:', err);
       setError(err.message || 'Failed to load form request');
     } finally {
-      setLoading(false);
+      if (showLoadingSpinner) {
+        setLoading(false);
+      }
     }
   };
 
   const handleSendReminder = async (email: string) => {
-    if (!window.confirm(`Send a reminder email to ${email}?`)) return;
+    if (!window.confirm(`Send a reminder email to ${email}?`)) {
+      return;
+    }
+
     setSendingEmail(email);
     try {
-      const response = await fetch(
-        `${API_URL}/api/form-requests/${requestId}/send-reminder/${encodeURIComponent(email)}`,
-        { method: 'POST', credentials: 'include' }
-      );
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminder/${encodeURIComponent(email)}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to send reminder');
-      setSnackbar({ open: true, message: result.message || 'Reminder sent!', severity: 'success' });
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminder');
+      }
+      
+      console.log('Reminder sent:', result);
+      alert(result.message || 'Reminder sent successfully!');
+      
     } catch (err: any) {
-      setSnackbar({ open: true, message: `Failed: ${err.message}`, severity: 'error' });
+      console.error('Failed to send reminder:', err);
+      alert(`Failed to send reminder: ${err.message}`);
     } finally {
       setSendingEmail(null);
     }
   };
 
   const handleSendBulkReminders = async () => {
-    const nonResponders = memberStatus.filter((m) => m.status === 'not_responded');
+    const nonResponders = memberStatus.filter(m => m.status === 'not_responded');
+    
     if (nonResponders.length === 0) {
       alert('All members have already responded!');
       return;
     }
-    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?`)) return;
+
+    if (!window.confirm(`Send reminder emails to all ${nonResponders.length} non-responders?\n\n(This will skip anyone who was sent a reminder in the last hour)`)) {
+      return;
+    }
+
     setSendingBulk(true);
     try {
-      const response = await fetch(
-        `${API_URL}/api/form-requests/${requestId}/send-reminders`,
-        { method: 'POST', credentials: 'include' }
-      );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to send reminders');
-      setSnackbar({
-        open: true,
-        message: `Sent: ${result.sent} · Skipped: ${result.skipped} · Failed: ${result.failed}`,
-        severity: 'success',
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/send-reminders`, {
+        method: 'POST',
+        credentials: 'include',
       });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send reminders');
+      }
+      
+      console.log('Bulk reminders sent:', result);
+      alert(`Success!\n\nSent: ${result.sent}\nSkipped (rate limit): ${result.skipped}\nFailed: ${result.failed}`);
+      
     } catch (err: any) {
-      setSnackbar({ open: true, message: err.message, severity: 'error' });
+      console.error('Failed to send bulk reminders:', err);
+      alert(`Failed to send reminders: ${err.message}`);
     } finally {
       setSendingBulk(false);
     }
   };
 
+  // Add unrecognized email to the form's group
   const handleAddEmailToGroup = async (email: string) => {
     setAddingEmail(email);
     try {
-      const response = await fetch(
-        `${API_URL}/api/form-requests/${requestId}/add-email-to-group`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ email }),
-        }
-      );
+      const response = await fetch(`${API_URL}/api/form-requests/${requestId}/add-email-to-group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to add email');
+      
       setSnackbar({ open: true, message: result.message, severity: 'success' });
+      
+      // Reload data to reflect the change
       loadFormRequestData();
     } catch (err: any) {
       setSnackbar({ open: true, message: err.message, severity: 'error' });
@@ -181,469 +226,584 @@ export default function ViewRequest() {
     }
   };
 
-  const getScheduleLabel = (
-    schedule?: string | { schedule_type: string; [key: string]: any }
-  ) => {
-    const type =
-      typeof schedule === 'object' && schedule !== null ? schedule.schedule_type : schedule;
-    switch (type) {
-      case 'gentle': return 'Gentle (3, 1 days before)';
-      case 'normal': return 'Normal (5, 3, 1 days before)';
-      case 'frequent': return 'Frequent (Daily last week)';
-      case 'custom': return 'Custom Schedule';
-      default: return type || 'Not set';
+  useEffect(() => {
+    if (requestId) {
+      // Sync and load on initial page load
+      syncAndLoadData();
+    }
+  }, [requestId]);
+
+  useEffect(() => {
+    if (tabIndex !== 1 || optOutFetched) return;
+    const fetchOptOutData = async () => {
+      setOptOutLoading(true);
+      try {
+        const userRes = await fetch(`${API_URL}/api/current-user`, { credentials: 'include' });
+        const userData = await userRes.json();
+        if (!userData.authenticated || !userData.user?.id) {
+          setOptOutLoading(false);
+          return;
+        }
+        setOwnerId(userData.user.id);
+        const eventsRes = await fetch(`${API_URL}/api/organizations/${userData.user.id}/opt-out-events`, {
+          credentials: 'include',
+        });
+        if (!eventsRes.ok) throw new Error('Failed to load opt-out events');
+        const eventsData = await eventsRes.json();
+        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
+      } catch {
+        setOptOutEvents([]);
+      } finally {
+        setOptOutLoading(false);
+        setOptOutFetched(true);
+      }
+    };
+    fetchOptOutData();
+  }, [tabIndex, optOutFetched]);
+
+  // Auto-refresh polling
+  useEffect(() => {
+    if (!requestId) return;
+
+    // Poll every 30 seconds
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        syncAndLoadData();
+      }
+    }, 30000);
+
+    // Handle tab visibility changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Immediately refresh when tab becomes active
+        syncAndLoadData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestId]);
+
+  const syncAndLoadData = async (showLoading = false) => {
+    try {
+      if (showLoading) {
+        setRefreshing(true);
+      }
+
+      // Sync with Google Forms first (best-effort; don't crash page if it fails)
+      try {
+        const response = await fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          let errMsg = `Failed to refresh (${response.status})`;
+          let needsReconnect = false;
+          try {
+            const result = await response.json();
+            errMsg = result.message || result.error || result.details || errMsg;
+            // 404 "form not found" = need edit URL, not reconnect
+            needsReconnect = result.action_required === 'reconnect_google' && result.code !== 'form_id_edit_link_required';
+          } catch {
+            // Response may be non-JSON (e.g. HTML error page)
+          }
+          console.error('Auto-refresh sync error:', errMsg);
+          if (needsReconnect) setNeedsGoogleReconnect(true);
+          else if (response.status === 404) setNeedsGoogleReconnect(false);
+          // Only set error on initial load when we have no data yet; otherwise keep showing cached data
+          if (!formRequest) {
+            setError(errMsg);
+          }
+        } else {
+          setNeedsGoogleReconnect(false);
+          try {
+            const result = await response.json();
+            console.log('Sync complete:', result.response_count ?? 0, 'responses');
+          } catch {
+            // Ignore JSON parse failure for success response
+          }
+        }
+      } catch (refreshErr: unknown) {
+        console.error('Auto-refresh error:', refreshErr);
+        if (!formRequest) {
+          setError(refreshErr instanceof Error ? refreshErr.message : 'Failed to refresh responses');
+        }
+      }
+
+      // Always load data (from cache or after sync); never leave page blank
+      // Use full loading spinner only when we don't have data yet (initial load)
+      const isInitialLoad = !formRequest;
+      try {
+        await loadFormRequestData(isInitialLoad);
+      } catch (loadErr) {
+        console.error('Load form request data error:', loadErr);
+        if (!formRequest) {
+          setError(loadErr instanceof Error ? loadErr.message : 'Failed to load form request');
+        }
+      }
+    } finally {
+      if (showLoading) {
+        setRefreshing(false);
+      }
     }
   };
 
-  useEffect(() => {
-    if (requestId) loadFormRequestData();
-  }, [requestId]);
+  const handleManualRefresh = async () => {
+    await syncAndLoadData(true);
+  };
 
-  useEffect(() => {
-    if (!requestId) return;
-    const pollInterval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetch(`${API_URL}/api/form-requests/${requestId}/refresh`, {
-          method: 'POST',
-          credentials: 'include',
-        })
-          .then(() => loadFormRequestData())
-          .catch(console.error);
+  const handleResubscribeOptOut = async (email: string) => {
+    if (!ownerId) return;
+    setResubscribingEmail(email);
+    try {
+      const res = await fetch(`${API_URL}/api/organizations/${ownerId}/resubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSnackbar({ open: true, message: data.error || 'Failed to re-subscribe', severity: 'error' });
+        return;
       }
-    }, 30000);
-    return () => clearInterval(pollInterval);
-  }, [requestId]);
+      setSnackbar({ open: true, message: 'Recipient re-subscribed successfully', severity: 'success' });
+      const eventsRes = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, { credentials: 'include' });
+      if (eventsRes.ok) {
+        const eventsData = await eventsRes.json();
+        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
+      }
+    } catch (e: any) {
+      setSnackbar({ open: true, message: e.message || 'Failed to re-subscribe', severity: 'error' });
+    } finally {
+      setResubscribingEmail(null);
+    }
+  };
 
+  const memberEmailsSet = useMemo(() => new Set(memberStatus.map((m) => m.email.toLowerCase())), [memberStatus]);
+  const optedOutForRequest = useMemo(() => {
+    const byEmail: Record<string, { event_type: string; timestamp: string }> = {};
+    const sorted = [...optOutEvents]
+      .filter((e) => memberEmailsSet.has((e.recipient_email || '').toLowerCase()))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    for (const e of sorted) {
+      const key = (e.recipient_email || '').toLowerCase();
+      if (key && byEmail[key] === undefined) {
+        byEmail[key] = { event_type: e.event_type, timestamp: e.timestamp };
+      }
+    }
+    return Object.entries(byEmail)
+      .filter(([, v]) => v.event_type === 'opted_out' || v.event_type === 'left_group')
+      .map(([email, v]) => ({ email, event_type: v.event_type, timestamp: v.timestamp }));
+  }, [optOutEvents, memberEmailsSet]);
+
+  const formatOptOutTimestamp = (ts: string) => {
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const h = d.getHours();
+      const am = h < 12;
+      const h12 = h % 12 || 12;
+      const m = d.getMinutes();
+      const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+      return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${h12}:${pad(m)} ${am ? 'a' : 'p'}m`;
+    } catch {
+      return ts;
+    }
+  };
+
+  // Update "seconds since update" counter
   useEffect(() => {
     if (!lastUpdated) return;
+
     const timer = setInterval(() => {
-      setSecondsSinceUpdate(Math.floor((Date.now() - lastUpdated.getTime()) / 1000));
+      const seconds = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      setSecondsSinceUpdate(seconds);
     }, 1000);
+
     return () => clearInterval(timer);
   }, [lastUpdated]);
 
-  const filteredMembers = memberStatus.filter((m) =>
-    m.email.toLowerCase().includes(memberSearch.toLowerCase())
-  );
-  const nonResponderCount = memberStatus.filter((m) => m.status === 'not_responded').length;
-  const responseRate =
-    formRequest && formRequest.total_recipients > 0
-      ? Math.round((formRequest.response_count / formRequest.total_recipients) * 100)
-      : 0;
-
-  // ── Loading ──
-  if (loading && !formRequest) {
+  if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Skeleton variant="rectangular" height={220} sx={{ borderRadius: 3, mb: 3 }} />
-        <Skeleton variant="rectangular" height={400} sx={{ borderRadius: 3 }} />
-      </Container>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
+        <CircularProgress />
+      </Box>
     );
   }
 
-  if (error || !formRequest) {
+  if (error && !formRequest) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/')} sx={{ mb: 2, color: 'text.secondary' }}>
+      <Box>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/')}
+          sx={{ mb: 2 }}
+        >
           Back to Dashboard
         </Button>
-        <Alert severity="error">{error || 'Form request not found'}</Alert>
-      </Container>
+        <Alert
+          severity="error"
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                Reconnect Google
+              </Button>
+            ) : undefined
+          }
+        >
+          {error}
+        </Alert>
+      </Box>
+    );
+  }
+
+  if (!formRequest) {
+    return (
+      <Box>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/')}
+          sx={{ mb: 2 }}
+        >
+          Back to Dashboard
+        </Button>
+        <Alert severity="warning">Form request not found</Alert>
+      </Box>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      {/* ── Back nav ── */}
-      <Button
-        startIcon={<ArrowBackIcon />}
-        onClick={() => navigate('/')}
-        sx={{ color: 'text.secondary', mb: 3 }}
-      >
-        Back to Dashboard
-      </Button>
+    <Box>
+      {/* Header */}
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+        <Box display="flex" alignItems="center">
+          <IconButton onClick={() => navigate('/')} sx={{ mr: 2 }}>
+            <ArrowBackIcon />
+          </IconButton>
+          <Box>
+            <Typography variant="h4">
+              {formRequest.title ?? 'Form Request'}
+            </Typography>
+            {lastUpdated && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                Last updated: {secondsSinceUpdate}s ago
+              </Typography>
+            )}
+          </Box>
+        </Box>
+        <Button
+          variant="outlined"
+          startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+          onClick={handleManualRefresh}
+          disabled={refreshing}
+          sx={{ ml: 2 }}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh Responses'}
+        </Button>
+      </Box>
 
-      {/* ── Warnings ── */}
-      {formRequest.warnings && formRequest.warnings.length > 0 && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          {formRequest.warnings.join(', ')}
+      {error && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    } else {
+                      setError(data.error || 'Could not start Google connect');
+                    }
+                  } catch {
+                    setError('Could not start Google connect');
+                  }
+                }}
+              >
+                Reconnect Google
+              </Button>
+            ) : undefined
+          }
+        >
+          {error}
         </Alert>
       )}
 
-      {/* ── Hero Header Card ── */}
-      <Paper
-        elevation={0}
-        sx={{
-          p: { xs: 3, sm: 4 },
-          mb: 3,
-          border: '1px solid',
-          borderColor: 'divider',
-          borderRadius: 3,
-          background: 'linear-gradient(135deg, #f0f4ff 0%, #ffffff 60%)',
-        }}
-      >
-        {/* Title row */}
-        <Box
-          display="flex"
-          alignItems={{ xs: 'flex-start', sm: 'center' }}
-          justifyContent="space-between"
-          flexWrap="wrap"
-          gap={2}
-          mb={3}
-        >
-          <Box display="flex" alignItems="center" gap={2}>
-            <Box
-              sx={{
-                width: { xs: 48, sm: 60 },
-                height: { xs: 48, sm: 60 },
-                borderRadius: 2.5,
-                bgcolor: 'primary.main',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <AssignmentIcon sx={{ color: 'white', fontSize: { xs: 26, sm: 32 } }} />
-            </Box>
+      {/* Warnings */}
+      {Array.isArray(formRequest.warnings) && formRequest.warnings.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            Important Notices:
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2 }}>
+            {formRequest.warnings.map((warning: string, index: number) => (
+              <li key={index}>
+                <Typography variant="body2">{warning}</Typography>
+              </li>
+            ))}
+          </Box>
+        </Alert>
+      )}
+
+      <Tabs value={tabIndex} onChange={(_, v: number) => setTabIndex(v)} sx={{ mb: 2 }}>
+        <Tab label="Responses" />
+        <Tab label="Opted Out" />
+      </Tabs>
+
+      {tabIndex === 0 && (
+        <>
+      {/* Form Details */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Form Details
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+        
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="subtitle2" color="text.secondary">
+              Description
+            </Typography>
+            <Typography variant="body1">
+              {formRequest.description ?? 'No description'}
+            </Typography>
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" color="text.secondary">
+              Form URL
+            </Typography>
+            <Typography variant="body2">
+              <a href={formRequest.form_url ?? '#'} target="_blank" rel="noopener noreferrer">
+                {formRequest.form_url ?? '—'}
+              </a>
+            </Typography>
+          </Box>
+
+          <Box display="flex" gap={4}>
             <Box>
-              <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-                <Typography variant="h5" fontWeight="bold" lineHeight={1.2}>
-                  {formRequest.title}
-                </Typography>
-                <Chip
-                  label={formRequest.status}
-                  size="small"
-                  color={formRequest.status === 'Active' ? 'success' : 'default'}
-                  sx={{ fontWeight: 600 }}
-                />
-              </Box>
-              <Typography variant="body2" color="text.secondary" mt={0.5}>
-                {formRequest.description || 'No description provided.'}
+              <Typography variant="subtitle2" color="text.secondary">
+                Created
+              </Typography>
+              <Typography variant="body1">
+                {formRequest.created_at ? new Date(formRequest.created_at).toLocaleString() : '—'}
               </Typography>
             </Box>
-          </Box>
-          <Button
-            variant="contained"
-            startIcon={<EditIcon />}
-            onClick={() => navigate(`/requests/${requestId}/edit`)}
-            sx={{ flexShrink: 0 }}
-          >
-            Edit Request
-          </Button>
-        </Box>
 
-        {/* Response rate bar */}
-        <Box mb={3}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-            <Typography variant="body2" fontWeight="medium">
-              Response Progress
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              <strong>{formRequest.response_count}</strong> / {formRequest.total_recipients} &nbsp;·&nbsp; {responseRate}%
-            </Typography>
-          </Box>
-          <LinearProgress
-            variant="determinate"
-            value={responseRate}
-            color={responseRate === 100 ? 'success' : 'primary'}
-            sx={{ height: 8, borderRadius: 4, bgcolor: 'action.hover' }}
-          />
-        </Box>
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Last Synced
+              </Typography>
+              <Typography variant="body1">
+                {formRequest.last_synced_at 
+                  ? new Date(formRequest.last_synced_at).toLocaleString()
+                  : 'Never synced'}
+              </Typography>
+            </Box>
 
-        {/* Meta row */}
-        <Box
-          display="flex"
-          flexWrap="wrap"
-          gap={{ xs: 2, sm: 4 }}
-          sx={{ pt: 3, borderTop: '1px solid', borderColor: 'divider' }}
-        >
-          <Box display="flex" alignItems="center" gap={1}>
-            <EventIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-            <Typography variant="body2" color="text.secondary">
-              Due{' '}
-              <strong>
-                {formRequest.due_date
-                  ? new Date(formRequest.due_date).toLocaleDateString()
-                  : 'not set'}
-              </strong>
-            </Typography>
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Status
+              </Typography>
+                <Chip 
+                label={formRequest.status ?? 'Unknown'} 
+                color={formRequest.status === 'Active' ? 'success' : 'default'}
+                size="small"
+              />
+            </Box>
           </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <ScheduleIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-            <Typography variant="body2" color="text.secondary">
-              {getScheduleLabel(formRequest.reminder_schedule)}
-            </Typography>
-          </Box>
-          <Box
-            display="flex"
-            alignItems="center"
-            gap={1}
-            sx={{ ml: { xs: 0, sm: 'auto' } }}
-          >
-            <LinkIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-            <Link
-              href={formRequest.form_url}
-              target="_blank"
-              rel="noopener"
-              underline="hover"
-              variant="body2"
-              sx={{
-                maxWidth: { xs: 180, sm: 300 },
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                display: 'block',
-              }}
-            >
-              {formRequest.form_url}
-            </Link>
-          </Box>
-        </Box>
+        </Stack>
+      </Paper>
 
-        {lastUpdated && (
-          <Typography variant="caption" color="text.disabled" display="block" mt={2}>
-            Last synced {secondsSinceUpdate}s ago
+      {/* Response Summary */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Response Summary
+        </Typography>
+        <Divider sx={{ mb: 2 }} />
+        
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="h3" color="primary">
+            {formRequest.response_count ?? 0}
           </Typography>
+          <Typography variant="h5" color="text.secondary">
+            / {formRequest.total_recipients ?? 0}
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            responses received
+          </Typography>
+        </Box>
+        
+        {nonMemberResponses.length > 0 && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Warning: {nonMemberResponses.length} response{nonMemberResponses.length !== 1 ? 's' : ''} from non-members
+          </Alert>
         )}
       </Paper>
 
-      {/* ── Member Status Panel ── */}
-      <Paper
-        elevation={0}
-        sx={{
-          mb: 3,
-          border: '1px solid',
-          borderColor: 'divider',
-          borderRadius: 3,
-          overflow: 'hidden',
-        }}
-      >
-        {/* Panel header */}
-        <Box
-          px={{ xs: 2, sm: 3 }}
-          py={2}
-          display="flex"
-          alignItems="center"
-          justifyContent="space-between"
-          flexWrap="wrap"
-          gap={2}
-          sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
-        >
-          <Box display="flex" alignItems="center" gap={1}>
-            <PeopleAltIcon fontSize="small" color="action" />
-            <Typography variant="subtitle1" fontWeight="bold">
-              Member Status
+      {/* Member Status Table */}
+      {memberStatus.length > 0 && (
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6">
+              Member Status ({memberStatus.length})
             </Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-            <TextField
-              size="small"
-              placeholder="Search members…"
-              value={memberSearch}
-              onChange={(e) => setMemberSearch(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} />
-                  </InputAdornment>
-                ),
-              }}
-              sx={{ width: { xs: '100%', sm: 200 } }}
-            />
             <Button
               variant="contained"
-              size="small"
-              startIcon={
-                sendingBulk ? (
-                  <CircularProgress size={14} color="inherit" />
-                ) : (
-                  <SendIcon fontSize="small" />
-                )
-              }
+              startIcon={sendingBulk ? <CircularProgress size={20} /> : <SendIcon />}
               onClick={handleSendBulkReminders}
-              disabled={sendingBulk || nonResponderCount === 0}
+              disabled={sendingBulk || memberStatus.filter(m => m.status === 'not_responded').length === 0}
             >
-              {sendingBulk ? 'Sending…' : `Remind All (${nonResponderCount})`}
+              {sendingBulk ? 'Sending...' : `Send to All Non-Responders (${memberStatus.filter(m => m.status === 'not_responded').length})`}
             </Button>
           </Box>
-        </Box>
+          <Divider sx={{ mb: 2}} />
 
-        {/* Table */}
-        <TableContainer sx={{ maxHeight: 520 }}>
-          <Table stickyHeader size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', width: 44 }}>#</TableCell>
-                <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }}>Email</TableCell>
-                <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>
-                  Submitted
-                </TableCell>
-                <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">
-                  Status
-                </TableCell>
-                <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">
-                  Action
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredMembers.length === 0 ? (
+          <TableContainer>
+            <Table>
+              <TableHead>
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 6, color: 'text.secondary' }}>
-                    {memberStatus.length === 0
-                      ? 'No members in this group.'
-                      : `No members match "${memberSearch}"`}
-                  </TableCell>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
+                  <TableCell width="120" align="center">Actions</TableCell>
                 </TableRow>
-              ) : (
-                filteredMembers.map((member, index) => (
+              </TableHead>
+              <TableBody>
+                {memberStatus.map((member, index) => (
                   <TableRow key={index} hover>
+                    <TableCell>{index + 1}</TableCell>
                     <TableCell>
-                      <Typography variant="body2" color="text.disabled">
-                        {index + 1}
+                      <Typography variant="body2" fontWeight="medium">
+                        {member.email}
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Box display="flex" alignItems="center" gap={1.5}>
-                        <Avatar
-                          sx={{
-                            width: 28,
-                            height: 28,
-                            bgcolor: member.status === 'responded' ? 'success.50' : 'grey.100',
-                            color: member.status === 'responded' ? 'success.main' : 'text.disabled',
-                            fontSize: '0.7rem',
-                            fontWeight: 'bold',
-                            flexShrink: 0,
-                          }}
-                        >
-                          {member.email[0].toUpperCase()}
-                        </Avatar>
-                        <Typography variant="body2" fontWeight="medium">
-                          {member.email}
-                        </Typography>
-                      </Box>
-                    </TableCell>
-                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
-                      <Typography variant="body2" color="text.secondary">
-                        {member.submitted_at
-                          ? new Date(member.submitted_at).toLocaleString()
-                          : '—'}
-                      </Typography>
+                      {member.submitted_at 
+                        ? new Date(member.submitted_at).toLocaleString()
+                        : '-'}
                     </TableCell>
                     <TableCell align="center">
                       {member.status === 'responded' ? (
-                        <Chip
-                          icon={<CheckCircleIcon />}
-                          label="Responded"
-                          color="success"
-                          size="small"
-                          variant="outlined"
+                        <Chip 
+                          icon={<CheckCircleIcon />} 
+                          label="Responded" 
+                          color="success" 
+                          size="small" 
                         />
                       ) : (
-                        <Chip
-                          icon={<CancelIcon />}
-                          label="Waiting"
-                          color="error"
-                          size="small"
-                          variant="outlined"
+                        <Chip 
+                          icon={<CancelIcon />} 
+                          label="Not Responded" 
+                          color="error" 
+                          size="small" 
                         />
                       )}
                     </TableCell>
                     <TableCell align="center">
                       {member.status === 'not_responded' && (
-                        <Tooltip title="Send individual reminder">
-                          <IconButton
-                            size="small"
-                            color="primary"
-                            onClick={() => handleSendReminder(member.email)}
-                            disabled={sendingEmail === member.email}
-                          >
-                            {sendingEmail === member.email ? (
-                              <CircularProgress size={16} />
-                            ) : (
-                              <EmailIcon fontSize="small" />
-                            )}
-                          </IconButton>
-                        </Tooltip>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={sendingEmail === member.email ? <CircularProgress size={16} /> : <EmailIcon />}
+                          onClick={() => handleSendReminder(member.email)}
+                          disabled={sendingEmail === member.email}
+                        >
+                          {sendingEmail === member.email ? 'Sending...' : 'Send Reminder'}
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      )}
 
-      {/* ── Unrecognized Responses ── */}
+      {/* Non-Member Responses */}
       {nonMemberResponses.length > 0 && (
-        <Paper
-          elevation={0}
-          sx={{
-            border: '1px solid',
-            borderColor: 'warning.light',
-            borderRadius: 3,
-            overflow: 'hidden',
-          }}
-        >
-          <Box
-            px={{ xs: 2, sm: 3 }}
-            py={2}
-            display="flex"
-            alignItems="center"
-            gap={1}
-            sx={{ borderBottom: '1px solid', borderColor: 'warning.light', bgcolor: '#fffbf0' }}
-          >
-            <WarningAmberIcon color="warning" fontSize="small" />
-            <Typography variant="subtitle1" fontWeight="bold" color="warning.dark">
-              Unrecognized Responses
-            </Typography>
-            <Chip
-              label={nonMemberResponses.length}
-              size="small"
-              color="warning"
-              variant="outlined"
-              sx={{ ml: 0.5 }}
-            />
-          </Box>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Non-Member Responses ({nonMemberResponses.length})
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            These responses are from emails not in your recipient group
+          </Alert>
+
           <TableContainer>
-            <Table size="small">
+            <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold' }}>Email</TableCell>
-                  <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>
-                    Submitted
-                  </TableCell>
-                  <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold' }} align="center">
-                    Add to Group
-                  </TableCell>
+                  <TableCell width="50">#</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Submitted At</TableCell>
+                  <TableCell width="120" align="center">Status</TableCell>
+                  <TableCell width="120" align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {nonMemberResponses.map((response) => (
+                {nonMemberResponses.map((response, index) => (
                   <TableRow key={response.id} hover>
+                    <TableCell>{index + 1}</TableCell>
                     <TableCell>
-                      <Typography variant="body2">{response.respondent_email || 'Anonymous'}</Typography>
-                    </TableCell>
-                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
-                      <Typography variant="body2" color="text.secondary">
-                        {new Date(response.submitted_at).toLocaleString()}
+                      <Typography variant="body2" fontWeight="medium">
+                        {response.respondent_email || 'Anonymous'}
                       </Typography>
+                    </TableCell>
+                    <TableCell>
+                      {response.submitted_at 
+                        ? new Date(response.submitted_at).toLocaleString()
+                        : 'Unknown'}
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip 
+                        label="Non-member" 
+                        color="warning" 
+                        size="small" 
+                      />
                     </TableCell>
                     <TableCell align="center">
                       {response.respondent_email && (
                         <Tooltip title="Add this email to the group">
                           <IconButton
-                            size="small"
                             color="primary"
                             onClick={() => handleAddEmailToGroup(response.respondent_email)}
                             disabled={addingEmail === response.respondent_email}
                           >
                             {addingEmail === response.respondent_email ? (
-                              <CircularProgress size={16} />
+                              <CircularProgress size={20} />
                             ) : (
-                              <PersonAddIcon fontSize="small" />
+                              <PersonAddIcon />
                             )}
                           </IconButton>
                         </Tooltip>
@@ -656,22 +816,79 @@ export default function ViewRequest() {
           </TableContainer>
         </Paper>
       )}
+        </>
+      )}
 
-      {/* ── Snackbar ── */}
+      {tabIndex === 1 && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>Opted Out</Typography>
+          <Divider sx={{ mb: 2 }} />
+          {optOutLoading ? (
+            <Box display="flex" justifyContent="center" py={4}>
+              <CircularProgress />
+            </Box>
+          ) : optedOutForRequest.length === 0 ? (
+            <Alert severity="info">No opted-out recipients for this request.</Alert>
+          ) : (
+            <TableContainer sx={{ overflowX: 'auto' }}>
+              <Table size="small" sx={{ minWidth: 360 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Email</TableCell>
+                    <TableCell>Event Type</TableCell>
+                    <TableCell>Timestamp</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {optedOutForRequest.map((row) => (
+                    <TableRow key={row.email} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight="medium">{row.email}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={row.event_type}
+                          color={row.event_type === 'opted_out' ? 'error' : 'warning'}
+                          size="small"
+                          variant="outlined"
+                        />
+                      </TableCell>
+                      <TableCell>{formatOptOutTimestamp(row.timestamp)}</TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={resubscribingEmail === row.email}
+                          onClick={() => handleResubscribeOptOut(row.email)}
+                          startIcon={resubscribingEmail === row.email ? <CircularProgress size={14} /> : undefined}
+                        >
+                          {resubscribingEmail === row.email ? 'Sending...' : 'Re-subscribe'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Paper>
+      )}
+
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
           severity={snackbar.severity}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </Box>
   );
 }

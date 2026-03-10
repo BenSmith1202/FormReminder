@@ -13,6 +13,7 @@ import Register from './pages/Register';
 import Reset from './pages/Reset';
 import Settings from './pages/Settings';
 import ViewRequest from './pages/ViewRequest';
+import Analytics from './pages/Analytics';
 import EditRequest from './pages/EditRequest';
 import EditGroup from './pages/EditGroup';
 
@@ -50,8 +51,8 @@ function App() {
             <Route path="/requests/new" element={<CreateRequest />} />
             <Route path="/requests/:requestId" element={<ViewRequest />} />
             <Route path="/request/:requestId" element={<ViewRequest />} />
-
             <Route path="/requests/:requestId/edit" element={<EditRequest />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/time" element={<ServerTime />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/new" element={<CreateGroup />} />

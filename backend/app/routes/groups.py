@@ -6,6 +6,7 @@ import traceback
 # Adjust these imports if your file structure is different
 from models.group import Group
 from models.org_membership import OrgMembership
+from models.opt_out_event import OptOutEvent
 from models.database import get_db, Collections
 
 # Define the Blueprint
@@ -226,7 +227,15 @@ def remove_group_member(group_id: str, email: str):
         
         if not success:
             return jsonify({"error": "Member not found"}), 404
-        
+
+        try:
+            OptOutEvent.log(
+                group.owner_id, email, "left_group", "owner", "owner_dashboard",
+                group_id=group_id, group_name=group.name,
+            )
+        except Exception:
+            pass
+
         return jsonify({
             "success": True,
             "message": f"Removed {email}",
