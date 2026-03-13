@@ -435,60 +435,68 @@ def refresh_form_responses(request_id: str):
         
         print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
         
-        # --- NOTIFICATION TRIGGERS ---
-        # Notify for each new submission
-        if new_count > 0:
-            form_title = request_data.get('title', 'Untitled Form')
-            owner_id = request_data.get('owner_id')
-            
-            # Get group members to check if submission is from recognized email
-            group_id = request_data.get('group_id')
-            group_emails = set()
-            if group_id:
-                group = Group.get_by_id(group_id)
-                if group:
-                    group_emails = {m['email'].lower() for m in group.members}
-            
-            # Track member response count for completion check
-            member_response_count = 0
-            
-            for response in responses:
-                response_id = response.get('response_id', '')
-                respondent_email = response.get('respondent_email', '').strip()
-                
-                # Count member responses for completion check
-                if not group_emails or respondent_email.lower() in group_emails:
-                    member_response_count += 1
-                
-                # If this is a new response, send appropriate notification
-                if response_id and response_id not in existing_responses:
-                    if group_emails and respondent_email.lower() not in group_emails:
-                        # Unrecognized email - send yellow warning notification
-                        notify_unrecognized_submission(
-                            user_id=owner_id,
-                            form_name=form_title,
-                            form_reminder_id=request_id,
-                            respondent_email=respondent_email or 'Unknown'
-                        )
-                    else:
-                        # Recognized member submission
-                        notify_form_submission(
-                            user_id=owner_id,
-                            form_name=form_title,
-                            form_reminder_id=request_id,
-                            respondent_email=respondent_email or 'Unknown'
-                        )
-            
-            # Check if form is now fully completed (only count member responses)
-            if group_id and group_emails:
-                total_recipients = len(group_emails)
-                if total_recipients > 0 and member_response_count >= total_recipients:
-                    notify_form_completed(
-                        user_id=owner_id,
-                        form_name=form_title,
-                        form_reminder_id=request_id
-                    )
+        # Check if FormRequest has notifications enabled; default is True
+        notifs = True
+        if request_data.get("notifications_enabled") == False:
+            notifs == False
         
+        # Only notify if the FormRequest has notifications enabled
+
+        if notifs:
+            # --- NOTIFICATION TRIGGERS ---
+            # Notify for each new submission
+            if new_count > 0:
+                form_title = request_data.get('title', 'Untitled Form')
+                owner_id = request_data.get('owner_id')
+                
+                # Get group members to check if submission is from recognized email
+                group_id = request_data.get('group_id')
+                group_emails = set()
+                if group_id:
+                    group = Group.get_by_id(group_id)
+                    if group:
+                        group_emails = {m['email'].lower() for m in group.members}
+                
+                # Track member response count for completion check
+                member_response_count = 0
+                
+                for response in responses:
+                    response_id = response.get('response_id', '')
+                    respondent_email = response.get('respondent_email', '').strip()
+                    
+                    # Count member responses for completion check
+                    if not group_emails or respondent_email.lower() in group_emails:
+                        member_response_count += 1
+                    
+                    # If this is a new response, send appropriate notification
+                    if response_id and response_id not in existing_responses:
+                        if group_emails and respondent_email.lower() not in group_emails:
+                            # Unrecognized email - send yellow warning notification
+                            notify_unrecognized_submission(
+                                user_id=owner_id,
+                                form_name=form_title,
+                                form_reminder_id=request_id,
+                                respondent_email=respondent_email or 'Unknown'
+                            )
+                        else:
+                            # Recognized member submission
+                            notify_form_submission(
+                                user_id=owner_id,
+                                form_name=form_title,
+                                form_reminder_id=request_id,
+                                respondent_email=respondent_email or 'Unknown'
+                            )
+                
+                # Check if form is now fully completed (only count member responses)
+                if group_id and group_emails:
+                    total_recipients = len(group_emails)
+                    if total_recipients > 0 and member_response_count >= total_recipients:
+                        notify_form_completed(
+                            user_id=owner_id,
+                            form_name=form_title,
+                            form_reminder_id=request_id
+                        )
+            
         # Infer email collection from responses: if any response has respondent_email, it's enabled
         any_response_has_email = any(
             (r.get('respondent_email') or '').strip() for r in responses

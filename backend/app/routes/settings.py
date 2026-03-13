@@ -86,7 +86,6 @@ def edit_username():
 def get_user_forms():
     try:
         user_id_query = request.args.get('userId')
-        print(f"=======THIS IS THE USER ID: {user_id_query}=========" )
 
         logged_in_id = session.get('user_id')
         if not logged_in_id or logged_in_id != user_id_query:
@@ -157,3 +156,39 @@ def save_custom_message():
     except Exception as e:
         print(f"Error saving custom message: {e}")
         return jsonify({"error": "Failed to save custom message"}), 500
+    
+
+@settings_bp.post('/api/settings/toggle-notification')
+def toggle_notification():
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        data = request.json
+        # Here, target_form_id will be the Firestore DOCUMENT ID
+        target_doc_id = data.get('form_id') 
+        new_status = data.get('enabled')
+
+        db = get_db()
+        
+        # Access the document directly by its ID
+        doc_ref = db.collection('form_requests').document(target_doc_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Document not found"}), 404
+
+        # Security check: Ensure the owner matches
+        if doc.to_dict().get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized access to this document"}), 403
+
+        doc_ref.update({
+            "notifications_enabled": bool(new_status)
+        })
+
+        return jsonify({"success": True, "new_status": new_status}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
