@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface OptOutEventRow {
   id: string;

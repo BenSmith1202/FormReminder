@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     # Firebase Configuration
     FIREBASE_CREDENTIALS_PATH: Optional[str] = None  # this is used for finding the credential files
     FIREBASE_PROJECT_ID: Optional[str] = None  # this is the project identifier
-    FRONTEND_URL: str = "https://formreminder-frontend-176029126556.us-central1.run.app"  # this is the frontend URL used for CORS and email links
     
     # Application Settings
     APP_NAME: str = "FormReminder"

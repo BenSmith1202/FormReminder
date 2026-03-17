@@ -34,9 +34,8 @@ export async function groupsLoader() {
 
 export default function Groups() {
   const navigate = useNavigate();
-  const { initialGroups, loaderError } = useLoaderData() as any;
-  
-  const [groups, setGroups] = useState<Group[]>(initialGroups);
+  const { initialGroups, loaderError } = useLoaderData() as { initialGroups: Group[]; loaderError: string | null };
+  const [groups] = useState<Group[]>(initialGroups);
   const [error, setError] = useState<string | null>(loaderError);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
