@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change_me_in_production"  # Flask session secret
     # Public base URL used in emails (unsubscribe links, etc.)
     BACKEND_PUBLIC_URL: str = "http://localhost:5000"
+    # Frontend URL used in invite emails so sub-users land on the right page
+    FRONTEND_URL: str = "http://localhost:5173"
     
     # Google OAuth Settings
     GOOGLE_CLIENT_ID: Optional[str] = None

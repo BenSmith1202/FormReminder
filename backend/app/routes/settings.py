@@ -6,6 +6,9 @@ import traceback
 from models.user import User
 from utils.google_forms_service import GoogleFormsService
 
+from models.database import get_db
+from models.form import Form
+
 # Define the Blueprint
 settings_bp = Blueprint('settings', __name__)
 
@@ -79,6 +82,28 @@ def edit_username():
         }), 500
 
 
+@settings_bp.get('/api/user-forms')
+def get_user_forms():
+    try:
+        user_id_query = request.args.get('userId')
+
+        logged_in_id = session.get('user_id')
+        if not logged_in_id or logged_in_id != user_id_query:
+            return jsonify({"error": "Unauthorized access"}), 403
+        
+        print(f"Calling get forms by uid...")
+        user_forms = Form.get_forms_by_userid(user_id_query)
+            
+        return jsonify({
+            "success": True,
+            "forms": user_forms
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Error fetching forms: {e}")
+        return jsonify({"error": "Failed to fetch forms", "details": str(e)}), 500
+        
+
 # ============= CUSTOM EMAIL MESSAGE ROUTES ===================
 
 @settings_bp.get('/api/settings/custom-message')
@@ -131,3 +156,39 @@ def save_custom_message():
     except Exception as e:
         print(f"Error saving custom message: {e}")
         return jsonify({"error": "Failed to save custom message"}), 500
+    
+
+@settings_bp.post('/api/settings/toggle-notification')
+def toggle_notification():
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        data = request.json
+        # Here, target_form_id will be the Firestore DOCUMENT ID
+        target_doc_id = data.get('form_id') 
+        new_status = data.get('enabled')
+
+        db = get_db()
+        
+        # Access the document directly by its ID
+        doc_ref = db.collection('form_requests').document(target_doc_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Document not found"}), 404
+
+        # Security check: Ensure the owner matches
+        if doc.to_dict().get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized access to this document"}), 403
+
+        doc_ref.update({
+            "notifications_enabled": bool(new_status)
+        })
+
+        return jsonify({"success": True, "new_status": new_status}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500

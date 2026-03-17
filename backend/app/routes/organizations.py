@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
 import traceback
+from models.org_member import OrgMember
+from models.user import User
 
 # Import your models and database tools
 # Adjust these imports if your file structure is different
@@ -8,6 +10,7 @@ from .utilities import create_notification
 
 from models.group import Group
 from models.org_membership import OrgMembership
+from models.opt_out_event import OptOutEvent
 from utils.email_service import EmailService
 
 
@@ -43,6 +46,10 @@ def leave_organization(owner_id: str):
 
         # Mark opted out first (so even partial failures still suppress future emails).
         OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
+        try:
+            OptOutEvent.log(owner_id, email, "opted_out", "recipient", "email_link")
+        except Exception:
+            pass
 
         # Remove from all groups in this org (owner == org).
         removed_from_groups = 0
@@ -85,3 +92,49 @@ def leave_organization(owner_id: str):
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Failed to opt out", "details": str(e)}), 500
+
+@orgs_bp.route("/api/my-memberships", methods=["GET"])
+def get_my_memberships():
+    """Returns a list of organizations the current logged-in user belongs to."""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        # Get active memberships
+        memberships = OrgMember.get_user_memberships(user_id)
+        
+        results = []
+        for m in memberships:
+            # Fetch the Org Owner's name so the UI is friendly
+            owner = User.get_by_id(m.org_id)
+            owner_name = owner.username if owner else "Unknown Organization"
+            
+            results.append({
+                "membership_id": m.id,
+                "org_id": m.org_id,
+                "org_name": owner_name,
+                "role": m.role,
+                "joined_at": m.joined_at
+            })
+
+        return jsonify(results), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@orgs_bp.route("/api/memberships/<membership_id>/leave", methods=["POST"])
+def leave_org_as_member(membership_id: str):
+    """Allows a sub-user to leave an organization they are a member of."""
+    try:
+        user_id = session.get('user_id')
+        member = OrgMember.get_by_id(membership_id)
+
+        if not member or member.member_user_id != user_id:
+            return jsonify({"error": "Membership not found or unauthorized"}), 404
+
+        if member.remove():
+            return jsonify({"success": True, "message": "Left organization"}), 200
+        
+        return jsonify({"error": "Failed to remove membership"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
