@@ -2,7 +2,6 @@ import os
 import hmac
 import hashlib
 import json
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 import sys
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
@@ -36,8 +35,18 @@ from utils.scheduler import init_scheduler  # Automatic reminder scheduler
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
 
+# Session cookie config — required for cross-origin cookies (frontend/backend on different domains)
+is_production = not settings.DEBUG
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_production else 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = is_production
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
+# disable strict slashes globally
+app.url_map.strict_slashes = False
+
+frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 CORS(app,
-     origins=["http://localhost:5173", "http://localhost:5174"],
+     origins=[frontend_url, "http://localhost:5173", "http://localhost:5174", "https://formreminder-frontend-176029126556.us-central1.run.app"],
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])

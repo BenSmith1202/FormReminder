@@ -18,7 +18,7 @@ import PersonOffIcon from '@mui/icons-material/PersonOff';
 import DescriptionIcon from '@mui/icons-material/Description';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 // Notification type constants (match backend)
 const NotificationType = {

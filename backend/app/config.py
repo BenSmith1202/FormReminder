@@ -10,7 +10,10 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    
+    # MOST OF THESE VALUES ARE OVERRIDDEN BY ENV VARIABLES (see .env file and deploy_backend.bat for details)
+    #===========================================================================================================
+
+
     # Firebase Configuration
     FIREBASE_CREDENTIALS_PATH: Optional[str] = None  # this is used for finding the credential files
     FIREBASE_PROJECT_ID: Optional[str] = None  # this is the project identifier

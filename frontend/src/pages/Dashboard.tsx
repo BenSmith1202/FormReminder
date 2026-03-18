@@ -16,7 +16,7 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import StorageIcon from '@mui/icons-material/Storage';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface HealthResponse {
   status: string;

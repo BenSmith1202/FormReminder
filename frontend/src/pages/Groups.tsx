@@ -11,7 +11,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface Group {
   id: string;
@@ -34,9 +34,8 @@ export async function groupsLoader() {
 
 export default function Groups() {
   const navigate = useNavigate();
-  const { initialGroups, loaderError } = useLoaderData() as any;
-  
-  const [groups, setGroups] = useState<Group[]>(initialGroups);
+  const { initialGroups, loaderError } = useLoaderData() as { initialGroups: Group[]; loaderError: string | null };
+  const [groups] = useState<Group[]>(initialGroups);
   const [error, setError] = useState<string | null>(loaderError);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 

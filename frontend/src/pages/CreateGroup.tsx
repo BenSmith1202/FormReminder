@@ -3,7 +3,7 @@ import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, 
 import { useNavigate } from 'react-router-dom';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 export default function CreateGroup() {
   const navigate = useNavigate();

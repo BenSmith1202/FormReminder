@@ -33,8 +33,17 @@ def _get_api_config() -> dict:
 
 
 class EmailService:
-    """Service for sending email reminders to form recipients via the Emailit HTTP API."""
-
+    """Service for sending email reminders to form recipients"""
+    
+    # Email configuration from environment variables
+    SMTP_SERVER = "smtp.gmail.com"
+    SMTP_PORT = 465  # Use SSL port instead of TLS port 587
+    SMTP_USERNAME = "reminderform0@gmail.com"
+    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "mngnsqitifheoiid")  # Must be set in env for production; default is for local testing only
+    FROM_EMAIL = "reminderform0@gmail.com"
+    FROM_NAME = "FormReminder"
+    
+    # Rate limiting: 1 hour between reminders to same person
     RATE_LIMIT_HOURS = 1
 
     TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')

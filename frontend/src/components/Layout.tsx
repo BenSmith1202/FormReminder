@@ -27,7 +27,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import NotificationBell from './NotificationBell';
 import './Layout.css';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 const NAV_ITEMS = [
   { label: 'Form Requests', icon: <EmailIcon fontSize="small" />, path: '/', exact: true },

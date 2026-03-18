@@ -32,7 +32,7 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface Member {
   email: string;

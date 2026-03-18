@@ -43,7 +43,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 interface FormRequest {
   id: string;
