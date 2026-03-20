@@ -62,7 +62,7 @@ export default function Groups() {
     <Container maxWidth="xl" sx={{ py: 4 }} className="page-fade-in">
       {/* Page Header */}
       <Box mb={4}>
-        <Typography variant="h4" fontWeight="bold" gutterBottom>
+        <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
           Groups
         </Typography>
         <Typography variant="body1" color="text.secondary">

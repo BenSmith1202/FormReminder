@@ -527,7 +527,7 @@ export default function ViewRequest() {
             </Box>
             <Box>
               <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-                <Typography variant="h5" fontWeight="bold" lineHeight={1.2}>
+                <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
                   {formRequest.title}
                 </Typography>
                 <Chip

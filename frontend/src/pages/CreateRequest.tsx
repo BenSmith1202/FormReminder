@@ -218,7 +218,7 @@ export default function CreateRequest() {
       <Container maxWidth="md" sx={{ py: 4 }} className="page-fade-in">
         {/* Page title */}
         <Box mb={4}>
-          <Typography variant="h4" fontWeight="bold" gutterBottom>
+          <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
             New Form Request
           </Typography>
           <Typography variant="body1" color="text.secondary">
@@ -523,7 +523,7 @@ export default function CreateRequest() {
         >
           <DialogTitle>
             <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6">Custom Schedule</Typography>
+              <Typography variant="h6" component="span">Custom Schedule</Typography>
               <IconButton size="small" onClick={() => { setCustomScheduleOpen(false); setCustomScheduleError(null); setNewDayInput(''); }}>
                 <CloseIcon />
               </IconButton>

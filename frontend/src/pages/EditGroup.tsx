@@ -223,6 +223,10 @@ export default function EditGroup() {
         </Button>
       </Box>
 
+      <Typography variant="h5" component="h1" fontWeight="bold" gutterBottom>
+        Edit Group
+      </Typography>
+
       {/* ── Alerts ── */}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>

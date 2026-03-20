@@ -360,7 +360,7 @@ export default function Analytics() {
   if (error && events.length === 0) {
     return (
       <Box sx={{ p: 2 }}>
-        <Typography variant="h5" gutterBottom>Analytics</Typography>
+        <Typography variant="h5" component="h1" gutterBottom>Analytics</Typography>
         <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>
       </Box>
     );
@@ -368,7 +368,7 @@ export default function Analytics() {
 
   return (
     <Box sx={{ px: { xs: 1, sm: 2 }, py: 2 }}>
-      <Typography variant="h5" gutterBottom sx={{ fontWeight: 600 }}>
+      <Typography variant="h5" component="h1" gutterBottom sx={{ fontWeight: 600 }}>
         Analytics
       </Typography>
       {events.length === 0 && (
@@ -383,7 +383,7 @@ export default function Analytics() {
           <Card>
             <CardContent>
               <Typography color="text.secondary" variant="body2" gutterBottom>Total opt-outs (all time)</Typography>
-              <Typography variant="h4">{stats.totalOptOuts}</Typography>
+              <Typography variant="h4" component="p">{stats.totalOptOuts}</Typography>
             </CardContent>
           </Card>
         </Box>
@@ -391,7 +391,7 @@ export default function Analytics() {
           <Card>
             <CardContent>
               <Typography color="text.secondary" variant="body2" gutterBottom>Opt-outs this month</Typography>
-              <Typography variant="h4">{stats.optOutsThisMonth}</Typography>
+              <Typography variant="h4" component="p">{stats.optOutsThisMonth}</Typography>
             </CardContent>
           </Card>
         </Box>
@@ -399,7 +399,7 @@ export default function Analytics() {
           <Card>
             <CardContent>
               <Typography color="text.secondary" variant="body2" gutterBottom>Total re-subscribes (all time)</Typography>
-              <Typography variant="h4">{stats.totalResubscribes}</Typography>
+              <Typography variant="h4" component="p">{stats.totalResubscribes}</Typography>
             </CardContent>
           </Card>
         </Box>
@@ -407,7 +407,7 @@ export default function Analytics() {
           <Card>
             <CardContent>
               <Typography color="text.secondary" variant="body2" gutterBottom>Active opted-out count</Typography>
-              <Typography variant="h4">{stats.activeOptedOut}</Typography>
+              <Typography variant="h4" component="p">{stats.activeOptedOut}</Typography>
             </CardContent>
           </Card>
         </Box>
@@ -450,6 +450,8 @@ export default function Analytics() {
         <Box sx={{ height: { xs: 350, sm: 400 }, width: '100%', overflowX: 'auto', minWidth: 0 }}>
           <Box sx={{ minWidth: 800, height: '100%' }}>
             <DataGrid
+              aria-label="Opted-out recipients"
+              disableVirtualization
               rows={rows}
               columns={columns}
               initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}

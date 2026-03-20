@@ -151,7 +151,7 @@ export default function ViewGroup() {
               <GroupIcon sx={{ color: 'white', fontSize: { xs: 26, sm: 32 } }} />
             </Box>
             <Box>
-              <Typography variant="h5" fontWeight="bold" lineHeight={1.2}>
+              <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
                 {group.name}
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={0.5}>

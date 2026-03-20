@@ -329,6 +329,9 @@ export default function Settings() {
     <Container maxWidth="sm" sx={{ py: 4 }} className="page-fade-in">
       {/* ── Page header ── */}
       <Box mb={4}>
+        <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
+          Settings
+        </Typography>
         {/* User identity card */}
         <Box
           display="flex"
@@ -356,7 +359,7 @@ export default function Settings() {
             {user?.username?.[0]?.toUpperCase()}
           </Avatar>
           <Box>
-            <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
+            <Typography variant="h6" component="p" fontWeight="bold" lineHeight={1.2}>
               {user?.username}
             </Typography>
             <Typography variant="body2" color="text.secondary">
