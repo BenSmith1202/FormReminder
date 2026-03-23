@@ -20,6 +20,69 @@ from utils.scheduler import send_initial_emails  # For immediate email sending
 form_requests_bp = Blueprint('form_requests', __name__)
 
 
+def _classify_forms_api_error(err: Exception) -> str:
+    """Normalize Google Forms API errors into warning-friendly reason codes."""
+    text = str(err or "").lower()
+    if (
+        "requested entity was not found" in text
+        or " 404" in text
+        or "404 " in text
+        or "not found" in text
+    ):
+        return "form_not_found"
+    if (
+        "forbidden" in text
+        or " 403" in text
+        or "403 " in text
+        or "permission" in text
+        or "insufficient" in text
+        or "access denied" in text
+    ):
+        return "account_mismatch_or_no_access"
+    if "invalid_grant" in text or "revoked" in text or "credentials" in text:
+        return "credentials_invalid"
+    return "api_error"
+
+
+def _build_form_warnings(form_data: dict) -> list[str]:
+    """Build user-facing warnings from the latest persisted form state."""
+    warnings: list[str] = []
+
+    form_settings = form_data.get('form_settings', {}) or {}
+    email_checked = form_settings.get('email_collection_checked', True)
+    email_collection_enabled = form_settings.get('email_collection_enabled', True)
+    if email_checked and not email_collection_enabled:
+        warnings.append(
+            "Email collection is currently OFF for this Google Form. In Google Forms: "
+            "Settings -> Responses -> turn on 'Collect email addresses'."
+        )
+
+    api_access_available = form_data.get('api_access_available', True)
+    api_error_reason = form_data.get('api_error_reason')
+    if not api_access_available:
+        if api_error_reason == 'account_mismatch_or_no_access':
+            warnings.append(
+                "The Google account you connected does not currently have edit access to this form. "
+                "Connect the correct Google account or share the form with that account as an editor."
+            )
+        elif api_error_reason == 'form_not_found':
+            warnings.append(
+                "This form could not be found by the API. Use the Google Forms edit URL (contains /edit), "
+                "not the public view/share URL."
+            )
+        elif api_error_reason == 'credentials_invalid':
+            warnings.append(
+                "Your Google connection is no longer valid. Reconnect your Google account to resume syncing."
+            )
+        else:
+            warnings.append(
+                "We could not access this form via the Google API. We will keep retrying on sync, and this "
+                "warning will clear automatically once access works again."
+            )
+
+    return warnings
+
+
 # Get all form requests
 @form_requests_bp.get("")
 def get_form_requests():
@@ -79,23 +142,8 @@ def get_form_requests():
                 if not group_emails or resp_email in group_emails:
                     response_count += 1
             
-            # Calculate warnings dynamically
-            warnings = []
-            form_settings = form_data.get('form_settings', {})
-            email_collection_enabled = form_settings.get('email_collection_enabled', True)
-            api_access_available = form_data.get('api_access_available', True)
-            
-            if not email_collection_enabled:
-                warnings.append(
-                    "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
-                    "Responses → turn on 'Collect email addresses', or add a question that asks for email."
-                )
-            
-            if not api_access_available:
-                warnings.append(
-                    "Could not access this form via the API. If Refresh fails: reconnect your Google account "
-                    "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
-                )
+            # Calculate warnings from the latest persisted API/form state
+            warnings = _build_form_warnings(form_data)
             
             # Merge form data into request_data - request_data takes precedence
             # IMPORTANT: We only use form_data for fields that don't exist in request_data
@@ -237,23 +285,8 @@ def get_form_request_responses(request_id: str):
         total_recipients = len(group.members) if group else 0
         response_count = len(responses_list)
         
-        # Calculate warnings dynamically
-        warnings = []
-        form_settings = form_data.get('form_settings', {})
-        email_collection_enabled = form_settings.get('email_collection_enabled', True)
-        api_access_available = form_data.get('api_access_available', True)
-        
-        if not email_collection_enabled:
-            warnings.append(
-                "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
-                "Responses → turn on 'Collect email addresses', or add a question that asks for email."
-            )
-        
-        if not api_access_available:
-            warnings.append(
-                "Could not access this form via the API. If Refresh fails: reconnect your Google account "
-                "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
-            )
+        # Calculate warnings from the latest persisted API/form state
+        warnings = _build_form_warnings(form_data)
         
         # Merge form data into request_data for response - request_data takes precedence
         request_data_with_form = {
@@ -349,6 +382,23 @@ def refresh_form_responses(request_id: str):
             responses = GoogleFormsService.get_form_responses(credentials, form_id)
         except Exception as api_err:
             err_str = str(api_err)
+            api_error_reason = _classify_forms_api_error(api_err)
+
+            # Persist failure state so dashboard warnings explain the real reason.
+            form_doc_id = request_data.get('form_id') or request_data.get('google_form_id')
+            if form_doc_id:
+                try:
+                    db.collection(Collections.FORMS).document(form_doc_id).set(
+                        {
+                            'api_access_available': False,
+                            'api_error_reason': api_error_reason,
+                            'updated_at': datetime.now(timezone.utc).isoformat(),
+                        },
+                        merge=True,
+                    )
+                except Exception as persist_err:
+                    print(f"Warning: failed to persist API error reason: {persist_err}")
+
             # 404 from Forms API = form ID not found (viewform URL uses a different "published" ID than the API expects)
             if "404" in err_str or "Requested entity was not found" in err_str or "not found" in err_str.lower():
                 return jsonify({
@@ -360,7 +410,7 @@ def refresh_form_responses(request_id: str):
             if "403" in err_str or "Forbidden" in err_str:
                 return jsonify({
                     "error": "No access to this form",
-                    "message": "Reconnect your Google account or ensure the form owner has granted you edit access so we can sync responses.",
+                    "message": "The connected Google account does not have edit access to this form. Connect the correct Google account or ask the form owner to share editor access.",
                     "action_required": "reconnect_google"
                 }), 403
             # Credential/refresh errors
@@ -497,10 +547,17 @@ def refresh_form_responses(request_id: str):
                             form_reminder_id=request_id
                         )
             
-        # Infer email collection from responses: if any response has respondent_email, it's enabled
-        any_response_has_email = any(
-            (r.get('respondent_email') or '').strip() for r in responses
-        )
+        # Re-check metadata on every successful sync so warnings self-heal if user fixed settings.
+        metadata = {}
+        email_collection_checked = False
+        email_collection_enabled = True
+        try:
+            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+            email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+            email_collection_checked = True
+        except Exception as metadata_err:
+            # Don't fail refresh if metadata check fails; we still synced responses.
+            print(f"Warning: metadata re-check failed after refresh: {metadata_err}")
         
         # Update form document in forms collection with sync time
         form_doc_id = request_data.get('form_id')
@@ -513,22 +570,23 @@ def refresh_form_responses(request_id: str):
             form_doc = form_ref.get()
             sync_time = datetime.now(timezone.utc).isoformat()
             if form_doc.exists:
+                existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
                 update_data = {
                     'last_synced_at': sync_time,
                     'api_access_available': True,
+                    'api_error_reason': None,
                     'updated_at': sync_time
                 }
-                if any_response_has_email:
-                    try:
-                        existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
-                        if isinstance(existing_settings, dict):
-                            update_data['form_settings'] = {
-                                **existing_settings,
-                                'email_collection_enabled': True,
-                                'email_collection_type': 'VERIFIED'
-                            }
-                    except Exception:
-                        pass  # Don't fail refresh if form_settings update fails
+                if isinstance(existing_settings, dict):
+                    update_data['form_settings'] = {
+                        **existing_settings,
+                        'email_collection_checked': email_collection_checked,
+                    }
+                    if email_collection_checked:
+                        update_data['form_settings'].update({
+                            'email_collection_enabled': email_collection_enabled,
+                            'email_collection_type': metadata.get('email_collection_type', existing_settings.get('email_collection_type', 'UNKNOWN')),
+                        })
                 try:
                     form_ref.update(update_data)
                     print(f"Updated form document {form_doc_id} with sync time")
@@ -546,8 +604,14 @@ def refresh_form_responses(request_id: str):
                     'updated_at': sync_time,
                     'is_active': True,
                     'api_access_available': True,
+                    'api_error_reason': None,
                     'last_synced_at': sync_time,
-                    'form_settings': request_data.get('form_settings', {})
+                    'form_settings': {
+                        **(request_data.get('form_settings', {}) or {}),
+                        'email_collection_checked': email_collection_checked,
+                        'email_collection_enabled': email_collection_enabled if email_collection_checked else True,
+                        'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN') if email_collection_checked else 'UNKNOWN',
+                    }
                 })
                 print(f"Created form document {form_doc_id} with sync time")
         
@@ -694,7 +758,9 @@ def create_form_request():
         print("Fetching form metadata...")
         metadata = {}
         api_access_available = False
-        email_collection_enabled = False
+        api_error_reason = None
+        email_collection_enabled = True
+        email_collection_checked = False
         
         try:
             metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
@@ -704,19 +770,23 @@ def create_form_request():
             print("Checking email collection...")
             try:
                 email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+                email_collection_checked = True
             except Exception as email_check_error:
                 print(f"Warning: Could not check email collection: {email_check_error}")
-                email_collection_enabled = False
+                email_collection_enabled = True
+                email_collection_checked = False
         except Exception as metadata_error:
+            api_error_reason = _classify_forms_api_error(metadata_error)
             print(f"Warning: Could not fetch form metadata: {metadata_error}")
-            print("This usually means you don't have edit access to the form.")
-            print("The form request will be created, but you'll need to grant edit access to sync responses.")
+            if api_error_reason == 'account_mismatch_or_no_access':
+                print("The connected Google account likely differs from the form owner's editor account.")
+            print("The form request will be created, and sync will keep retrying in case this is fixed.")
             api_access_available = False
             # Use default metadata
             metadata = {
                 'title': data.get('title', f"Form {form_id[:8]}"),
                 'description': '',
-                'email_collection_enabled': False,
+                'email_collection_enabled': True,
                 'email_collection_type': 'UNKNOWN'
             }
         
@@ -755,10 +825,12 @@ def create_form_request():
             'updated_at': now,
             'is_active': True,
             'api_access_available': api_access_available,  # Set based on whether we could fetch metadata
+            'api_error_reason': api_error_reason,
             # Don't set last_synced_at on creation - it will be set when first synced
             'form_settings': {
                 'email_collection_enabled': email_collection_enabled,
-                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
+                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN'),
+                'email_collection_checked': email_collection_checked,
             }
         }
         
@@ -772,6 +844,7 @@ def create_form_request():
                 'description': metadata.get('description', ''),
                 'updated_at': now,
                 'api_access_available': api_access_available,
+                'api_error_reason': api_error_reason,
                 'form_settings': form_data['form_settings']
             })
         else:

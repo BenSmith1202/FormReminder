@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
   Paper, Typography, Box, Chip, Button, IconButton, Card, CardContent,
-  LinearProgress, Tooltip, Container, Stack, Avatar
+  LinearProgress, Tooltip, Container, Stack, Avatar, Snackbar, Alert
 } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -249,7 +249,9 @@ export default function Dashboard() {
   const [data, setData] = useState<HealthResponse | null>(initialHealth);
   const [rows, setRows] = useState<FormRequestRow[]>(initialRows);
   const [refreshing, setRefreshing] = useState(false);
+  const [connectingForms, setConnectingForms] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     const activeForms = rows.filter((r) => r.status === 'Active').length;
@@ -429,6 +431,47 @@ export default function Dashboard() {
     }
   };
 
+  const checkGoogleConnected = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/google-auth-status`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        return false;
+      }
+      const data = await response.json();
+      return Boolean(data.google_connected);
+    } catch {
+      return false;
+    }
+  };
+
+  const handleConnectFormsAccount = async () => {
+    setConnectingForms(true);
+    try {
+      const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+        return;
+      }
+      setWarningMessage(data.error || 'Could not start Google account connection.');
+    } catch {
+      setWarningMessage('Could not start Google account connection.');
+    } finally {
+      setConnectingForms(false);
+    }
+  };
+
+  const handleNewRequestClick = async () => {
+    const connected = await checkGoogleConnected();
+    if (!connected) {
+      setWarningMessage('Connect your Google Forms account before creating a new request.');
+      return;
+    }
+    navigate('/requests/new');
+  };
+
   const loadFormRequests = async () => {
     try {
       const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
@@ -484,6 +527,7 @@ export default function Dashboard() {
 
   // Polling useEffect remains
   useEffect(() => {
+    checkGoogleConnected();
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') refreshAllFormRequests();
     }, 30000);
@@ -529,6 +573,17 @@ export default function Dashboard() {
 
         <Box display="flex" gap={1.5}>
           <Button
+            variant="contained"
+            onClick={handleConnectFormsAccount}
+            disabled={connectingForms}
+            sx={{
+              bgcolor: '#7b1fa2',
+              '&:hover': { bgcolor: '#6a1b9a' },
+            }}
+          >
+            {connectingForms ? 'Connecting…' : 'Connect Forms Account'}
+          </Button>
+          <Button
             variant="outlined"
             startIcon={
               <RefreshIcon
@@ -549,7 +604,7 @@ export default function Dashboard() {
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={() => navigate('/requests/new')}
+            onClick={handleNewRequestClick}
           >
             New Request
           </Button>
@@ -625,7 +680,7 @@ export default function Dashboard() {
               <Typography color="text.secondary" gutterBottom>
                 No form requests yet
               </Typography>
-              <Button variant="text" onClick={() => navigate('/requests/new')}>
+              <Button variant="text" onClick={handleNewRequestClick}>
                 Create one now
               </Button>
             </Box>
@@ -655,7 +710,7 @@ export default function Dashboard() {
                 <Stack height="100%" alignItems="center" justifyContent="center" spacing={2}>
                   <AssignmentIcon sx={{ fontSize: 60, color: 'text.disabled' }} />
                   <Typography color="text.secondary">No form requests found</Typography>
-                  <Button variant="text" onClick={() => navigate('/requests/new')}>
+                  <Button variant="text" onClick={handleNewRequestClick}>
                     Create one now
                   </Button>
                 </Stack>
@@ -681,6 +736,22 @@ export default function Dashboard() {
           />
         </Box>
       </Paper>
+
+      <Snackbar
+        open={Boolean(warningMessage)}
+        autoHideDuration={4500}
+        onClose={() => setWarningMessage(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setWarningMessage(null)}
+          severity="warning"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {warningMessage}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 }
