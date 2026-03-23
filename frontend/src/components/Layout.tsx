@@ -84,7 +84,7 @@ export default function Layout() {
     return (
       <Box display="flex" alignItems="center" justifyContent="center" height="100vh">
         <CheckBoxIcon color="primary" sx={{ fontSize: 32, mr: 1 }} />
-        <Typography variant="h6" fontWeight="bold" color="text.secondary">
+        <Typography variant="h6" component="span" fontWeight="bold" color="text.secondary">
           FormReminder
         </Typography>
       </Box>
@@ -105,7 +105,7 @@ export default function Layout() {
       >
         <Box display="flex" alignItems="center" gap={1}>
           <CheckBoxIcon color="primary" />
-          <Typography variant="h6" fontWeight="bold">
+          <Typography variant="h6" component="span" fontWeight="bold">
             FormReminder
           </Typography>
         </Box>
@@ -159,8 +159,8 @@ export default function Layout() {
                   borderRadius: 2,
                   '&.Mui-selected': {
                     bgcolor: 'primary.50',
-                    color: 'primary.main',
-                    '& .MuiListItemIcon-root': { color: 'primary.main' },
+                    color: 'primary.dark',
+                    '& .MuiListItemIcon-root': { color: 'primary.dark' },
                   },
                 }}
               >
@@ -211,7 +211,7 @@ export default function Layout() {
             sx={{ cursor: 'pointer', flexGrow: 1 }}
           >
             <CheckBoxIcon color="primary" sx={{ fontSize: 22 }} />
-            <Typography variant="h6" fontWeight="bold" noWrap>
+            <Typography variant="h6" component="span" fontWeight="bold" noWrap>
               FormReminder
             </Typography>
           </Box>
@@ -231,7 +231,7 @@ export default function Layout() {
                     px: 1.5,
                     fontWeight: active ? 'bold' : 'medium',
                     bgcolor: active ? 'primary.50' : 'transparent',
-                    color: active ? 'primary.main' : 'text.primary',
+                    color: active ? 'primary.dark' : 'text.primary',
                     '&:hover': { bgcolor: active ? 'primary.100' : 'action.hover' },
                   }}
                 >

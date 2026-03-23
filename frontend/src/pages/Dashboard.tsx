@@ -62,7 +62,7 @@ function StatCard({
             <Typography variant="caption" color="text.secondary" fontWeight="bold" display="block" gutterBottom>
               {title.toUpperCase()}
             </Typography>
-            <Typography variant="h4" fontWeight="bold" lineHeight={1}>
+            <Typography variant="h4" component="p" fontWeight="bold" lineHeight={1}>
               {value}
             </Typography>
             {subtext && (
@@ -158,8 +158,8 @@ function RequestCard({
           sx={{
             fontWeight: 600,
             flexShrink: 0,
-            bgcolor: isActive ? 'success.50' : 'grey.100',
-            color: isActive ? 'success.dark' : 'text.secondary',
+            bgcolor: isActive ? 'success.50' : 'grey.200',
+            color: isActive ? 'success.dark' : 'text.primary',
           }}
         />
       </Box>
@@ -326,8 +326,8 @@ export default function Dashboard() {
             size="small"
             sx={{
               fontWeight: 600,
-              bgcolor: isActive ? 'success.50' : 'grey.100',
-              color: isActive ? 'success.dark' : 'text.secondary',
+              bgcolor: isActive ? 'success.50' : 'grey.200',
+              color: isActive ? 'success.dark' : 'text.primary',
             }}
           />
         );
@@ -505,7 +505,7 @@ export default function Dashboard() {
         mb={4}
       >
         <Box>
-          <Typography variant="h4" fontWeight="bold" gutterBottom>
+          <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
             Dashboard
           </Typography>
           <Box display="flex" alignItems="center" gap={1}>
@@ -647,6 +647,8 @@ export default function Dashboard() {
         {/* Desktop DataGrid */}
         <Box sx={{ display: { xs: 'none', md: 'block' }, height: 500 }}>
           <DataGrid
+            aria-label="Form requests"
+            disableVirtualization
             rows={rows}
             columns={columns}
             onRowClick={(params) => navigate(`/request/${params.row.id}`)}

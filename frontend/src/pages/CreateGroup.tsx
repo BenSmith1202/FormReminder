@@ -107,7 +107,7 @@ export default function CreateGroup() {
   return (
     <Box maxWidth="sm" sx={{ mx: 'auto' }}>
       <Paper sx={{ p: 4 }}>
-        <Typography variant="h5" gutterBottom>
+        <Typography variant="h5" component="h1" gutterBottom>
           Create a New Group
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
@@ -166,7 +166,7 @@ export default function CreateGroup() {
       <Dialog open={showSuccess} onClose={handleClose} maxWidth="sm" fullWidth>
         <DialogTitle>🎉 Group Created Successfully!</DialogTitle>
         <DialogContent>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="p" gutterBottom>
             {createdGroup?.name}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
