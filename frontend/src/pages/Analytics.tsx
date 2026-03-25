@@ -10,6 +10,9 @@ import {
   Button,
   Chip,
   Snackbar,
+  useMediaQuery,
+  useTheme,
+  Divider,
 } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import {
@@ -82,6 +85,8 @@ function getEventTypeChipColor(eventType: string): 'error' | 'warning' | 'succes
 }
 
 export default function Analytics() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [user, setUser] = useState<{ id: string } | null>(null);
   const [events, setEvents] = useState<OptOutEventRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -378,39 +383,37 @@ export default function Analytics() {
         </Alert>
       )}
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Total opt-outs (all time)</Typography>
-              <Typography variant="h4" component="p">{stats.totalOptOuts}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Opt-outs this month</Typography>
-              <Typography variant="h4" component="p">{stats.optOutsThisMonth}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Total re-subscribes (all time)</Typography>
-              <Typography variant="h4" component="p">{stats.totalResubscribes}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Active opted-out count</Typography>
-              <Typography variant="h4" component="p">{stats.activeOptedOut}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1.5, sm: 2 }, mb: 3 }}>
+        {[
+          { label: 'Total opt-outs (all time)', value: stats.totalOptOuts },
+          { label: 'Opt-outs this month', value: stats.optOutsThisMonth },
+          { label: 'Total re-subscribes (all time)', value: stats.totalResubscribes },
+          { label: 'Active opted-out count', value: stats.activeOptedOut },
+        ].map(({ label, value }) => (
+          <Box
+            key={label}
+            sx={{ flex: { xs: '1 1 calc(50% - 6px)', sm: '1 1 200px' }, minWidth: 0 }}
+          >
+            <Card sx={{ height: '100%' }}>
+              <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
+                <Typography
+                  color="text.secondary"
+                  variant="body2"
+                  gutterBottom
+                  sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, lineHeight: 1.3 }}
+                >
+                  {label}
+                </Typography>
+                <Typography
+                  component="p"
+                  sx={{ fontSize: { xs: '1.5rem', sm: '2.125rem' }, fontWeight: 700, lineHeight: 1.2 }}
+                >
+                  {value}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Box>
+        ))}
       </Box>
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
@@ -447,8 +450,69 @@ export default function Analytics() {
 
       <Paper sx={{ p: { xs: 1.5, sm: 2 }, mb: 2, overflow: 'hidden' }}>
         <Typography variant="subtitle1" gutterBottom>Opted-Out Recipients</Typography>
-        <Box sx={{ height: { xs: 350, sm: 400 }, width: '100%', overflowX: 'auto', minWidth: 0 }}>
-          <Box sx={{ minWidth: 800, height: '100%' }}>
+
+        {isMobile ? (
+          <Box>
+            {rows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+                No opt-out events recorded.
+              </Typography>
+            ) : (
+              rows.map((row, idx) => (
+                <Box key={row.id}>
+                  {idx > 0 && <Divider sx={{ my: 1 }} />}
+                  <Box sx={{ py: 1 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 0.75 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontWeight: 600, wordBreak: 'break-all', flex: 1, fontSize: '0.8rem' }}
+                      >
+                        {row.recipient_email}
+                      </Typography>
+                      <Chip
+                        label={row.event_type}
+                        color={getEventTypeChipColor(row.event_type)}
+                        size="small"
+                        variant="outlined"
+                        sx={{ flexShrink: 0 }}
+                      />
+                    </Box>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+                      {row.group_name && (
+                        <Typography variant="caption" color="text.secondary">
+                          Group: <strong>{row.group_name}</strong>
+                        </Typography>
+                      )}
+                      {row.source && (
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: row.group_name ? 1.5 : 0 }}>
+                          Source: <strong>{row.source}</strong>
+                        </Typography>
+                      )}
+                    </Box>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatTimestamp(row.timestamp)}
+                      </Typography>
+                      {canResubscribe(row.recipient_email) && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={resubscribingEmail === row.recipient_email}
+                          onClick={() => handleResubscribe(row.recipient_email)}
+                          startIcon={resubscribingEmail === row.recipient_email ? <CircularProgress size={12} /> : undefined}
+                          sx={{ fontSize: '0.7rem', py: 0.25, px: 1 }}
+                        >
+                          {resubscribingEmail === row.recipient_email ? 'Sending...' : 'Re-subscribe'}
+                        </Button>
+                      )}
+                    </Box>
+                  </Box>
+                </Box>
+              ))
+            )}
+          </Box>
+        ) : (
+          <Box sx={{ height: 400, width: '100%' }}>
             <DataGrid
               aria-label="Opted-out recipients"
               disableVirtualization
@@ -459,7 +523,8 @@ export default function Analytics() {
               disableRowSelectionOnClick
             />
           </Box>
-        </Box>
+        )}
+
         <Button
           variant="outlined"
           startIcon={<FileDownloadIcon />}
