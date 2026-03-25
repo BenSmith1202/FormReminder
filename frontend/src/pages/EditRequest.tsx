@@ -228,7 +228,7 @@ export default function EditRequest() {
             <AssignmentIcon color="primary" sx={{ fontSize: 22 }} />
           </Box>
           <Box>
-            <Typography variant="h5" fontWeight="bold">
+            <Typography variant="h5" component="h1" fontWeight="bold">
               Edit Request
             </Typography>
             <Typography variant="body2" color="text.secondary">

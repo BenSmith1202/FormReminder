@@ -27,6 +27,51 @@ const theme = createTheme({
   typography: {
     h4: { fontWeight: 600 },
   },
+  components: {
+    MuiTypography: {
+      defaultProps: {
+        variantMapping: {
+          h1: 'h1',
+          h2: 'h2',
+          h3: 'h3',
+          h4: 'h4',
+          h5: 'h5',
+          h6: 'h6',
+          subtitle1: 'p',
+          subtitle2: 'p',
+          body1: 'p',
+          body2: 'p',
+          inherit: 'p',
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        outlinedPrimary: {
+          color: '#1565c0',
+          borderColor: '#1565c0',
+          '&:hover': {
+            borderColor: '#0d47a1',
+            backgroundColor: 'rgba(21, 101, 192, 0.04)',
+          },
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        colorWarning: {
+          backgroundColor: '#fff3e0',
+          color: '#bf360c',
+          '& .MuiChip-icon': { color: '#bf360c' },
+          '&.MuiChip-outlined': {
+            backgroundColor: 'transparent',
+            color: '#bf360c',
+            borderColor: '#bf360c',
+          },
+        },
+      },
+    },
+  },
 });
 
 const router = createBrowserRouter([

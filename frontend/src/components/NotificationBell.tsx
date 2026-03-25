@@ -206,7 +206,7 @@ export default function NotificationBell({ pollInterval = 30000 }: NotificationB
       >
         {/* Header */}
         <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+          <Typography variant="h6" component="p" sx={{ fontWeight: 600 }}>
             Notifications
           </Typography>
           {unreadCount > 0 && (
