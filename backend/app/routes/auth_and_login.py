@@ -1,15 +1,14 @@
 from flask import Blueprint, request, jsonify, session
-from datetime import datetime
+from datetime import datetime, timedelta
 import traceback
 import requests
 import os
-from firebase_admin import _auth_utils
 from dotenv import load_dotenv
 
 # Import your models and database tools
-import firebase_admin
 from models.user import User
-from firebase_admin import auth, credentials
+from models.database import get_db, Collections
+from firebase_admin import auth
 from utils.google_forms_service import GoogleFormsService
 
 # Define the Blueprint
@@ -235,16 +234,21 @@ def google_login():
         if not user_id:
             return jsonify({"error": "Must be logged in to connect Google account"}), 401
         
-        # Generate a unique state token for CSRF protection
         import secrets
         state = secrets.token_urlsafe(32)
-        session['oauth_state'] = state
-        
-        # Get authorization URL
+
+        # Store state → user_id in Firestore so the callback can find it
+        # regardless of whether the session cookie survives the cross-origin redirect.
+        db = get_db()
+        db.collection(Collections.OAUTH_STATES).document(state).set({
+            "user_id": user_id,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "expires_at": (datetime.utcnow() + timedelta(minutes=10)).isoformat() + "Z",
+        })
+
         authorization_url = GoogleFormsService.get_authorization_url(state)
         
-        print(f"User {user_id} initiating Google OAuth")
-        print(f"Authorization URL: {authorization_url}")
+        print(f"User {user_id} initiating Google OAuth, state={state[:8]}...")
         
         return jsonify({
             "authorization_url": authorization_url
@@ -277,21 +281,33 @@ def oauth_callback():
         if not code:
             return "<html><body><h1>No authorization code received</h1></body></html>", 400
         
-        # Verify state token (CSRF protection)
-        expected_state = session.get('oauth_state')
-        if not expected_state or state != expected_state:
-            print("State mismatch - possible CSRF attack")
-            return "<html><body><h1>Invalid state token</h1></body></html>", 400
-        
-        print(f"Received OAuth callback with code")
+        # Look up user_id from Firestore using the state token.
+        # This avoids relying on the session cookie which may not survive
+        # the cross-origin redirect from Google back to the backend.
+        db = get_db()
+        state_doc = db.collection(Collections.OAUTH_STATES).document(state).get()
+        if not state_doc.exists:
+            print(f"OAuth state not found in Firestore: {state[:8]}...")
+            return "<html><body><h1>Invalid or expired state token. Please try connecting Google again.</h1></body></html>", 400
+
+        state_data = state_doc.to_dict()
+        # Delete immediately — single use
+        db.collection(Collections.OAUTH_STATES).document(state).delete()
+
+        # Check expiry
+        expires_at = state_data.get("expires_at", "")
+        if expires_at and datetime.utcnow().isoformat() + "Z" > expires_at:
+            print(f"OAuth state expired for state={state[:8]}...")
+            return "<html><body><h1>State token expired. Please try connecting Google again.</h1></body></html>", 400
+
+        user_id = state_data.get("user_id")
+        if not user_id:
+            return "<html><body><h1>Invalid state token data.</h1></body></html>", 400
+
+        print(f"Received OAuth callback for user_id={user_id}")
         
         # Exchange code for tokens
         tokens = GoogleFormsService.exchange_code_for_tokens(code, state)
-        
-        # Get current user
-        user_id = session.get('user_id')
-        if not user_id:
-            return "<html><body><h1>Session expired, please log in again</h1></body></html>", 401
         
         user = User.get_by_id(user_id)
         if not user:

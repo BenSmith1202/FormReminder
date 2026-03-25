@@ -163,6 +163,8 @@ class Collections:
     BOUNCED_EMAILS = "bounced_emails"
     # Sub-user memberships within an owner's organization
     ORG_MEMBERS = "org_members"
+    # Temporary OAuth state tokens (state → user_id, expires in 10 minutes)
+    OAUTH_STATES = "oauth_states"
 
 # Helper function
 def get_db():
