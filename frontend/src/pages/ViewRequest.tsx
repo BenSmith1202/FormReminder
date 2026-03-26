@@ -530,7 +530,10 @@ export default function ViewRequest() {
               <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
                 <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
                 {formRequest.title}               <AnimatedInfoButton title="Form Requests">
-                                                    <p>TODO: Add information about form requests here.</p>
+                                                    <p>This is a form request. You can view its details and manage its responses here.</p>
+                                                    <p>Form requests are used to collect information from recipients. You can set a due date, add reminders, and track response progress.</p>
+                                                    <p>Use the "Edit Request" button to modify the form request or its settings.</p>
+                                                    
                                                   </AnimatedInfoButton>
                 </Typography>
                 <Chip

@@ -739,7 +739,23 @@ export default function Dashboard() {
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
             Dashboard{' '}
             <AnimatedInfoButton title="Dashboard Guide">
-              This dashboard provides an overview of your form requests and their response rates.
+              <div>
+                <p>
+                  Welcome to your <strong>FormReminder Dashboard!</strong> This page is your central hub for tracking form requests and response rates.
+                </p>
+
+                <p>
+                  At the top, the <strong>Overview Cards</strong> give you a quick snapshot of active forms, total responses, your overall completion rate, and database health. 
+                </p>
+
+                <p>
+                  Below, the <strong>Form Requests Panel</strong> lets you monitor individual campaigns. Each row features a progress bar showing completed versus pending responses. Click <strong>Sync Now</strong> to refresh data immediately, or use the mobile search bar to quickly find specific forms. 
+                </p>
+
+                <p>
+                  Finally, use the <strong>Actions</strong> menu on any request to view detailed analytics (Eye), duplicate a successful campaign (Copy), or delete an obsolete form (Trash).
+                </p>
+              </div>
             </AnimatedInfoButton>
           </Typography>
           <Box display="flex" alignItems="center" gap={1}>

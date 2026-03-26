@@ -107,7 +107,10 @@ export default function JoinGroup() {
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" component="h1" gutterBottom>
           Join Group        <AnimatedInfoButton title="Joining a FormReminder Group">
-                              <p>TODO: Add information about joining a FormReminder group here.</p>
+                              <p>FormReminder is a platform for managing form responses. Click "Join Group" to become a member of the group that you were invited to.</p>
+                              <p>Once you join, you'll be able to receive form requests sent to this group and submit your responses.</p>
+                              <p>You will also receive reminders about upcoming form requests.</p>
+                              <p>If you have any questions or issues, please contact the person who shared the invite link with you.</p>
                             </AnimatedInfoButton>
         </Typography>
         

@@ -106,26 +106,50 @@ export default function AnimatedInfoButton({
               outline: 'none',
             }}
           >
-            {/* INNER CARD: Removed mouse events here since window handles it now */}
+            {/* INNER CARD */}
             <Box
               sx={{
                 bgcolor: 'background.paper',
                 borderRadius: 3,
                 boxShadow: '0 12px 40px 0 rgba(0, 0, 0, 0.4)',
                 p: 4,
-                // Apply the dynamic rotation calculated in our useEffect
                 transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
-                // Smooth out the movement so it feels physical, not jerky
                 transition: 'transform 0.15s ease-out',
                 transformStyle: 'preserve-3d',
                 willChange: 'transform',
+                maxHeight: '90vh', 
+                display: 'flex',
+                flexDirection: 'column',
               }}
             >
-              <Typography variant="h5" component="h2" fontWeight="bold" gutterBottom>
+              <Typography 
+                variant="h5" 
+                component="h2" 
+                fontWeight="bold" 
+                gutterBottom 
+                flexShrink={0}
+                // Push title forward for a 3D parallax effect
+                sx={{ transform: 'translateZ(0px)' }} 
+              >
                 {title}
               </Typography>
               
-              <Box sx={{ mt: 2, mb: 4, color: 'text.secondary', lineHeight: 1.6 }}>
+              <Box 
+                sx={{ 
+                  mt: 2, 
+                  mb: 4, 
+                  color: 'text.secondary', 
+                  lineHeight: 1.6,
+                  overflowY: 'auto', 
+                  pr: 1, 
+                  // Keep text slightly raised
+                  transform: 'translateZ(0px)', 
+                  '&::-webkit-scrollbar': { width: '6px' },
+                  '&::-webkit-scrollbar-track': { background: 'transparent' },
+                  '&::-webkit-scrollbar-thumb': { background: '#e0e0e0', borderRadius: '10px' },
+                  '&::-webkit-scrollbar-thumb:hover': { background: '#bdbdbd' },
+                }}
+              >
                 {children}
               </Box>
 
@@ -138,8 +162,15 @@ export default function AnimatedInfoButton({
                   borderRadius: 2, 
                   textTransform: 'none', 
                   fontSize: '1.05rem',
-                  transition: 'transform 0.2s',
-                  '&:hover': { transform: 'translateY(-2px)' }
+                  transition: 'all 0.2s',
+                  flexShrink: 0, 
+                  // Fix the hitbox: strictly define the Z-axis so it floats above the card
+                  transform: 'translateZ(30px)', 
+                  '&:hover': { 
+                    // Maintain the Z-axis position during the Y-axis hover lift
+                    transform: 'translateZ(10px) translateY(-2px)',
+                    boxShadow: '0 6px 15px -4px rgba(25, 118, 210, 0.4)'
+                  }
                 }}
               >
                 Continue

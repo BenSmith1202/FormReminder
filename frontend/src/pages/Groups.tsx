@@ -64,7 +64,8 @@ export default function Groups() {
       <Box mb={4}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
           Groups            <AnimatedInfoButton title="Groups Overview">
-                              <p>TODO: add information about groups here.</p>
+                              <p>Here is the groups page. You can view and manage recipient groups for your form requests here.</p>
+                              <p>Click "Create New Group" to set up a new group, or click on an existing group to view its details and members.</p>
                             </AnimatedInfoButton>
         </Typography>
         <Typography variant="body1" color="text.secondary">

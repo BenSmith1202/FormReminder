@@ -226,7 +226,10 @@ export default function EditGroup() {
 
       <Typography variant="h5" component="h1" fontWeight="bold" gutterBottom>
         Edit Group        <AnimatedInfoButton title="Editing a group">
-                            <p>TODO: Add edit group tutorial here.</p>
+                            <p>On this page, you can update the name and description of your group.</p>
+                            <p>You can also add new members by entering their email addresses and clicking "Add Members". To remove a member, click the trash icon next to their email.</p>
+                            <p>Be careful when deleting a group, as this action cannot be undone. Deleting a group will remove it from all associated form requests.</p>
+                            <p> to return to the group details page without making changes, click "Back to Group".</p>
                           </AnimatedInfoButton>
       </Typography>
 

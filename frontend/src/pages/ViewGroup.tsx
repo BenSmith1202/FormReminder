@@ -154,7 +154,9 @@ export default function ViewGroup() {
             <Box>
               <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
                 {group.name}      <AnimatedInfoButton title="FormReminder Groups">
-                                    <p>TODO: Add information about FormReminder groups here.</p>
+                                    <p>This is a FormReminder group. You can manage the members and settings of this group here.</p>
+                                    <p>Groups are a way to organize recipients for your form requests. You can add members to this group and then send form requests to the entire group at once.</p>
+                                    <p>Use the "Edit Group" button to add or remove members, or to change the group name and description.</p>
                                   </AnimatedInfoButton>
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={0.5}>

@@ -221,7 +221,10 @@ export default function CreateRequest() {
         <Box mb={4}>
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
             New Form Request <AnimatedInfoButton title="How to create a form request">
-                                <p>TODO: Add a detailed tutorial here.</p>
+                                <p>Use this form to create a new form request and send it to your recipients.</p>
+                                <p>Start by entering the title of your request and the URL of your Form. Then select a recipient group, set a due date, and choose your reminder schedule.</p>
+                                <p>Once you create the request, reminders will automatically be sent to your recipients based on the schedule you set.</p>
+                                
                               </AnimatedInfoButton>
           </Typography>
           <Typography variant="body1" color="text.secondary">
@@ -526,7 +529,10 @@ export default function CreateRequest() {
         >
           <DialogTitle>
             <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6" component="span">Custom Schedule</Typography>
+              <Typography variant="h6" component="span">Custom Schedule <AnimatedInfoButton title="Custom Schedules">
+                  <p>Custom schedules let you choose exactly which days reminders go out before the due date. You can add as many days as you want, up to 30.</p>
+                </AnimatedInfoButton>
+              </Typography>
               <IconButton size="small" onClick={() => { setCustomScheduleOpen(false); setCustomScheduleError(null); setNewDayInput(''); }}>
                 <CloseIcon />
               </IconButton>
