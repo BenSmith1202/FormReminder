@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 export default function CreateGroup() {
   const navigate = useNavigate();
@@ -108,7 +109,11 @@ export default function CreateGroup() {
     <Box maxWidth="sm" sx={{ mx: 'auto' }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" component="h1" gutterBottom>
-          Create a New Group
+          Create a New Group  <AnimatedInfoButton title="Creating a Group">
+                                <p>What is a group?</p>
+                                <p>A group is a collection of recipients that you can easily manage and send form requests to. Here you can create a group, give it a description, and add members to it. Then, when you want to send a form request, you can simply select the group as the recipient.</p>
+                                <p>Groups are perfect for teams, departments, or any set of people you frequently need to contact together. You can add or remove members from a group at any time, and each group has its own unique invite link for easy sharing.</p>
+                              </AnimatedInfoButton>
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           Groups help you organize recipients for your form requests

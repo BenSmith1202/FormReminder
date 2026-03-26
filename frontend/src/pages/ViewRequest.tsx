@@ -44,6 +44,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface FormRequest {
   id: string;
@@ -528,7 +529,9 @@ export default function ViewRequest() {
             <Box>
               <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
                 <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
-                  {formRequest.title}
+                {formRequest.title}               <AnimatedInfoButton title="Form Requests">
+                                                    <p>TODO: Add information about form requests here.</p>
+                                                  </AnimatedInfoButton>
                 </Typography>
                 <Chip
                   label={formRequest.status}

@@ -36,6 +36,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -219,7 +220,9 @@ export default function CreateRequest() {
         {/* Page title */}
         <Box mb={4}>
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-            New Form Request
+            New Form Request <AnimatedInfoButton title="How to create a form request">
+                                <p>TODO: Add a detailed tutorial here.</p>
+                              </AnimatedInfoButton>
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Set up a form, assign recipients, and configure your reminder schedule.

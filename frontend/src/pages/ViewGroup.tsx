@@ -28,6 +28,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import LinkIcon from '@mui/icons-material/Link';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Member {
   email: string;
@@ -152,7 +153,9 @@ export default function ViewGroup() {
             </Box>
             <Box>
               <Typography variant="h5" component="h1" fontWeight="bold" lineHeight={1.2}>
-                {group.name}
+                {group.name}      <AnimatedInfoButton title="FormReminder Groups">
+                                    <p>TODO: Add information about FormReminder groups here.</p>
+                                  </AnimatedInfoButton>
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={0.5}>
                 {group.description || 'No description provided.'}

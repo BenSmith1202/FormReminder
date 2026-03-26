@@ -28,6 +28,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AnimatedInfoButton from '../components/InfoButton';
 
 const API_URL = 'http://localhost:5000';
 
@@ -330,7 +331,9 @@ export default function Settings() {
       {/* ── Page header ── */}
       <Box mb={4}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          Settings
+          Settings          <AnimatedInfoButton title="FormReminder Settings">
+                              <p>This page allows you to manage your FormReminder account settings. TODO: add more info here.</p>
+                            </AnimatedInfoButton>
         </Typography>
         {/* User identity card */}
         <Box

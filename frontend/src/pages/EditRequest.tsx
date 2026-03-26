@@ -38,6 +38,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -229,7 +230,9 @@ export default function EditRequest() {
           </Box>
           <Box>
             <Typography variant="h5" component="h1" fontWeight="bold">
-              Edit Request
+              Edit Request      <AnimatedInfoButton title="Editing a form request">
+                                  <p>TODO: Add edit form request tutorial here.</p>
+                                </AnimatedInfoButton>
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {requestTitle || 'Untitled Request'}

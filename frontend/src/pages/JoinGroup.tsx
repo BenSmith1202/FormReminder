@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 export default function JoinGroup() {
   const { token } = useParams<{ token: string }>();
@@ -105,7 +106,9 @@ export default function JoinGroup() {
     <Box maxWidth="sm" sx={{ mx: 'auto', mt: 8 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" component="h1" gutterBottom>
-          Join Group
+          Join Group        <AnimatedInfoButton title="Joining a FormReminder Group">
+                              <p>TODO: Add information about joining a FormReminder group here.</p>
+                            </AnimatedInfoButton>
         </Typography>
         
         {error && (

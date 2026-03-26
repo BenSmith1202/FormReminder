@@ -33,6 +33,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Member {
   email: string;
@@ -224,7 +225,9 @@ export default function EditGroup() {
       </Box>
 
       <Typography variant="h5" component="h1" fontWeight="bold" gutterBottom>
-        Edit Group
+        Edit Group        <AnimatedInfoButton title="Editing a group">
+                            <p>TODO: Add edit group tutorial here.</p>
+                          </AnimatedInfoButton>
       </Typography>
 
       {/* ── Alerts ── */}

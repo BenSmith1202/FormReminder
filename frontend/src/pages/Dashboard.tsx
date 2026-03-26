@@ -17,6 +17,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import StorageIcon from '@mui/icons-material/Storage';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface HealthResponse {
   status: string;
@@ -506,7 +507,9 @@ export default function Dashboard() {
       >
         <Box>
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-            Dashboard
+            Dashboard <AnimatedInfoButton title="Dashboard Guide">
+              This dashboard provides an overview of your form requests and their response rates.
+            </AnimatedInfoButton>
           </Typography>
           <Box display="flex" alignItems="center" gap={1}>
             <Typography variant="body2" color="text.secondary">
@@ -595,6 +598,7 @@ export default function Dashboard() {
           iconBg={isHealthy ? 'success.50' : 'warning.50'}
           iconColor={isHealthy ? 'success.main' : 'warning.main'}
         />
+        
       </Box>
 
       {/* ── Requests Table / Cards ── */}
