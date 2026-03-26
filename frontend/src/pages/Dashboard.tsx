@@ -15,6 +15,9 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import StorageIcon from '@mui/icons-material/Storage';
+import { TextField, InputAdornment } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import CloseIcon from '@mui/icons-material/Close'; // Optional: for a clear button
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
@@ -55,7 +58,22 @@ function StatCard({
   return (
     <Card
       elevation={0}
-      sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, height: '100%' }}
+      sx={{ 
+        borderRadius: 3,
+        border: '1px solid',
+        borderColor: 'divider', 
+        height: '100%',
+        // Faint blue-to-white background gradient
+        background: 'linear-gradient(135deg, #f4f9ff 0%, #ffffff 100%)',
+        // Smooth transition for the hover effect
+        transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+        boxShadow: '0 4px 10px -4px rgba(0,0,0,0.1)',
+        '&:hover': {
+          transform: 'translateY(-4px)',
+          boxShadow: '0 12px 24px -10px rgba(0,0,0,0.2)',
+          
+        }
+      }}
     >
       <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start">
@@ -111,8 +129,6 @@ function RequestCard({
       : 0;
   const isActive = row.status === 'Active';
 
-
-  
   return (
     <Paper
       elevation={0}
@@ -123,8 +139,14 @@ function RequestCard({
         borderColor: 'divider',
         borderRadius: 3,
         cursor: 'pointer',
-        transition: 'all 0.15s ease',
-        '&:hover': { borderColor: 'primary.main', boxShadow: 2 },
+        // Subtle gradient going the opposite direction
+        background: 'linear-gradient(135deg, #ffffff 0%, #f7fbff 100%)',
+        transition: 'all 0.2s ease-in-out',
+        '&:hover': { 
+          transform: 'translateY(-2px) scale(1.01)',
+          borderColor: 'primary.main', 
+          boxShadow: '0 8px 20px -8px rgba(0,0,0,0.15)' 
+        },
       }}
     >
       <Box display="flex" alignItems="flex-start" justifyContent="space-between" gap={1} mb={1.5}>
@@ -249,6 +271,8 @@ export default function Dashboard() {
   // Initialize state with loader data
   const [data, setData] = useState<HealthResponse | null>(initialHealth);
   const [rows, setRows] = useState<FormRequestRow[]>(initialRows);
+  const [searchQuery, setSearchQuery] = useState('');
+
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
 
@@ -259,6 +283,19 @@ export default function Dashboard() {
     const overallRate = totalRecipients > 0 ? Math.round((totalResponses / totalRecipients) * 100) : 0;
     return { activeForms, totalResponses, overallRate };
   }, [rows]);
+
+  // Filter the rows based on the search query. 
+  // We use useMemo so it only recalculates when 'rows' or 'searchQuery' changes.
+  const filteredMobileRows = useMemo(() => {
+    if (!searchQuery.trim()) return rows;
+    
+    const lowerQuery = searchQuery.toLowerCase();
+    return rows.filter((row) => 
+      // Add any other fields you want to search here (like group names if you have them in the data)
+      row.title.toLowerCase().includes(lowerQuery) || 
+      row.status.toLowerCase().includes(lowerQuery)
+    );
+  }, [rows, searchQuery]);
 
   // ── DataGrid column defs ──
   const columns: GridColDef[] = [
@@ -604,7 +641,16 @@ export default function Dashboard() {
       {/* ── Requests Table / Cards ── */}
       <Paper
         elevation={0}
-        sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, overflow: 'hidden' }}
+        sx={{ 
+          border: '1px solid', 
+          borderColor: 'divider', 
+          borderRadius: 3, 
+          overflow: 'hidden',
+          transition: 'box-shadow 0.3s ease-in-out',
+          '&:hover': {
+            boxShadow: '0 12px 32px -12px rgba(0,0,0,0.1)', // Outer glow
+          }
+        }}
       >
         {/* Panel header */}
         <Box
@@ -613,7 +659,12 @@ export default function Dashboard() {
           display="flex"
           alignItems="center"
           justifyContent="space-between"
-          sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
+          sx={{ 
+            borderBottom: '1px solid', 
+            borderColor: 'divider', 
+            // Faint horizontal gradient for the header
+            background: 'linear-gradient(90deg, #f4f9ff 0%, #ffffff 100%)',
+          }}
         >
           <Typography variant="subtitle1" fontWeight="bold">
             Form Requests
@@ -621,8 +672,50 @@ export default function Dashboard() {
           <Chip label={`${rows.length} total`} size="small" variant="outlined" />
         </Box>
 
-        {/* Mobile card list */}
+        {/* Mobile card list & Search */}
         <Box sx={{ display: { xs: 'block', md: 'none' }, p: 2 }}>
+          
+          {/* Search Bar */}
+          {rows.length > 0 && (
+            <TextField
+              fullWidth
+              placeholder="Search forms..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              variant="outlined"
+              size="small"
+              sx={{
+                mb: 2.5,
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: 3,
+                  bgcolor: 'background.paper',
+                  transition: 'box-shadow 0.2s',
+                  '&:hover': {
+                    boxShadow: '0 4px 12px -4px rgba(0,0,0,0.1)',
+                  },
+                  '&.Mui-focused': {
+                    boxShadow: '0 4px 12px -4px rgba(25, 118, 210, 0.2)',
+                  }
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon color="action" />
+                  </InputAdornment>
+                ),
+                endAdornment: searchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setSearchQuery('')} edge="end">
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              }}
+            />
+          )}
+
+          {/* Results Handling */}
           {rows.length === 0 ? (
             <Box py={6} textAlign="center">
               <AssignmentIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1.5 }} />
@@ -633,9 +726,18 @@ export default function Dashboard() {
                 Create one now
               </Button>
             </Box>
+          ) : filteredMobileRows.length === 0 ? (
+            <Box py={4} textAlign="center" className="fade-in">
+              <Typography color="text.secondary">
+                No results found for "{searchQuery}"
+              </Typography>
+              <Button sx={{ mt: 1 }} size="small" onClick={() => setSearchQuery('')}>
+                Clear Search
+              </Button>
+            </Box>
           ) : (
             <Stack spacing={1.5}>
-              {rows.map((row) => (
+              {filteredMobileRows.map((row) => (
                 <RequestCard
                   key={row.id}
                   row={row}
