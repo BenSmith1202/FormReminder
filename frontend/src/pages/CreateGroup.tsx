@@ -1,3 +1,10 @@
+/**
+ * @file CreateGroup.tsx
+ * @description Provides a form for users to create a new recipient group.
+ * Upon successful creation, it presents a dialog allowing the user to copy 
+ * an invite link or manually bulk-add members via email addresses.
+ */
+
 import { useState } from 'react';
 import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, DialogContent, DialogActions, IconButton } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
@@ -8,15 +15,26 @@ import AnimatedInfoButton from '../components/InfoButton';
 
 export default function CreateGroup() {
   const navigate = useNavigate();
+  
+  // --- Form & UI State ---
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // --- Success Dialog State ---
   const [showSuccess, setShowSuccess] = useState(false);
-  const [createdGroup, setCreatedGroup] = useState<any>(null);
+  const [createdGroup, setCreatedGroup] = useState<any>(null); // Stores the response object of the newly created group
+  
+  // --- Member Addition State ---
   const [emails, setEmails] = useState('');
   const [addingMembers, setAddingMembers] = useState(false);
 
+  /**
+   * Submits the new group data to the backend.
+   * On success, it halts the form UI and opens the success dialog 
+   * so the user can immediately start adding members.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -43,18 +61,23 @@ export default function CreateGroup() {
         throw new Error(data.error || 'Failed to create group');
       }
       
-      console.log('✅ Group created:', data);
+      console.log('Group created:', data);
       setCreatedGroup(data.group);
       setShowSuccess(true);
       
     } catch (err: any) {
-      console.error('❌ Failed to create group:', err);
+      console.error('Failed to create group:', err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * Takes the raw string from the email textarea, sends it to the backend 
+   * to be parsed, and adds those users to the newly created group.
+   * Updates the local group state with the new member count upon success.
+   */
   const handleAddMembers = async () => {
     if (!emails.trim() || !createdGroup) return;
     
@@ -75,24 +98,28 @@ export default function CreateGroup() {
         throw new Error(data.error || 'Failed to add members');
       }
       
-      console.log('✅ Members added:', data);
+      console.log('Members added:', data);
       alert(`Added ${data.added_count} members!${data.skipped > 0 ? ` (${data.skipped} duplicates skipped)` : ''}`);
       setEmails('');
       
-      // Update member count
+      // Update member count in the dialog UI
       setCreatedGroup({
         ...createdGroup,
         member_count: data.total_members
       });
       
     } catch (err: any) {
-      console.error('❌ Failed to add members:', err);
+      console.error('Failed to add members:', err);
       alert(err.message);
     } finally {
       setAddingMembers(false);
     }
   };
 
+  /**
+   * Generates the unique invite link for the new group and writes it 
+   * directly to the user's system clipboard.
+   */
   const handleCopyLink = () => {
     if (!createdGroup) return;
     const inviteLink = `${window.location.origin}/groups/join/${createdGroup.invite_token}`;
@@ -100,6 +127,10 @@ export default function CreateGroup() {
     alert('Invite link copied to clipboard!');
   };
 
+  /**
+   * Closes the success dialog and redirects the user back to the 
+   * main groups dashboard.
+   */
   const handleClose = () => {
     setShowSuccess(false);
     navigate('/groups');
@@ -169,7 +200,7 @@ export default function CreateGroup() {
 
       {/* Success Dialog */}
       <Dialog open={showSuccess} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitle>🎉 Group Created Successfully!</DialogTitle>
+        <DialogTitle>Group Created Successfully!</DialogTitle>
         <DialogContent>
           <Typography variant="h6" component="p" gutterBottom>
             {createdGroup?.name}
