@@ -27,6 +27,7 @@ import {
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface OptOutEventRow {
   id: string;
@@ -369,7 +370,9 @@ export default function Analytics() {
   return (
     <Box sx={{ px: { xs: 1, sm: 2 }, py: 2 }}>
       <Typography variant="h5" component="h1" gutterBottom sx={{ fontWeight: 600 }}>
-        Analytics
+        Analytics <AnimatedInfoButton title="Analytics Guide">
+                    <p>This page provides insights into opt-out events and submission trends for your forms.</p>
+                  </AnimatedInfoButton>
       </Typography>
       {events.length === 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>

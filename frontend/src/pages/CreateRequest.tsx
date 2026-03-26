@@ -1,3 +1,10 @@
+/**
+ * @file CreateRequest.tsx
+ * @description Provides a comprehensive multi-section form to create a new Form Request.
+ * Allows users to link a Google Form, assign it to a recipient group, set a deadline, 
+ * and configure automated reminder schedules (preset or custom).
+ */
+
 import { useState, useEffect } from 'react';
 import {
   Box,
@@ -36,6 +43,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -43,7 +51,15 @@ interface Group {
   member_count: number;
 }
 
-// Shared section header component
+/**
+ * Shared UI Component: SectionHeader
+ * Renders a consistent title block with an icon for the different panels in the form.
+ * * @param {React.ReactNode} icon - The MUI icon to display.
+ * @param {string} title - The main heading for the section.
+ * @param {string} [description] - Optional subtext explaining the section.
+ * @param {string} [iconBg] - Background color for the icon box (defaults to primary light).
+ * @param {string} [iconColor] - Color for the icon itself (defaults to primary main).
+ */
 function SectionHeader({
   icon,
   title,
@@ -94,34 +110,39 @@ function SectionHeader({
 export default function CreateRequest() {
   const navigate = useNavigate();
 
-  // Form state
+  // --- Core Form State ---
   const [requestTitle, setRequestTitle] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
 
-  // Schedule state
-  const [reminderSchedule, setReminderSchedule] = useState('normal');
-  const [firstReminderTiming, setFirstReminderTiming] = useState('immediate');
+  // --- Automated Schedule State ---
+  const [reminderSchedule, setReminderSchedule] = useState('normal'); // 'gentle', 'normal', 'frequent', or 'custom'
+  const [firstReminderTiming, setFirstReminderTiming] = useState('immediate'); // 'immediate' or 'scheduled'
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
 
-  // Custom schedule state
+  // --- Custom Schedule Configuration State ---
   const [customScheduleOpen, setCustomScheduleOpen] = useState(false);
-  const [customDays, setCustomDays] = useState<number[]>([]);
+  const [customDays, setCustomDays] = useState<number[]>([]); // Array of integers (days before deadline)
   const [newDayInput, setNewDayInput] = useState('');
   const [customScheduleError, setCustomScheduleError] = useState<string | null>(null);
 
-  // UI state
+  // --- Global UI State ---
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
 
+  // Load available recipient groups when the component mounts
   useEffect(() => {
     loadGroups();
   }, []);
 
+  /**
+   * Fetches the user's available recipient groups from the backend
+   * to populate the "Recipients" dropdown menu.
+   */
   const loadGroups = async () => {
     try {
       const response = await fetch(`${API_URL}/api/groups`, { credentials: 'include' });
@@ -132,6 +153,11 @@ export default function CreateRequest() {
     }
   };
 
+  /**
+   * Validates and adds a new number (representing days before due date) 
+   * to the custom schedule array. Prevents duplicates, out-of-bound numbers, 
+   * and limits the array to 30 elements to prevent DB bloat.
+   */
   const handleAddCustomDay = () => {
     const day = parseInt(newDayInput);
     if (isNaN(day) || day < 1 || day > 365) {
@@ -151,10 +177,18 @@ export default function CreateRequest() {
     setCustomScheduleError(null);
   };
 
+  /**
+   * Primary form submission handler.
+   * 1. Validates all required inputs (including dynamic schedule requirements).
+   * 2. Constructs the final JSON payload.
+   * 3. Handles specific backend errors, particularly detecting if the user's 
+   * Google OAuth token has expired and requires a fresh login.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
+    // Initial Validation
     if (!formUrl) { setError('Please enter a form URL'); return; }
     if (!groupId) { setError('Please select a group'); return; }
     if (!dueDate) { setError('Please select a due date'); return; }
@@ -165,6 +199,7 @@ export default function CreateRequest() {
 
     setLoading(true);
     try {
+      // Construct the base payload
       const requestBody: any = {
         form_url: formUrl,
         group_id: groupId,
@@ -174,6 +209,7 @@ export default function CreateRequest() {
         first_reminder_timing: firstReminderTiming,
       };
 
+      // Append custom schedule data if applicable
       if (reminderSchedule === 'custom') {
         if (customDays.length === 0) {
           setError('Please create a custom schedule with at least one day');
@@ -183,6 +219,7 @@ export default function CreateRequest() {
         requestBody.custom_days = customDays;
       }
 
+      // Append specific start-time data if first reminder is deferred
       if (firstReminderTiming === 'scheduled' && scheduledDate && scheduledTime) {
         requestBody.scheduled_date = scheduledDate.toISOString();
         requestBody.scheduled_time = scheduledTime.toISOString();
@@ -194,18 +231,24 @@ export default function CreateRequest() {
         credentials: 'include',
         body: JSON.stringify(requestBody),
       });
+      
       const data = await response.json();
 
       if (!response.ok) {
+        // Detect if the failure was due to an expired/invalid Google API token.
+        // If true, we prompt the user to re-authenticate with Google.
         const needsReconnect =
           data.action_required === 'reconnect_google' ||
           (response.status === 403 && data.error?.toLowerCase().includes('google'));
+        
         if (needsReconnect) setNeedsGoogleReconnect(true);
         throw new Error(data.message || data.error || 'Failed to create form request');
       }
 
+      // Success
       setNeedsGoogleReconnect(false);
       navigate('/');
+      
     } catch (err: any) {
       setError(err.message || 'Failed to create form request');
     } finally {
@@ -219,13 +262,19 @@ export default function CreateRequest() {
         {/* Page title */}
         <Box mb={4}>
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-            New Form Request
+            New Form Request <AnimatedInfoButton title="How to create a form request">
+                                <p>Use this form to create a new form request and send it to your recipients.</p>
+                                <p>Start by entering the title of your request and the URL of your Form. Then select a recipient group, set a due date, and choose your reminder schedule.</p>
+                                <p>Once you create the request, reminders will automatically be sent to your recipients based on the schedule you set.</p>
+                                
+                              </AnimatedInfoButton>
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Set up a form, assign recipients, and configure your reminder schedule.
           </Typography>
         </Box>
 
+        {/* Dynamic Error Banner (Handles Google OAuth Prompts) */}
         {error && (
           <Alert
             severity="error"
@@ -238,6 +287,7 @@ export default function CreateRequest() {
                   size="small"
                   onClick={async () => {
                     try {
+                      // Trigger Google OAuth flow to refresh tokens
                       const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
                       const data = await res.json();
                       if (data.authorization_url) {
@@ -380,6 +430,7 @@ export default function CreateRequest() {
                 value={reminderSchedule}
                 onChange={(e) => {
                   setReminderSchedule(e.target.value);
+                  // Clear custom days if the user switches back to a standard preset
                   if (e.target.value !== 'custom') setCustomDays([]);
                 }}
               >
@@ -416,7 +467,7 @@ export default function CreateRequest() {
                 )}
               </RadioGroup>
 
-              {/* Custom chips */}
+              {/* Editable custom chips that appear below the radio buttons */}
               {reminderSchedule === 'custom' && customDays.length > 0 && (
                 <Box display="flex" flexWrap="wrap" gap={1} mt={1.5} ml={3.5}>
                   {customDays
@@ -429,6 +480,7 @@ export default function CreateRequest() {
                         onDelete={() => {
                           const updated = customDays.filter((d) => d !== day);
                           setCustomDays(updated);
+                          // Revert to normal if user deletes the final custom chip
                           if (updated.length === 0) setReminderSchedule('normal');
                         }}
                       />
@@ -523,7 +575,10 @@ export default function CreateRequest() {
         >
           <DialogTitle>
             <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6" component="span">Custom Schedule</Typography>
+              <Typography variant="h6" component="span">Custom Schedule <AnimatedInfoButton title="Custom Schedules">
+                  <p>Custom schedules let you choose exactly which days reminders go out before the due date. You can add as many days as you want.</p>
+                </AnimatedInfoButton>
+              </Typography>
               <IconButton size="small" onClick={() => { setCustomScheduleOpen(false); setCustomScheduleError(null); setNewDayInput(''); }}>
                 <CloseIcon />
               </IconButton>
@@ -547,6 +602,7 @@ export default function CreateRequest() {
                 value={newDayInput}
                 onChange={(e) => {
                   const v = e.target.value;
+                  // Allow empty string to clear the box, otherwise enforce bounds
                   if (v === '' || (Number(v) > 0 && Number(v) <= 365)) setNewDayInput(v);
                   setCustomScheduleError(null);
                 }}

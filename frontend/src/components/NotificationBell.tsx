@@ -19,6 +19,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 import API_URL from '../config';
+import AnimatedInfoButton from './InfoButton';
 
 // Notification type constants (match backend)
 const NotificationType = {
@@ -207,7 +208,10 @@ export default function NotificationBell({ pollInterval = 30000 }: NotificationB
         {/* Header */}
         <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" component="p" sx={{ fontWeight: 600 }}>
-            Notifications
+            Notifications                     <AnimatedInfoButton title="Notifications">
+                                                <p>Here you can view your FormReminder notifications.</p>
+                                                <p>Clicking a notification will take you to the related page, group, or request.</p>
+                                              </AnimatedInfoButton>
           </Typography>
           {unreadCount > 0 && (
             <Button size="small" onClick={handleMarkAllRead}>

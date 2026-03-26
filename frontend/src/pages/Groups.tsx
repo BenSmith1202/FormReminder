@@ -12,6 +12,7 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -62,7 +63,10 @@ export default function Groups() {
       {/* Page Header */}
       <Box mb={4}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          Groups
+          Groups            <AnimatedInfoButton title="Groups Overview">
+                              <p>Here is the groups page. You can view and manage recipient groups for your form requests here.</p>
+                              <p>Click "Create New Group" to set up a new group, or click on an existing group to view its details and members.</p>
+                            </AnimatedInfoButton>
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Manage recipient groups for your form requests.
