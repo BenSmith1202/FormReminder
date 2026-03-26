@@ -1,3 +1,21 @@
+/**
+ * Dashboard.tsx
+ *
+ * The main landing page of the application after login.
+ *
+ * Responsibilities:
+ *  - Fetches and displays all form requests belonging to the logged-in user
+ *  - Shows aggregate stats (active forms, total responses, response rate, system health)
+ *  - Provides a DataGrid (desktop) and card list (mobile) view of form requests
+ *  - Supports duplicating and deleting requests
+ *  - Polls the backend every 30 seconds to keep data fresh while the tab is visible
+ *
+ * Data flow:
+ *  - dashboardLoader() runs before the component mounts (React Router loader)
+ *  - The component receives pre-fetched data via useLoaderData()
+ *  - Subsequent refreshes update local state without a full page reload
+ */
+
 import { useEffect, useState, useMemo } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
@@ -17,29 +35,48 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import StorageIcon from '@mui/icons-material/Storage';
 import { TextField, InputAdornment } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import CloseIcon from '@mui/icons-material/Close'; // Optional: for a clear button
+import CloseIcon from '@mui/icons-material/Close';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
 
+// ── Types ──────────────────────────────────────────────────────────────────
+
+/** Shape of the response from GET /api/health */
 interface HealthResponse {
-  status: string;
-  database: string;
+  status: string;       // e.g. 'healthy' | 'error'
+  database: string;     // e.g. 'connected' | 'disconnected'
   submission_count?: number;
 }
 
+/** A single row in the form-requests table / card list */
 interface FormRequestRow {
   id: string;
   title: string;
-  response_count: number;
-  total_recipients: number;
-  created_at: string;
-  last_synced_at: string;
+  response_count: number;      // How many recipients have responded
+  total_recipients: number;    // Total number of recipients for this form
+  created_at: string;          // ISO date string
+  last_synced_at: string;      // ISO date string of last Google Forms sync
   status: 'Active' | 'Inactive';
-  warnings?: string[];
+  warnings?: string[];         // Optional backend-generated warning messages
 }
 
-// ── Stat Card ──────────────────────────────────────────────────────────────
+/** Aggregate stats derived from the rows array, computed via useMemo */
+interface DashboardStats {
+  activeForms: number;    // Count of rows with status === 'Active'
+  totalResponses: number; // Sum of response_count across all rows
+  overallRate: number;    // (totalResponses / totalRecipients) * 100, rounded
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────
+
+/**
+ * StatCard
+ *
+ * A single summary metric card displayed in the top stats grid.
+ * Shows a title, a large numeric/text value, optional subtext, and a
+ * colour-coded icon avatar in the top-right corner.
+ */
 function StatCard({
   title,
   value,
@@ -52,8 +89,8 @@ function StatCard({
   value: string | number;
   subtext?: string;
   icon: React.ReactNode;
-  iconBg: string;
-  iconColor: string;
+  iconBg: string;      // MUI sx color token for the icon background, e.g. 'primary.50'
+  iconColor: string;   // MUI sx color token for the icon itself, e.g. 'primary.main'
 }) {
   return (
     <Card
@@ -65,18 +102,18 @@ function StatCard({
         height: '100%',
         // Faint blue-to-white background gradient
         background: 'linear-gradient(135deg, #f4f9ff 0%, #ffffff 100%)',
-        // Smooth transition for the hover effect
+        // Smooth transition for the hover lift effect
         transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
         boxShadow: '0 4px 10px -4px rgba(0,0,0,0.1)',
         '&:hover': {
           transform: 'translateY(-4px)',
           boxShadow: '0 12px 24px -10px rgba(0,0,0,0.2)',
-          
         }
       }}
     >
       <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+          {/* Left: title, value, optional subtext */}
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight="bold" display="block" gutterBottom>
               {title.toUpperCase()}
@@ -90,6 +127,7 @@ function StatCard({
               </Typography>
             )}
           </Box>
+          {/* Right: colour-coded icon avatar */}
           <Box
             sx={{
               width: 44,
@@ -111,7 +149,22 @@ function StatCard({
   );
 }
 
-// ── Mobile Request Card ────────────────────────────────────────────────────
+/**
+ * RequestCard
+ *
+ * Mobile-only card representation of a single FormRequestRow.
+ * Shown in a stacked list on xs/sm screens in place of the DataGrid.
+ *
+ * Includes:
+ *  - Title avatar + name + optional warning badge
+ *  - Active/Inactive status chip
+ *  - Response progress bar
+ *  - Last-synced date
+ *  - View / Duplicate / Delete action buttons
+ *
+ * Note: the action buttons call e.stopPropagation() so clicks don't
+ * bubble up to the card's own onClick (which navigates to the detail page).
+ */
 function RequestCard({
   row,
   onView,
@@ -123,6 +176,7 @@ function RequestCard({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
+  // Completion percentage, capped at 100 to guard against data anomalies
   const pct =
     row.total_recipients > 0
       ? Math.min(100, Math.round((row.response_count / row.total_recipients) * 100))
@@ -139,7 +193,6 @@ function RequestCard({
         borderColor: 'divider',
         borderRadius: 3,
         cursor: 'pointer',
-        // Subtle gradient going the opposite direction
         background: 'linear-gradient(135deg, #ffffff 0%, #f7fbff 100%)',
         transition: 'all 0.2s ease-in-out',
         '&:hover': { 
@@ -149,8 +202,10 @@ function RequestCard({
         },
       }}
     >
+      {/* ── Header row: avatar + title + status chip ── */}
       <Box display="flex" alignItems="flex-start" justifyContent="space-between" gap={1} mb={1.5}>
         <Box display="flex" alignItems="center" gap={1.5} minWidth={0}>
+          {/* First letter of the title as an avatar, styled by active state */}
           <Avatar
             sx={{
               width: 36,
@@ -168,6 +223,7 @@ function RequestCard({
             <Typography variant="subtitle2" fontWeight="bold" noWrap>
               {row.title}
             </Typography>
+            {/* Show an "Attention needed" caption if the backend flagged warnings */}
             {row.warnings && row.warnings.length > 0 && (
               <Typography variant="caption" color="error.main" display="flex" alignItems="center" gap={0.5}>
                 <ErrorOutlineIcon sx={{ fontSize: 12 }} /> Attention needed
@@ -187,6 +243,7 @@ function RequestCard({
         />
       </Box>
 
+      {/* ── Progress bar: responses / total recipients ── */}
       <Box mb={1.5}>
         <Box display="flex" justifyContent="space-between" mb={0.5}>
           <Typography variant="caption" color="text.secondary">
@@ -204,6 +261,7 @@ function RequestCard({
         />
       </Box>
 
+      {/* ── Footer row: last-synced date + action buttons ── */}
       <Box display="flex" alignItems="center" justifyContent="space-between">
         <Typography variant="caption" color="text.disabled">
           Synced{' '}
@@ -214,6 +272,7 @@ function RequestCard({
               })
             : 'Never'}
         </Typography>
+        {/* Stop propagation so these don't trigger the card's onView handler */}
         <Box display="flex" gap={0.5} onClick={(e) => e.stopPropagation()}>
           <Tooltip title="View Details">
             <IconButton size="small" onClick={onView} sx={{ color: 'primary.main' }}>
@@ -236,75 +295,143 @@ function RequestCard({
   );
 }
 
+// ── Loader ─────────────────────────────────────────────────────────────────
+
+/**
+ * dashboardLoader
+ *
+ * React Router loader function — runs on the server before the Dashboard
+ * component mounts, so the page renders with data immediately (no loading
+ * spinner on first paint).
+ *
+ * Fetches in parallel:
+ *  1. GET /api/health   — system / database status
+ *  2. GET /api/form-requests — all form requests for the current user
+ *
+ * Transforms raw API request objects into the FormRequestRow shape expected
+ * by the DataGrid and card list.
+ *
+ * On any fetch failure, returns safe empty defaults so the page still renders.
+ */
 export async function dashboardLoader() {
   try {
+    // Fire both requests simultaneously to reduce total load time
     const [healthRes, requestsRes] = await Promise.all([
       fetch(`${API_URL}/api/health`, { credentials: 'include' }),
       fetch(`${API_URL}/api/form-requests`, { credentials: 'include' })
     ]);
 
-    const healthData = healthRes.ok ? await healthRes.json() : { status: 'error', database: 'disconnected' };
+    const healthData: HealthResponse = healthRes.ok
+      ? await healthRes.json()
+      : { status: 'error', database: 'disconnected' };
+
     const rawRequests = requestsRes.ok ? await requestsRes.json() : [];
-    
-    const transformedRows = Array.isArray(rawRequests) ? rawRequests.map((req: any) => ({
-      id: req.id,
-      title: req.title || 'Untitled Form',
-      response_count: req.response_count || 0,
-      total_recipients: req.total_recipients || 0,
-      created_at: req.created_at,
-      last_synced_at: req.last_synced_at,
-      status: req.is_active ? 'Active' : 'Inactive',
-      warnings: req.warnings || [],
-    })) : [];
+
+    // Normalise raw API objects into the typed FormRequestRow shape
+    const transformedRows: FormRequestRow[] = Array.isArray(rawRequests)
+      ? rawRequests.map((req: any) => ({
+          id: req.id,
+          title: req.title || 'Untitled Form',
+          response_count: req.response_count || 0,
+          total_recipients: req.total_recipients || 0,
+          created_at: req.created_at,
+          last_synced_at: req.last_synced_at,
+          status: req.is_active ? 'Active' : 'Inactive',
+          warnings: req.warnings || [],
+        }))
+      : [];
 
     return { initialHealth: healthData, initialRows: transformedRows };
   } catch (error) {
+    // Return safe defaults — the page will show an empty state rather than crashing
     return { initialHealth: { status: 'error', database: 'disconnected' }, initialRows: [] };
   }
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
+
+/**
+ * Dashboard
+ *
+ * Top-level page component. Rendered at the '/' route inside Layout.
+ *
+ * State:
+ *  - data          Health API response used for the System Status stat card
+ *  - rows          All form request rows (kept in sync with the backend)
+ *  - searchQuery   Mobile search field value, used to filter card list
+ *  - refreshing    True while a manual "Sync Now" refresh is in flight
+ *  - lastUpdated   Timestamp of the last successful data refresh
+ *
+ * Derived (useMemo):
+ *  - stats             Aggregate counts computed from `rows`
+ *  - filteredMobileRows  `rows` filtered by `searchQuery` for the mobile list
+ *
+ * Side effects:
+ *  - useEffect polls refreshAllFormRequests every 30 s while the tab is visible
+ */
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { initialHealth, initialRows } = useLoaderData() as any;
 
-  // Initialize state with loader data
+  // Pre-fetched data injected by dashboardLoader()
+  const { initialHealth, initialRows } = useLoaderData() as {
+    initialHealth: HealthResponse;
+    initialRows: FormRequestRow[];
+  };
+
+  // ── State ────────────────────────────────────────────────────────────────
+
   const [data, setData] = useState<HealthResponse | null>(initialHealth);
   const [rows, setRows] = useState<FormRequestRow[]>(initialRows);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
 
-  const stats = useMemo(() => {
+  // ── Derived state ─────────────────────────────────────────────────────────
+
+  /**
+   * Aggregate statistics shown in the four stat cards at the top of the page.
+   * Re-computed only when `rows` changes.
+   */
+  const stats: DashboardStats = useMemo(() => {
     const activeForms = rows.filter((r) => r.status === 'Active').length;
     const totalResponses = rows.reduce((acc, curr) => acc + (curr.response_count || 0), 0);
     const totalRecipients = rows.reduce((acc, curr) => acc + (curr.total_recipients || 0), 0);
-    const overallRate = totalRecipients > 0 ? Math.round((totalResponses / totalRecipients) * 100) : 0;
+    const overallRate = totalRecipients > 0
+      ? Math.round((totalResponses / totalRecipients) * 100)
+      : 0;
     return { activeForms, totalResponses, overallRate };
   }, [rows]);
 
-  // Filter the rows based on the search query. 
-  // We use useMemo so it only recalculates when 'rows' or 'searchQuery' changes.
-  const filteredMobileRows = useMemo(() => {
+  /**
+   * Rows filtered by the mobile search field.
+   * Searches across form title and status (case-insensitive).
+   * Returns the full rows array when the search query is empty.
+   */
+  const filteredMobileRows: FormRequestRow[] = useMemo(() => {
     if (!searchQuery.trim()) return rows;
-    
     const lowerQuery = searchQuery.toLowerCase();
-    return rows.filter((row) => 
-      // Add any other fields you want to search here (like group names if you have them in the data)
-      row.title.toLowerCase().includes(lowerQuery) || 
-      row.status.toLowerCase().includes(lowerQuery)
+    return rows.filter(
+      (row) =>
+        row.title.toLowerCase().includes(lowerQuery) ||
+        row.status.toLowerCase().includes(lowerQuery)
     );
   }, [rows, searchQuery]);
 
-  // ── DataGrid column defs ──
+  // ── DataGrid column definitions ───────────────────────────────────────────
+
+  /**
+   * Column definitions for the MUI DataGrid rendered on desktop (md+).
+   * Each column maps a FormRequestRow field to a header, width, and optional
+   * custom render function.
+   */
   const columns: GridColDef[] = [
+    // Form name with optional warning badge beneath it
     {
       field: 'title',
       headerName: 'Form Name',
       flex: 1.5,
       minWidth: 200,
-      renderCell: (params) => (
+      renderCell: (params: GridRenderCellParams) => (
         <Box display="flex" flexDirection="column" justifyContent="center">
           <Typography variant="subtitle2" fontWeight={600}>
             {params.value}
@@ -323,15 +450,16 @@ export default function Dashboard() {
         </Box>
       ),
     },
+    // Inline progress bar showing responses vs. total recipients
     {
       field: 'progress',
       headerName: 'Completion',
       flex: 1,
       minWidth: 180,
       renderCell: (params: GridRenderCellParams) => {
-        const responded = params.row.response_count || 0;
-        const total = params.row.total_recipients || 0;
-        const percentage = total > 0 ? Math.min(100, (responded / total) * 100) : 0;
+        const responded: number = params.row.response_count || 0;
+        const total: number = params.row.total_recipients || 0;
+        const percentage: number = total > 0 ? Math.min(100, (responded / total) * 100) : 0;
         return (
           <Box sx={{ width: '100%', mr: 1 }}>
             <Box display="flex" justifyContent="space-between" mb={0.5}>
@@ -352,12 +480,13 @@ export default function Dashboard() {
         );
       },
     },
+    // Colour-coded Active / Inactive chip
     {
       field: 'status',
       headerName: 'Status',
       width: 120,
       renderCell: (params: GridRenderCellParams) => {
-        const isActive = params.value === 'Active';
+        const isActive: boolean = params.value === 'Active';
         return (
           <Chip
             label={params.value}
@@ -371,6 +500,7 @@ export default function Dashboard() {
         );
       },
     },
+    // Human-readable date/time of the last Google Forms sync
     {
       field: 'last_synced_at',
       headerName: 'Last Synced',
@@ -389,6 +519,7 @@ export default function Dashboard() {
         }
       },
     },
+    // View / Duplicate / Delete action buttons — stopPropagation prevents row navigation
     {
       field: 'actions',
       headerName: 'Actions',
@@ -439,7 +570,15 @@ export default function Dashboard() {
     },
   ];
 
-  const handleDuplicate = async (requestId: string) => {
+  // ── API handlers ──────────────────────────────────────────────────────────
+
+  /**
+   * handleDuplicate
+   *
+   * Sends a POST to /api/form-requests/:id/duplicate, then navigates to the
+   * newly created duplicate's detail page.
+   */
+  const handleDuplicate = async (requestId: string): Promise<void> => {
     try {
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}/duplicate`, {
         method: 'POST',
@@ -453,7 +592,13 @@ export default function Dashboard() {
     }
   };
 
-  const handleDelete = async (requestId: string) => {
+  /**
+   * handleDelete
+   *
+   * Prompts the user for confirmation, then sends DELETE to
+   * /api/form-requests/:id. Reloads the request list on success.
+   */
+  const handleDelete = async (requestId: string): Promise<void> => {
     if (!window.confirm('Delete this form request? This action cannot be undone.')) return;
     try {
       const response = await fetch(`${API_URL}/api/form-requests/${requestId}`, {
@@ -461,17 +606,26 @@ export default function Dashboard() {
         credentials: 'include',
       });
       if (!response.ok) throw new Error('Failed to delete');
-      loadFormRequests(); // Re-fetch data after deleting
+      // Re-fetch the list to reflect the deletion in the UI
+      loadFormRequests();
     } catch (error: any) {
       alert(`Failed to delete: ${error.message}`);
     }
   };
 
-  const loadFormRequests = async () => {
+  /**
+   * loadFormRequests
+   *
+   * Fetches the current list of form requests from the backend and updates
+   * the `rows` state. Also updates `lastUpdated` to the current time.
+   * Called after a delete, and by refreshAllFormRequests after syncing.
+   */
+  const loadFormRequests = async (): Promise<void> => {
     try {
       const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
       if (!response.ok) throw new Error('Failed to load');
       const formRequests = await response.json();
+
       const transformedRows: FormRequestRow[] = Array.isArray(formRequests)
         ? formRequests.map((request: any) => ({
             id: request.id,
@@ -484,6 +638,7 @@ export default function Dashboard() {
             warnings: request.warnings || [],
           }))
         : [];
+
       setRows(transformedRows);
       setLastUpdated(new Date());
     } catch (error) {
@@ -491,17 +646,38 @@ export default function Dashboard() {
     }
   };
 
-  const handleManualRefresh = async () => {
+  /**
+   * handleManualRefresh
+   *
+   * Called when the user clicks the "Sync Now" button.
+   * Sets `refreshing` to true (triggers spinner animation) for the duration
+   * of the full sync cycle.
+   */
+  const handleManualRefresh = async (): Promise<void> => {
     setRefreshing(true);
     await refreshAllFormRequests();
     setRefreshing(false);
   };
 
-  const refreshAllFormRequests = async () => {
+  /**
+   * refreshAllFormRequests
+   *
+   * Full sync cycle:
+   *  1. Fetches the current list of form request IDs
+   *  2. Fires POST /api/form-requests/:id/refresh for every request in parallel
+   *     (individual failures are swallowed so one bad form doesn't block the rest)
+   *  3. Reloads the local list via loadFormRequests()
+   *  4. Refreshes the health status chip in the header
+   *
+   * Used both by the manual "Sync Now" button and the 30-second polling interval.
+   */
+  const refreshAllFormRequests = async (): Promise<void> => {
     try {
       const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
       if (!response.ok) return;
       const formRequests = await response.json();
+
+      // Trigger a backend sync for every form, ignoring individual failures
       await Promise.all(
         formRequests.map((req: any) =>
           fetch(`${API_URL}/api/form-requests/${req.id}/refresh`, {
@@ -510,17 +686,29 @@ export default function Dashboard() {
           }).catch(() => null)
         )
       );
+
+      // Update the request list and health status in the UI
       await loadFormRequests();
       fetch(`${API_URL}/api/health`, { credentials: 'include' })
         .then((res) => res.json())
-        .then((healthData) => setData(healthData))
+        .then((healthData: HealthResponse) => setData(healthData))
         .catch(() => {});
     } catch (error) {
       console.error('Refresh error:', error);
     }
   };
 
-  // Polling useEffect remains
+  // ── Side effects ──────────────────────────────────────────────────────────
+
+  /**
+   * Background polling effect.
+   *
+   * Starts a 30-second interval that calls refreshAllFormRequests() only
+   * when the browser tab is visible (avoids unnecessary network traffic when
+   * the user has switched away).
+   *
+   * Cleans up the interval when the component unmounts.
+   */
   useEffect(() => {
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') refreshAllFormRequests();
@@ -528,11 +716,16 @@ export default function Dashboard() {
     return () => clearInterval(pollInterval);
   }, []);
 
-  const isHealthy = data?.status === 'healthy';
-  const isDbConnected = data?.database === 'connected';
+  // ── Derived booleans for the System Status stat card ──────────────────────
+
+  const isHealthy: boolean = data?.status === 'healthy';
+  const isDbConnected: boolean = data?.database === 'connected';
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }} className="page-fade-in">
+
       {/* ── Page Header ── */}
       <Box
         display="flex"
@@ -544,7 +737,8 @@ export default function Dashboard() {
       >
         <Box>
           <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-            Dashboard <AnimatedInfoButton title="Dashboard Guide">
+            Dashboard{' '}
+            <AnimatedInfoButton title="Dashboard Guide">
               This dashboard provides an overview of your form requests and their response rates.
             </AnimatedInfoButton>
           </Typography>
@@ -552,6 +746,7 @@ export default function Dashboard() {
             <Typography variant="body2" color="text.secondary">
               Overview of your forms and responses
             </Typography>
+            {/* "Up to date" chip shows the last sync time on hover */}
             {lastUpdated && (
               <Tooltip title={`Last synced: ${lastUpdated.toLocaleTimeString()}`}>
                 <Chip
@@ -567,7 +762,9 @@ export default function Dashboard() {
           </Box>
         </Box>
 
+        {/* Header action buttons */}
         <Box display="flex" gap={1.5}>
+          {/* Sync Now: spins the icon while a refresh is in flight */}
           <Button
             variant="outlined"
             startIcon={
@@ -597,6 +794,7 @@ export default function Dashboard() {
       </Box>
 
       {/* ── Stat Cards ── */}
+      {/* 2-column on mobile, 4-column on desktop */}
       <Box
         display="grid"
         gridTemplateColumns={{ xs: '1fr 1fr', md: 'repeat(4, 1fr)' }}
@@ -635,10 +833,9 @@ export default function Dashboard() {
           iconBg={isHealthy ? 'success.50' : 'warning.50'}
           iconColor={isHealthy ? 'success.main' : 'warning.main'}
         />
-        
       </Box>
 
-      {/* ── Requests Table / Cards ── */}
+      {/* ── Requests Panel ── */}
       <Paper
         elevation={0}
         sx={{ 
@@ -648,11 +845,11 @@ export default function Dashboard() {
           overflow: 'hidden',
           transition: 'box-shadow 0.3s ease-in-out',
           '&:hover': {
-            boxShadow: '0 12px 32px -12px rgba(0,0,0,0.1)', // Outer glow
+            boxShadow: '0 12px 32px -12px rgba(0,0,0,0.1)',
           }
         }}
       >
-        {/* Panel header */}
+        {/* Panel header: title + total count chip */}
         <Box
           px={3}
           py={2}
@@ -662,7 +859,6 @@ export default function Dashboard() {
           sx={{ 
             borderBottom: '1px solid', 
             borderColor: 'divider', 
-            // Faint horizontal gradient for the header
             background: 'linear-gradient(90deg, #f4f9ff 0%, #ffffff 100%)',
           }}
         >
@@ -672,10 +868,11 @@ export default function Dashboard() {
           <Chip label={`${rows.length} total`} size="small" variant="outlined" />
         </Box>
 
-        {/* Mobile card list & Search */}
+        {/* ── Mobile view: search bar + RequestCard list ── */}
+        {/* Hidden on md+ screens; DataGrid is shown instead */}
         <Box sx={{ display: { xs: 'block', md: 'none' }, p: 2 }}>
-          
-          {/* Search Bar */}
+
+          {/* Only show search bar if there is at least one form to search */}
           {rows.length > 0 && (
             <TextField
               fullWidth
@@ -690,12 +887,8 @@ export default function Dashboard() {
                   borderRadius: 3,
                   bgcolor: 'background.paper',
                   transition: 'box-shadow 0.2s',
-                  '&:hover': {
-                    boxShadow: '0 4px 12px -4px rgba(0,0,0,0.1)',
-                  },
-                  '&.Mui-focused': {
-                    boxShadow: '0 4px 12px -4px rgba(25, 118, 210, 0.2)',
-                  }
+                  '&:hover': { boxShadow: '0 4px 12px -4px rgba(0,0,0,0.1)' },
+                  '&.Mui-focused': { boxShadow: '0 4px 12px -4px rgba(25, 118, 210, 0.2)' }
                 }
               }}
               InputProps={{
@@ -704,6 +897,7 @@ export default function Dashboard() {
                     <SearchIcon color="action" />
                   </InputAdornment>
                 ),
+                // Show an X button to clear the search only when there is a query
                 endAdornment: searchQuery ? (
                   <InputAdornment position="end">
                     <IconButton size="small" onClick={() => setSearchQuery('')} edge="end">
@@ -715,8 +909,9 @@ export default function Dashboard() {
             />
           )}
 
-          {/* Results Handling */}
+          {/* Three possible states: no data, no search results, or a populated list */}
           {rows.length === 0 ? (
+            // Empty state: user has no form requests yet
             <Box py={6} textAlign="center">
               <AssignmentIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1.5 }} />
               <Typography color="text.secondary" gutterBottom>
@@ -727,6 +922,7 @@ export default function Dashboard() {
               </Button>
             </Box>
           ) : filteredMobileRows.length === 0 ? (
+            // Empty search results state
             <Box py={4} textAlign="center" className="fade-in">
               <Typography color="text.secondary">
                 No results found for "{searchQuery}"
@@ -736,6 +932,7 @@ export default function Dashboard() {
               </Button>
             </Box>
           ) : (
+            // Populated list of RequestCards
             <Stack spacing={1.5}>
               {filteredMobileRows.map((row) => (
                 <RequestCard
@@ -750,15 +947,18 @@ export default function Dashboard() {
           )}
         </Box>
 
-        {/* Desktop DataGrid */}
+        {/* ── Desktop view: MUI DataGrid ── */}
+        {/* Hidden on xs/sm screens; RequestCard list is shown instead */}
         <Box sx={{ display: { xs: 'none', md: 'block' }, height: 500 }}>
           <DataGrid
             aria-label="Form requests"
             disableVirtualization
             rows={rows}
             columns={columns}
+            // Clicking a row navigates to that request's detail page
             onRowClick={(params) => navigate(`/request/${params.row.id}`)}
             slots={{
+              // Custom empty-state overlay when there are no rows
               noRowsOverlay: () => (
                 <Stack height="100%" alignItems="center" justifyContent="center" spacing={2}>
                   <AssignmentIcon sx={{ fontSize: 60, color: 'text.disabled' }} />
@@ -771,6 +971,7 @@ export default function Dashboard() {
             }}
             initialState={{
               pagination: { paginationModel: { pageSize: 10 } },
+              // Default sort: newest requests first
               sorting: { sortModel: [{ field: 'created_at', sort: 'desc' }] },
             }}
             pageSizeOptions={[5, 10, 25]}
