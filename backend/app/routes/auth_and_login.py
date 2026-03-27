@@ -1,8 +1,10 @@
 from flask import Blueprint, request, jsonify, session
 import requests
 import os
+import traceback
 from dotenv import load_dotenv
 from config import settings
+from models.database import get_db
 
 # Import your models and database tools
 
@@ -31,6 +33,8 @@ def register():
         username = data.get('username')
         email = data.get('email')
         password = data.get('password')
+
+        db = get_db()
         
         # Validate input
         if not username or not email or not password:
@@ -40,24 +44,31 @@ def register():
             return jsonify({"error": "Password must be at least 6 characters"}), 400
         
         print(f"Attempting to register user: {username}")
+
+        user_record = auth.create_user(
+            email=email,
+            password=password,
+            display_name=username
+        )
+
+        db.collection('users').document(user_record.uid).set({
+            "uid": user_record.uid,
+            "username": username,
+            "email": email,
+            "email_custom_message": "" # Default empty message
+        })
         
-        user = User.create_user(username, email, password)
+        session['user_id'] = user_record.uid
         
-        if not user:
-            return jsonify({"error": "Username or email already exists"}), 409
-        
-        session['user_id'] = user.id
-        
-        print(f"User registered and logged in: {user.id}")
+        print(f"User registered and logged in: {user_record.uid}")
         
         return jsonify({
             "success": True,
             "message": "User registered successfully",
-            "user": user.to_safe_dict()
+            "user": user_record.uid
         }), 201
         
     except Exception as e:
-        import traceback
         error_msg = str(e)
         traceback.print_exc()
         print(f"Error during registration: {error_msg}")
@@ -91,7 +102,6 @@ def reset():
             return jsonify({"error": f"Firebase error: {message}"}), 400
 
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
@@ -118,42 +128,40 @@ def login():
     """Login an existing user"""
     try:
         data = request.get_json()
-        
+        id_token = data.get('idToken')
+
         if not data:
             return jsonify({"error": "No data provided"}), 400
+
+        decoded_token = auth.verify_id_token(id_token)
+        uid = decoded_token['uid']
+        userid = User.get_id_by_email(data.get('email')) # Legacy user id
+
+        if uid != userid: # If the old (Firestore) uid isn't the same as the new (Firebase) uid, make them the same
+            migrate_user_id(userid, uid)
+
+        db = get_db()
+      
+        user_doc = db.collection('users').document(uid).get()
+        print(uid)
         
-        link = auth
+        if not user_doc.exists:
+            return jsonify({"error": "User profile not found"}), 404
+
+        user_data = user_doc.to_dict()
         
-        username = data.get('username')
-        password = data.get('password')
+        session['user_id'] = uid
+        session['username'] = user_data.get('username')
         
-        if not username or not password:
-            return jsonify({"error": "Username and password are required"}), 400
-        
-        print(f"Login attempt for username: {username}")
-        
-        user = User.get_by_username(username)
-        
-        if not user:
-            print(f"User not found: {username}")
-            return jsonify({"error": "Invalid username or password"}), 401
-        
-        if not User.verify_password(user.password_hash, password):
-            print(f"Invalid password for user: {username}")
-            return jsonify({"error": "Invalid username or password"}), 401
-        
-        session['user_id'] = user.id
-        
-        print(f"User logged in successfully: {user.id}")
+        print(f"User logged in successfully: {uid}")
         
         return jsonify({
             "success": True,
             "message": "Logged in successfully",
-            "user": user.to_safe_dict()
+            "user": user_data
         }), 200
         
     except Exception as e:
-        import traceback
         error_msg = str(e)
         traceback.print_exc()
         print(f"Error during login: {error_msg}")
@@ -346,3 +354,16 @@ def google_auth_status():
     except Exception as e:
         print(f"Error checking Google auth status: {e}")
         return jsonify({"error": str(e)}), 500
+    
+# Helper function for Firebase/Firestore migration; creates a new firestore document with the userid
+def migrate_user_id(old_user_id, firebase_uid):
+    db = get_db()
+    old_ref = db.collection('users').document(old_user_id)
+    old_doc = old_ref.get()
+
+    if old_doc.exists:
+        # Create new doc with Firebase UID
+        db.collection('users').document(firebase_uid).set(old_doc.to_dict())
+        # Delete the old one
+        old_ref.delete()
+        print(f"✅ Migrated {old_user_id} to {firebase_uid}")

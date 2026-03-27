@@ -10,11 +10,13 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
+import { auth } from "../firebase";
+import { signInWithEmailAndPassword } from "firebase/auth";
 
 import API_URL from '../config';
 
 function Login() {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,13 +28,16 @@ function Login() {
     setLoading(true);
 
     try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await userCredential.user.getIdToken();
+
       const response = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include', // Important for sessions
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ idToken, email }),
       });
 
       const data = await response.json();
@@ -71,11 +76,11 @@ function Login() {
           <form onSubmit={handleSubmit}>
             <TextField
               fullWidth
-              label="Username"
+              label="Email"
               variant="outlined"
               margin="normal"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
               autoFocus
             />
