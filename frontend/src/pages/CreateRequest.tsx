@@ -388,16 +388,25 @@ export default function CreateRequest() {
                 {provider === 'microsoft' && (
                   <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
                     <Typography variant="caption" display="block" gutterBottom>
-                      <strong>How to get your Microsoft Forms link:</strong>
+                      <strong>How to set up your Microsoft Form:</strong>
                     </Typography>
                     <Typography variant="caption" display="block" component="div">
                       1. Open your form in <strong>Microsoft Forms</strong><br />
-                      2. Click the <strong>"Collect responses"</strong> button (or <strong>Share</strong>)<br />
-                      3. Copy the link — it will look like <code>https://forms.office.com/r/AbCdEf1234</code><br />
-                      4. Paste that link above
+                      2. Add an <strong>email question</strong> to your form (e.g. "Your email address") — Microsoft
+                         Forms shows respondents as "Anonymous" so we need this field to identify who responded<br />
+                      3. <strong>Fill out at least one test response</strong> yourself — this is required before
+                         Microsoft Forms will let you export to Excel<br />
+                      4. Go to the <strong>Responses</strong> tab → click <strong>"Open in Excel"</strong> to
+                         create the response spreadsheet in your OneDrive<br />
+                      5. Click the <strong>"Collect responses"</strong> button (or <strong>Share</strong>) and
+                         copy the link — it will look like <code>https://forms.office.com/r/AbCdEf1234</code><br />
+                      6. Enter the <strong>Request Title</strong> above — it must match your Microsoft Form title exactly<br />
+                      7. Paste the link above
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
-                      Microsoft Forms identifies respondents by their Microsoft account — no separate email field needed.
+                    <Typography variant="caption" display="block" mt={0.5} sx={{ color: 'warning.dark' }}>
+                      <strong>Important:</strong> The request title must <em>exactly</em> match the title of your
+                      Microsoft Form. We use it to find the response Excel file in your OneDrive. If the names
+                      don't match, creation will fail.
                     </Typography>
                   </Alert>
                 )}

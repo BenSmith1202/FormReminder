@@ -1,22 +1,26 @@
 # Microsoft Forms Service
-# Handles OAuth flow, token management, and Microsoft Forms API interactions
-# via Azure AD (server-side, Files.Read.All scope).
+# Handles OAuth flow, token management, and reading Microsoft Forms responses
+# via Azure AD + OneDrive Excel files (Files.Read.All scope).
+#
+# Microsoft Forms stores response data in Excel workbooks in the user's
+# OneDrive.  We search for those workbooks and read them through the Graph
+# API workbook/Excel endpoints — the undocumented Forms REST API is NOT used.
 
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import msal
 import requests
 from config import settings
 
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
-FORMS_API_BASE = "https://forms.office.com/formapi/api/v1.0"
 
 
 class MicrosoftFormsService:
-    """Service for interacting with Microsoft Forms via Graph / Forms API."""
+    """Service for interacting with Microsoft Forms via OneDrive Excel files."""
 
     SCOPES = ["User.Read", "Files.Read.All"]
 
@@ -119,16 +123,7 @@ class MicrosoftFormsService:
     def _graph_get(endpoint: str, access_token: str, params: dict | None = None) -> Any:
         headers = {"Authorization": f"Bearer {access_token}"}
         resp = requests.get(
-            f"{GRAPH_API_BASE}{endpoint}", headers=headers, params=params, timeout=20
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    @staticmethod
-    def _forms_get(endpoint: str, access_token: str) -> Any:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        resp = requests.get(
-            f"{FORMS_API_BASE}{endpoint}", headers=headers, timeout=20
+            f"{GRAPH_API_BASE}{endpoint}", headers=headers, params=params, timeout=30
         )
         resp.raise_for_status()
         return resp.json()
@@ -184,62 +179,299 @@ class MicrosoftFormsService:
         data = MicrosoftFormsService._graph_get("/me", access_token)
         return data["id"]
 
+    # ------------------------------------------------------------------
+    # OneDrive / Excel helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
-    def get_form_metadata(access_token: str, form_id: str) -> Dict:
-        """Fetch form metadata from Microsoft Forms API."""
+    def find_response_excel(access_token: str, form_title: str) -> Optional[Dict]:
+        """Search OneDrive for the Excel workbook that Microsoft Forms creates
+        when collecting responses for a form with the given *form_title*.
+
+        Returns ``{"id": "<driveItemId>", "name": "...", "webUrl": "..."}``
+        or ``None`` if nothing matching is found.
+        """
+        print(f"[Microsoft] Searching OneDrive for Excel file matching '{form_title}'...")
+
+        # Microsoft Forms stores response workbooks in the user's OneDrive.
+        # The file is typically named like the form's title in Microsoft Forms
+        # (which may differ from the title the user entered in our app).
+        # We do two passes:
+        #   1. Search by the user-supplied title
+        #   2. Broad fallback: search for all .xlsx files
+
+        all_items: List[Dict] = []
+        seen_ids: set = set()
+
+        # Pass 1: targeted title search
+        if form_title:
+            safe_query = form_title.replace("'", "''")
+            try:
+                results = MicrosoftFormsService._graph_get(
+                    f"/me/drive/search(q='{safe_query}')",
+                    access_token,
+                    params={"$select": "name,id,webUrl,file", "$top": "50"},
+                )
+                for item in results.get("value", []):
+                    iid = item.get("id", "")
+                    if iid not in seen_ids:
+                        all_items.append(item)
+                        seen_ids.add(iid)
+            except Exception as e:
+                print(f"[Microsoft] OneDrive title search failed: {e}")
+
+        # Pass 2: broad .xlsx search (catches cases where the form title
+        # in Microsoft Forms doesn't match the user-supplied title in our app)
         try:
-            print(f"[Microsoft] Fetching metadata for form {form_id}")
-            user_id = MicrosoftFormsService.get_user_id(access_token)
-            data = MicrosoftFormsService._forms_get(
-                f"/users/{user_id}/forms('{form_id}')", access_token
+            results = MicrosoftFormsService._graph_get(
+                "/me/drive/search(q='.xlsx')",
+                access_token,
+                params={"$select": "name,id,webUrl,file", "$top": "100"},
             )
-
-            title = data.get("title", "Untitled Microsoft Form")
-
-            return {
-                "title": title,
-                "description": data.get("description", ""),
-                "email_collection_enabled": True,
-                "email_collection_type": "MICROSOFT_IDENTITY",
-            }
+            for item in results.get("value", []):
+                iid = item.get("id", "")
+                if iid not in seen_ids:
+                    all_items.append(item)
+                    seen_ids.add(iid)
         except Exception as e:
-            print(f"[Microsoft] Error fetching metadata: {e}")
-            raise
+            print(f"[Microsoft] OneDrive broad search failed: {e}")
+
+        if not all_items:
+            print(f"[Microsoft] ❌ No Excel files found in OneDrive at all")
+            return None
+
+        title_lower = (form_title or "").strip().lower()
+
+        # Score candidates: prefer title matches that are .xlsx
+        best: Optional[Dict] = None
+        best_score = -1
+        for item in all_items:
+            name: str = item.get("name", "")
+            if not name.lower().endswith(".xlsx"):
+                continue
+            name_lower = name.lower()
+            # Strip .xlsx for comparison
+            name_stem = name_lower.rsplit(".xlsx", 1)[0].strip()
+            score = 0
+            if title_lower and title_lower in name_lower:
+                score += 10
+            if title_lower and name_stem.startswith(title_lower):
+                score += 5
+            # Bonus for typical Forms response patterns like "FormTitle(1-123).xlsx"
+            if re.search(r"\(\d", name_lower):
+                score += 3
+            # Small bonus for any xlsx (ensures we still pick something)
+            score += 1
+            if score > best_score:
+                best_score = score
+                best = {"id": item["id"], "name": name, "webUrl": item.get("webUrl", "")}
+
+        if best:
+            print(f"[Microsoft] ✅ Found Excel file: {best['name']}  (id={best['id'][:20]}…, score={best_score})")
+        else:
+            print(f"[Microsoft] ❌ No matching Excel file found for '{form_title}'")
+        return best
 
     @staticmethod
-    def get_form_responses(access_token: str, form_id: str) -> List[Dict]:
-        """Fetch all responses for a Microsoft Form.
+    def _read_excel_responses(access_token: str, file_id: str) -> List[Dict]:
+        """Read rows from an Excel workbook in OneDrive via the Graph
+        workbook API and return normalised response dicts.
+
+        The first row is treated as column headers.  We look for columns
+        named ``Email``, ``ID``, ``Completion time``, etc.  If no explicit
+        email column is found, we scan every cell in each row for an
+        email-like value.
+        """
+        print(f"[Microsoft] Reading Excel workbook {file_id[:20]}…")
+
+        # 1. List worksheets and pick the first one
+        ws_data = MicrosoftFormsService._graph_get(
+            f"/me/drive/items/{file_id}/workbook/worksheets",
+            access_token,
+        )
+        sheets = ws_data.get("value", [])
+        if not sheets:
+            print("[Microsoft] Workbook has no worksheets")
+            return []
+
+        sheet_name = sheets[0].get("name", "Sheet1")
+        safe_sheet = quote(sheet_name, safe="")
+
+        # 2. Read the usedRange to get all data
+        range_data = MicrosoftFormsService._graph_get(
+            f"/me/drive/items/{file_id}/workbook/worksheets('{safe_sheet}')/usedRange",
+            access_token,
+            params={"$select": "text,values"},
+        )
+
+        # Prefer 'text' (formatted strings); fall back to 'values' (raw)
+        rows = range_data.get("text") or range_data.get("values") or []
+        if len(rows) < 2:
+            print("[Microsoft] Workbook has no response rows (only headers or empty)")
+            return []
+
+        headers_raw = rows[0]
+        headers = [str(h).strip().lower() for h in headers_raw]
+
+        # 3. Identify well-known columns
+        email_col: Optional[int] = None
+        id_col: Optional[int] = None
+        time_col: Optional[int] = None
+        start_col: Optional[int] = None
+
+        EMAIL_NAMES = {"email", "email address", "respondent email", "e-mail",
+                       "your email", "your email address"}
+        ID_NAMES = {"id", "response id"}
+        TIME_NAMES = {"completion time", "submit date", "completed"}
+        START_NAMES = {"start time", "started"}
+        SYSTEM_COLS = EMAIL_NAMES | ID_NAMES | TIME_NAMES | START_NAMES
+
+        for i, h in enumerate(headers):
+            if h in EMAIL_NAMES:
+                email_col = i
+            elif h in ID_NAMES:
+                id_col = i
+            elif h in TIME_NAMES:
+                time_col = i
+            elif h in START_NAMES:
+                start_col = i
+
+        # If no exact header match, look for headers containing "email"
+        if email_col is None:
+            for i, h in enumerate(headers):
+                if "email" in h and h not in SYSTEM_COLS:
+                    email_col = i
+                    print(f"[Microsoft] Fuzzy-matched email column: '{headers_raw[i]}' (col {i})")
+                    break
+
+        if email_col is None:
+            print(f"[Microsoft] ⚠️  No email column found — respondents will not be identified")
+
+        print(f"[Microsoft] Sheet '{sheet_name}': {len(rows)-1} data rows, "
+              f"email_col={email_col}, id_col={id_col}, time_col={time_col}")
+
+        # 4. Parse each data row
+        processed: List[Dict] = []
+        for row_idx, row in enumerate(rows[1:], start=2):
+            # Skip completely empty rows
+            if not any(str(cell).strip() for cell in row):
+                continue
+
+            def _cell(col_idx: Optional[int]) -> str:
+                if col_idx is None or col_idx >= len(row):
+                    return ""
+                return str(row[col_idx]).strip()
+
+            email = _cell(email_col)
+            if email.lower() == "anonymous":
+                email = ""
+            response_id = _cell(id_col) or str(row_idx)
+            submit_time = _cell(time_col)
+
+            # Build answers from non-system columns
+            answers: Dict[str, Any] = {}
+            for i, h in enumerate(headers):
+                if h not in SYSTEM_COLS and i < len(row):
+                    label = str(headers_raw[i]).strip()
+                    val = str(row[i]).strip() if row[i] else ""
+                    if label:
+                        answers[label] = val
+
+            processed.append({
+                "respondent_email": email,
+                "response_id": response_id,
+                "submitted_at": submit_time,
+                "answers": answers,
+                "answer_count": len(answers),
+                "_no_email_column": email_col is None,
+            })
+
+        print(f"[Microsoft] Parsed {len(processed)} responses from Excel")
+        return processed
+
+    # ------------------------------------------------------------------
+    # Standard provider interface
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_form_metadata(access_token: str, form_id: str, **kwargs) -> Dict:
+        """Return metadata for a Microsoft Form.
+
+        Because there is no reliable public Forms API we return sensible
+        defaults.  The real title is provided by the user at create-time and
+        passed through ``kwargs['form_title']`` when available.
+
+        If *excel_file_id* is supplied we confirm the file exists, giving
+        early feedback.
+        """
+        form_title = kwargs.get("form_title", "")
+        excel_file_id = kwargs.get("excel_file_id")
+
+        # Optionally validate the Excel file is still reachable
+        if excel_file_id:
+            try:
+                MicrosoftFormsService._graph_get(
+                    f"/me/drive/items/{excel_file_id}",
+                    access_token,
+                    params={"$select": "name,id"},
+                )
+                print(f"[Microsoft] Excel file {excel_file_id[:20]}… still accessible ✅")
+            except Exception as e:
+                print(f"[Microsoft] Warning — could not verify Excel file: {e}")
+
+        # If we don't have a file yet, try to find one
+        if not excel_file_id and form_title:
+            found = MicrosoftFormsService.find_response_excel(access_token, form_title)
+            if found:
+                excel_file_id = found["id"]
+
+        return {
+            "title": form_title or "Untitled Microsoft Form",
+            "description": "",
+            "email_collection_enabled": True,
+            "email_collection_type": "MICROSOFT_IDENTITY",
+            "excel_file_id": excel_file_id,
+        }
+
+    @staticmethod
+    def get_form_responses(access_token: str, form_id: str, **kwargs) -> List[Dict]:
+        """Fetch all responses for a Microsoft Form by reading the associated
+        Excel workbook in OneDrive.
+
+        Accepts optional keyword arguments:
+        - ``excel_file_id``: Drive-item ID of the known Excel file.
+        - ``form_title``: Form title used to *search* OneDrive when the file
+          ID is unknown.
 
         Returns a list of dicts matching the common shape:
-        ``{respondent_email, response_id, create_time, answers}``.
+        ``{respondent_email, response_id, submitted_at, answers}``.
         """
+        excel_file_id = kwargs.get("excel_file_id")
+        form_title = kwargs.get("form_title", "")
+
+        # If no file ID stored, try to find it by title
+        if not excel_file_id:
+            print(f"[Microsoft] No excel_file_id — searching by title '{form_title}'…")
+            found = MicrosoftFormsService.find_response_excel(access_token, form_title)
+            if not found:
+                raise ValueError(
+                    f"Could not find the response Excel file for '{form_title}' in OneDrive. "
+                    "In Microsoft Forms, open the form → Responses tab → 'Open in Excel' "
+                    "to create the response file, then try again."
+                )
+            excel_file_id = found["id"]
+            # The caller should persist this for next time (see _extra_context)
+
         try:
-            print(f"[Microsoft] Fetching responses for form {form_id}")
-            user_id = MicrosoftFormsService.get_user_id(access_token)
-            data = MicrosoftFormsService._forms_get(
-                f"/users/{user_id}/forms('{form_id}')/responses", access_token
+            responses = MicrosoftFormsService._read_excel_responses(
+                access_token, excel_file_id
             )
-
-            raw_responses = data.get("value", [])
-            processed: List[Dict] = []
-            for r in raw_responses:
-                if not isinstance(r, dict):
-                    continue
-                email = r.get("responder", {}).get("email", "") if isinstance(r.get("responder"), dict) else ""
-                answers = {}
-                for a in r.get("answers", []):
-                    qid = a.get("questionId", "")
-                    answers[qid] = a.get("value", "")
-
-                processed.append({
-                    "respondent_email": email,
-                    "response_id": r.get("id", ""),
-                    "create_time": r.get("submitDate", ""),
-                    "answers": answers,
-                })
-
-            print(f"[Microsoft] Found {len(processed)} responses")
-            return processed
         except Exception as e:
-            print(f"[Microsoft] Error fetching responses: {e}")
+            print(f"[Microsoft] Error reading Excel: {e}")
             raise
+
+        # Attach the file ID so the caller can persist it
+        for r in responses:
+            r["_excel_file_id"] = excel_file_id
+
+        return responses

@@ -126,7 +126,7 @@ class JotformService:
                 processed.append({
                     "respondent_email": email or "",
                     "response_id": str(sub.get("id", "")),
-                    "create_time": sub.get("created_at", ""),
+                    "submitted_at": sub.get("created_at", ""),
                     "answers": parsed,
                 })
 

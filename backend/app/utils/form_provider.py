@@ -60,31 +60,38 @@ def get_viewform_url(provider: str, form_url_or_id: str) -> str:
     return form_url_or_id
 
 
-def get_form_metadata(provider: str, credentials, form_id: str) -> Dict:
+def get_form_metadata(provider: str, credentials, form_id: str, **kwargs) -> Dict:
     """Fetch form metadata via the correct service.
 
     ``credentials`` shape varies by provider:
     - google  → ``google.oauth2.credentials.Credentials``
     - jotform → plain API key string
     - microsoft → access-token string
+
+    Extra keyword arguments are forwarded to providers that need them
+    (currently Microsoft — ``form_title``, ``excel_file_id``).
     """
     if provider == PROVIDER_GOOGLE:
         return GoogleFormsService.get_form_metadata(credentials, form_id)
     if provider == PROVIDER_JOTFORM:
         return JotformService.get_form_metadata(credentials, form_id)
     if provider == PROVIDER_MICROSOFT:
-        return MicrosoftFormsService.get_form_metadata(credentials, form_id)
+        return MicrosoftFormsService.get_form_metadata(credentials, form_id, **kwargs)
     raise ValueError(f"Unknown provider: {provider}")
 
 
-def get_form_responses(provider: str, credentials, form_id: str) -> List[Dict]:
-    """Fetch form responses via the correct service."""
+def get_form_responses(provider: str, credentials, form_id: str, **kwargs) -> List[Dict]:
+    """Fetch form responses via the correct service.
+
+    Extra keyword arguments are forwarded to providers that need them
+    (currently Microsoft — ``excel_file_id``, ``form_title``).
+    """
     if provider == PROVIDER_GOOGLE:
         return GoogleFormsService.get_form_responses(credentials, form_id)
     if provider == PROVIDER_JOTFORM:
         return JotformService.get_form_responses(credentials, form_id)
     if provider == PROVIDER_MICROSOFT:
-        return MicrosoftFormsService.get_form_responses(credentials, form_id)
+        return MicrosoftFormsService.get_form_responses(credentials, form_id, **kwargs)
     raise ValueError(f"Unknown provider: {provider}")
 
 
