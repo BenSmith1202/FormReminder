@@ -111,6 +111,7 @@ export default function CreateRequest() {
   const navigate = useNavigate();
 
   // --- Core Form State ---
+  const [provider, setProvider] = useState('google'); // 'google', 'jotform', 'microsoft'
   const [requestTitle, setRequestTitle] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -201,6 +202,7 @@ export default function CreateRequest() {
     try {
       // Construct the base payload
       const requestBody: any = {
+        provider,
         form_url: formUrl,
         group_id: groupId,
         title: requestTitle || undefined,
@@ -235,11 +237,11 @@ export default function CreateRequest() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Detect if the failure was due to an expired/invalid Google API token.
-        // If true, we prompt the user to re-authenticate with Google.
+        // Detect if the failure was due to an expired/invalid provider token.
         const needsReconnect =
           data.action_required === 'reconnect_google' ||
-          (response.status === 403 && data.error?.toLowerCase().includes('google'));
+          data.action_required?.startsWith('connect_') ||
+          (response.status === 403 && data.error?.toLowerCase().includes('not connected'));
         
         if (needsReconnect) setNeedsGoogleReconnect(true);
         throw new Error(data.message || data.error || 'Failed to create form request');
@@ -319,9 +321,26 @@ export default function CreateRequest() {
             <SectionHeader
               icon={<DescriptionIcon sx={{ fontSize: 22 }} />}
               title="General Information"
-              description="Name this request and paste in the form link."
+              description="Choose a form provider, name this request, and paste in the form link."
             />
             <Box display="flex" flexDirection="column" gap={2.5}>
+              {/* Provider selector */}
+              <FormControl size="small" fullWidth required>
+                <InputLabel>Form Provider</InputLabel>
+                <Select
+                  value={provider}
+                  label="Form Provider"
+                  onChange={(e) => {
+                    setProvider(e.target.value);
+                    setFormUrl('');
+                  }}
+                >
+                  <MenuItem value="google">Google Forms</MenuItem>
+                  <MenuItem value="jotform">Jotform</MenuItem>
+                  <MenuItem value="microsoft">Microsoft Forms</MenuItem>
+                </Select>
+              </FormControl>
+
               <TextField
                 label="Request Title"
                 fullWidth
@@ -330,19 +349,58 @@ export default function CreateRequest() {
                 value={requestTitle}
                 onChange={(e) => setRequestTitle(e.target.value)}
               />
+
               <Box>
                 <TextField
-                  label="Form URL"
+                  label={
+                    provider === 'google'
+                      ? 'Google Form URL'
+                      : provider === 'jotform'
+                        ? 'Jotform URL or Form ID'
+                        : 'Microsoft Form URL'
+                  }
                   fullWidth
                   size="small"
                   required
-                  placeholder="https://docs.google.com/forms/d/…/edit"
+                  placeholder={
+                    provider === 'google'
+                      ? 'https://docs.google.com/forms/d/…/edit'
+                      : provider === 'jotform'
+                        ? 'https://form.jotform.com/242630266486159'
+                        : 'https://forms.office.com/r/AbCdEf1234'
+                  }
                   value={formUrl}
                   onChange={(e) => setFormUrl(e.target.value)}
                 />
-                <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
-                  Use the form's <strong>edit link</strong> (URL contains <code>/edit</code>). The share/view link won't work for response syncing.
-                </Typography>
+
+                {/* Provider-specific helper text */}
+                {provider === 'google' && (
+                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
+                    Use the form's <strong>edit link</strong> (URL contains <code>/edit</code>). The share/view link won't work for response syncing.
+                  </Typography>
+                )}
+                {provider === 'jotform' && (
+                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
+                    Paste your Jotform URL (e.g. <code>https://form.jotform.com/242630266486159</code>) or just the numeric form ID.
+                    Make sure the form has an <strong>email field</strong> so we can match responses to recipients.
+                  </Typography>
+                )}
+                {provider === 'microsoft' && (
+                  <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
+                    <Typography variant="caption" display="block" gutterBottom>
+                      <strong>How to get your Microsoft Forms link:</strong>
+                    </Typography>
+                    <Typography variant="caption" display="block" component="div">
+                      1. Open your form in <strong>Microsoft Forms</strong><br />
+                      2. Click the <strong>"Collect responses"</strong> button (or <strong>Share</strong>)<br />
+                      3. Copy the link — it will look like <code>https://forms.office.com/r/AbCdEf1234</code><br />
+                      4. Paste that link above
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
+                      Microsoft Forms identifies respondents by their Microsoft account — no separate email field needed.
+                    </Typography>
+                  </Alert>
+                )}
               </Box>
             </Box>
           </Paper>

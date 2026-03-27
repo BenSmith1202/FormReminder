@@ -28,6 +28,7 @@ from routes.email import email_bp
 from routes.organizations import orgs_bp
 from routes.settings import settings_bp
 from routes.notifications import notifications_bp
+from routes.provider_auth import provider_auth_bp
 from utils.scheduler import init_scheduler  # Automatic reminder scheduler
 # -------------------------
 
@@ -245,6 +246,7 @@ app.register_blueprint(email_bp)
 app.register_blueprint(orgs_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(notifications_bp)
+app.register_blueprint(provider_auth_bp)  # Jotform + Microsoft auth, connected-accounts
 
 
 @app.get("/")
@@ -467,8 +469,12 @@ def google_login():
         state = secrets.token_urlsafe(32)
         session['oauth_state'] = state
         
+        # Build redirect URI dynamically from the current request
+        google_redirect_uri = request.url_root.rstrip('/') + '/oauth/callback'
+        session['google_redirect_uri'] = google_redirect_uri
+        
         # Get authorization URL
-        authorization_url = GoogleFormsService.get_authorization_url(state)
+        authorization_url = GoogleFormsService.get_authorization_url(state, google_redirect_uri)
         
         print(f"User {user_id} initiating Google OAuth")
         print(f"Authorization URL: {authorization_url}")
@@ -499,7 +505,8 @@ def oauth_callback():
         
         if error:
             print(f"OAuth error: {error}")
-            return f"<html><body><h1>Authorization Failed</h1><p>{error}</p><a href='http://localhost:5173'>Return to app</a></body></html>", 400
+            fe_url = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
+            return f"<html><body><h1>Authorization Failed</h1><p>{error}</p><a href='{fe_url}'>Return to app</a></body></html>", 400
         
         if not code:
             return "<html><body><h1>No authorization code received</h1></body></html>", 400
@@ -513,7 +520,9 @@ def oauth_callback():
         print(f"Received OAuth callback with code")
         
         # Exchange code for tokens
-        tokens = GoogleFormsService.exchange_code_for_tokens(code, state)
+        google_redirect_uri = session.get('google_redirect_uri',
+                                           request.url_root.rstrip('/') + '/oauth/callback')
+        tokens = GoogleFormsService.exchange_code_for_tokens(code, state, google_redirect_uri)
         
         # Get current user
         user_id = session.get('user_id')
@@ -533,16 +542,17 @@ def oauth_callback():
         
         if success:
             print(f"Successfully stored Google tokens for user {user_id}")
-            return """
+            fe_url = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
+            return f"""
             <html>
             <body>
                 <h1>Successfully connected Google account!</h1>
                 <p>You can now close this window and return to the app.</p>
                 <script>
-                    setTimeout(function() {
+                    setTimeout(function() {{
                         window.close();
-                        window.location.href = 'http://localhost:5173';
-                    }, 2000);
+                        window.location.href = '{fe_url}';
+                    }}, 2000);
                 </script>
             </body>
             </html>

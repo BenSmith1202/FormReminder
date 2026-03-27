@@ -386,6 +386,23 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
 
+  // ── Redirect to onboarding if no providers connected ─────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/connected-accounts`, { credentials: 'include' });
+        if (!res.ok) return;
+        const accts = await res.json();
+        // Only redirect if the user is logged in but has zero providers
+        if (accts.authenticated && !accts.google && !accts.jotform && !accts.microsoft) {
+          navigate('/connect-forms', { replace: true });
+        }
+      } catch {
+        // ignore — dashboard still renders normally
+      }
+    })();
+  }, [navigate]);
+
   // ── Derived state ─────────────────────────────────────────────────────────
 
   /**

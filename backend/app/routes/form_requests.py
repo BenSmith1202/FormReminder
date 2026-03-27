@@ -13,6 +13,13 @@ from models.notification import (
     notify_unrecognized_submission
 )
 from utils.google_forms_service import GoogleFormsService
+from utils.form_provider import (
+    detect_provider, extract_form_id as provider_extract_form_id,
+    get_form_metadata as provider_get_metadata,
+    get_form_responses as provider_get_responses,
+    get_credentials_for_provider, get_viewform_url,
+    PROVIDER_GOOGLE, PROVIDER_JOTFORM, PROVIDER_MICROSOFT,
+)
 from utils.scheduler import send_initial_emails  # For immediate email sending
 
 
@@ -321,10 +328,10 @@ def get_form_request_responses(request_id: str):
         }), 500
 
 
-# Refresh responses from Google Forms
+# Refresh responses from form provider (Google / Jotform / Microsoft)
 @form_requests_bp.post("/<request_id>/refresh")
 def refresh_form_responses(request_id: str):
-    """Manually refresh responses from Google Forms"""
+    """Manually refresh responses from the form provider."""
     from datetime import datetime
     from models.database import Collections
     
@@ -334,8 +341,8 @@ def refresh_form_responses(request_id: str):
             return jsonify({"error": "Must be logged in"}), 401
         
         user = User.get_by_id(user_id)
-        if not user or not user.google_access_token:
-            return jsonify({"error": "Google account not connected"}), 403
+        if not user:
+            return jsonify({"error": "User not found"}), 404
         
         db = get_db()
         
@@ -352,34 +359,39 @@ def refresh_form_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        form_id = request_data.get('google_form_id') or request_data.get('form_id')
+        # ── Determine provider (fall back to google for legacy requests) ──
+        provider = request_data.get('provider', PROVIDER_GOOGLE)
+        form_id = request_data.get('form_id') or request_data.get('google_form_id')
         if not form_id:
-            return jsonify({"error": "No Google Form ID found"}), 400
+            return jsonify({"error": "No form ID found on this request"}), 400
         
-        print(f"Refreshing responses for form {form_id}")
+        print(f"\n{'='*60}")
+        print(f"[REFRESH] Provider: {provider}  |  Form ID: {form_id}")
+        print(f"{'='*60}")
         
-        # Get user's Google credentials
+        # ── Get credentials for the provider ──
         try:
-            credentials = GoogleFormsService.get_credentials_from_tokens(
-                access_token=user.google_access_token,
-                refresh_token=user.google_refresh_token,
-                token_expiry=user.token_expiry
-            )
+            credentials = get_credentials_for_provider(user, provider)
+            print(f"[REFRESH] ✅ Got credentials for '{provider}'")
         except ValueError as cred_error:
-            # Token was revoked or is invalid - clear it from database
-            print(f"Credentials invalid: {cred_error}")
-            print("Clearing invalid Google tokens from user account")
-            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+            print(f"[REFRESH] ❌ Credential error: {cred_error}")
+            action = "reconnect_google" if provider == PROVIDER_GOOGLE else f"connect_{provider}"
             return jsonify({
-                "error": "Google credentials have been revoked",
-                "message": "Please reconnect your Google account",
-                "action_required": "reconnect_google"
+                "error": str(cred_error),
+                "message": f"Please reconnect your {provider.title()} account",
+                "action_required": action,
             }), 401
         
-        # Fetch latest responses from Google
-        print(f"Fetching responses from Google Forms API for form {form_id}...")
+        # ── Fetch latest responses via the provider ──
+        print(f"[REFRESH] Fetching responses via {provider} for form {form_id}...")
         try:
-            responses = GoogleFormsService.get_form_responses(credentials, form_id)
+            responses = provider_get_responses(provider, credentials, form_id)
+            print(f"[REFRESH] ✅ Got {len(responses)} responses from {provider}")
+            for i, r in enumerate(responses[:5]):
+                print(f"[REFRESH]    [{i}] email={r.get('respondent_email','(none)')}, "
+                      f"id={r.get('response_id','')[:20]}")
+            if len(responses) > 5:
+                print(f"[REFRESH]    ... and {len(responses) - 5} more")
         except Exception as api_err:
             err_str = str(api_err)
             api_error_reason = _classify_forms_api_error(api_err)
@@ -552,8 +564,9 @@ def refresh_form_responses(request_id: str):
         email_collection_checked = False
         email_collection_enabled = True
         try:
-            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
-            email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+            metadata = provider_get_metadata(provider, credentials, form_id)
+            if provider == PROVIDER_GOOGLE:
+                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
             email_collection_checked = True
         except Exception as metadata_err:
             # Don't fail refresh if metadata check fails; we still synced responses.
@@ -637,7 +650,7 @@ def refresh_form_responses(request_id: str):
 # Create a new form request
 @form_requests_bp.post("")
 def create_form_request():
-    """Create a new form request from a Google Form URL"""
+    """Create a new form request — supports Google Forms, Jotform, and Microsoft Forms."""
     from datetime import datetime
     from models.database import Collections
     
@@ -650,14 +663,6 @@ def create_form_request():
         user = User.get_by_id(user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
-        
-        # Check if user has connected Google account
-        if not user.google_access_token or not user.google_refresh_token:
-            return jsonify({
-                "error": "Google account not connected",
-                "message": "Please connect your Google account first",
-                "action_required": "reconnect_google"
-            }), 403
         
         data = request.get_json()
         if not data or 'form_url' not in data:
@@ -672,7 +677,34 @@ def create_form_request():
         form_url = data['form_url']
         group_id = data['group_id']
         
-        # Parse reminder schedule data
+        # ── Determine provider ──
+        provider = data.get('provider') or detect_provider(form_url)
+        if not provider:
+            return jsonify({"error": "Could not detect form provider from that URL. Please select a provider."}), 400
+        
+        print(f"\n{'='*60}")
+        print(f"[CREATE] Provider: {provider}")
+        print(f"[CREATE] Form URL: {form_url}")
+        print(f"{'='*60}")
+        
+        # ── Verify the user has connected this provider ──
+        try:
+            credentials = get_credentials_for_provider(user, provider)
+            print(f"[CREATE] ✅ Got credentials for provider '{provider}'")
+        except ValueError as cred_err:
+            error_msg = str(cred_err)
+            print(f"[CREATE] ❌ Credential error: {error_msg}")
+            action = (
+                "reconnect_google" if provider == PROVIDER_GOOGLE
+                else f"connect_{provider}"
+            )
+            return jsonify({
+                "error": error_msg,
+                "message": f"Please connect your {provider.title()} account first",
+                "action_required": action,
+            }), 403
+        
+        # ── Parse reminder schedule data ──
         reminder_schedule = data.get('reminder_schedule', 'normal')
         first_reminder_timing = data.get('first_reminder_timing', 'immediate')
         custom_days = data.get('custom_days')  # For custom schedules
@@ -698,7 +730,6 @@ def create_form_request():
                     )
                 except (ValueError, AttributeError):
                     return jsonify({"error": "Invalid scheduled_date format"}), 400
-            
             if data.get('scheduled_time'):
                 try:
                     scheduled_reminder_time = datetime.fromisoformat(
@@ -727,35 +758,15 @@ def create_form_request():
         if group.owner_id != user_id:
             return jsonify({"error": "You don't own this group"}), 403
         
-        print(f"Creating form request for URL: {form_url} with group: {group.name}")
-        
-        # Extract form ID
-        form_id = GoogleFormsService.extract_form_id(form_url)
+        # ── Extract form ID using the provider-specific extractor ──
+        form_id = provider_extract_form_id(provider, form_url)
         if not form_id:
-            return jsonify({"error": "Invalid Google Form URL"}), 400
+            return jsonify({"error": f"Could not extract a valid form ID from that URL for {provider.title()}."}), 400
         
-        print(f"Extracted form ID: {form_id}")
+        print(f"[CREATE] Extracted form ID: {form_id}")
         
-        # Get user's Google credentials
-        try:
-            credentials = GoogleFormsService.get_credentials_from_tokens(
-                access_token=user.google_access_token,
-                refresh_token=user.google_refresh_token,
-                token_expiry=user.token_expiry
-            )
-        except ValueError as cred_error:
-            # Token was revoked or is invalid - clear it from database
-            print(f"Credentials invalid: {cred_error}")
-            print("Clearing invalid Google tokens from user account")
-            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
-            return jsonify({
-                "error": "Google credentials have been revoked",
-                "message": "Please reconnect your Google account",
-                "action_required": "reconnect_google"
-            }), 401
-        
-        # Fetch form metadata (handle errors gracefully)
-        print("Fetching form metadata...")
+        # ── Fetch form metadata (handle errors gracefully) ──
+        print(f"[CREATE] Fetching form metadata via {provider}...")
         metadata = {}
         api_access_available = False
         api_error_reason = None
@@ -763,47 +774,54 @@ def create_form_request():
         email_collection_checked = False
         
         try:
-            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+            metadata = provider_get_metadata(provider, credentials, form_id)
             api_access_available = True
+            print(f"[CREATE] ✅ Metadata received: title='{metadata.get('title')}'")
             
-            # Check email collection (optional for now, just warn)
-            print("Checking email collection...")
-            try:
-                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
-                email_collection_checked = True
-            except Exception as email_check_error:
-                print(f"Warning: Could not check email collection: {email_check_error}")
+            # Check email collection (Google-specific, others always True)
+            if provider == PROVIDER_GOOGLE:
+                try:
+                    email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+                    email_collection_checked = True
+                    print(f"[CREATE] Email collection enabled: {email_collection_enabled}")
+                except Exception as email_check_error:
+                    print(f"[CREATE] Warning: Could not check email collection: {email_check_error}")
+            else:
                 email_collection_enabled = True
-                email_collection_checked = False
+                email_collection_checked = True
+                print(f"[CREATE] {provider} — email collection check skipped (always True)")
         except Exception as metadata_error:
             api_error_reason = _classify_forms_api_error(metadata_error)
-            print(f"Warning: Could not fetch form metadata: {metadata_error}")
-            if api_error_reason == 'account_mismatch_or_no_access':
-                print("The connected Google account likely differs from the form owner's editor account.")
-            print("The form request will be created, and sync will keep retrying in case this is fixed.")
+            print(f"[CREATE] ❌ Metadata fetch failed: {metadata_error}")
+            print(f"[CREATE]    Classified as: {api_error_reason}")
             api_access_available = False
-            # Use default metadata
             metadata = {
                 'title': data.get('title', f"Form {form_id[:8]}"),
                 'description': '',
                 'email_collection_enabled': True,
-                'email_collection_type': 'UNKNOWN'
+                'email_collection_type': 'UNKNOWN',
             }
         
-        # Get initial response count (only if API access is available)
+        # ── Get initial responses (only if API access is available) ──
         responses = []
         if api_access_available:
-            print("Fetching initial responses...")
+            print(f"[CREATE] Fetching initial responses via {provider}...")
             try:
-                responses = GoogleFormsService.get_form_responses(credentials, form_id)
+                responses = provider_get_responses(provider, credentials, form_id)
+                print(f"[CREATE] ✅ Got {len(responses)} initial responses")
+                for i, r in enumerate(responses[:5]):
+                    print(f"[CREATE]    [{i}] email={r.get('respondent_email','(none)')}, "
+                          f"id={r.get('response_id','')[:20]}")
+                if len(responses) > 5:
+                    print(f"[CREATE]    ... and {len(responses) - 5} more")
             except Exception as responses_error:
-                print(f"Warning: Could not fetch initial responses: {responses_error}")
+                print(f"[CREATE] ❌ Could not fetch initial responses: {responses_error}")
                 responses = []
         else:
-            print("Skipping initial response fetch (API access not available)")
+            print("[CREATE] Skipping initial response fetch (API access not available)")
         
         if not email_collection_enabled and api_access_available:
-            print("WARNING: Email collection may not be enabled on this form")
+            print("[CREATE] ⚠️  WARNING: Email collection may not be enabled on this form")
         
         db = get_db()
         
@@ -813,10 +831,12 @@ def create_form_request():
         
         # Create or update form document in forms collection
         now = datetime.now(timezone.utc).isoformat()
-        form_doc_id = form_id  # Use google_form_id as the document ID
+        form_doc_id = form_id  # Use extracted form_id as the document ID
         
         form_data = {
-            'google_form_id': form_id,
+            'provider': provider,
+            'form_id': form_id,
+            'google_form_id': form_id if provider == PROVIDER_GOOGLE else None,
             'form_url': form_url,
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
@@ -824,9 +844,8 @@ def create_form_request():
             'created_at': now,
             'updated_at': now,
             'is_active': True,
-            'api_access_available': api_access_available,  # Set based on whether we could fetch metadata
+            'api_access_available': api_access_available,
             'api_error_reason': api_error_reason,
-            # Don't set last_synced_at on creation - it will be set when first synced
             'form_settings': {
                 'email_collection_enabled': email_collection_enabled,
                 'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN'),
@@ -837,9 +856,9 @@ def create_form_request():
         form_ref = db.collection(Collections.FORMS).document(form_doc_id)
         form_doc = form_ref.get()
         if form_doc.exists:
-            # Update existing form document (don't update last_synced_at unless syncing)
             form_ref.update({
                 'form_url': form_url,
+                'provider': provider,
                 'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
                 'description': metadata.get('description', ''),
                 'updated_at': now,
@@ -848,23 +867,20 @@ def create_form_request():
                 'form_settings': form_data['form_settings']
             })
         else:
-            # Create new form document (without last_synced_at - will be set on first sync)
             form_ref.set(form_data)
         
-        # Create form request document with enhanced metadata
-        # IMPORTANT: Store title directly in form_request, not just in forms collection
-        # This allows multiple form requests for the same form to have different titles
+        # Create form request document
         form_request_data = {
-            'form_id': form_doc_id,  # Reference to forms collection
-            'google_form_id': form_id,
+            'provider': provider,
+            'form_id': form_doc_id,
+            'google_form_id': form_id if provider == PROVIDER_GOOGLE else None,
             'owner_id': user_id,
             'group_id': group_id,
-            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),  # Store title here!
-            'form_url': form_url,  # Store form_url directly in the request
+            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
+            'form_url': form_url,
             'created_at': now,
             'status': 'Active',
             'is_active': True,
-            # Reminder schedule configuration
             'due_date': due_date.isoformat(),
             'reminder_schedule': {
                 'schedule_type': reminder_schedule,
@@ -885,37 +901,35 @@ def create_form_request():
         doc_ref.set(form_request_data)
         
         # Store responses in responses collection
-        for response in responses:
+        for response_item in responses:
             response_data = {
                 'request_id': doc_ref.id,
                 'form_id': form_id,
-                'respondent_email': response.get('respondent_email', ''),
-                'response_id': response.get('response_id', ''),
-                'submitted_at': response.get('submitted_at', ''),
+                'respondent_email': response_item.get('respondent_email', ''),
+                'response_id': response_item.get('response_id', ''),
+                'submitted_at': response_item.get('submitted_at', response_item.get('create_time', '')),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
-        print(f"Form request created with ID: {doc_ref.id}")
-        print(f"   Title: {metadata.get('title')}")
-        print(f"   Responses: {len(responses)}")
-        print(f"   Email collection: {email_collection_enabled}")
+        print(f"\n[CREATE] ✅ Form request created: {doc_ref.id}")
+        print(f"[CREATE]    Provider: {provider}")
+        print(f"[CREATE]    Title: {form_request_data['title']}")
+        print(f"[CREATE]    Responses stored: {len(responses)}")
+        print(f"[CREATE]    Email collection: {email_collection_enabled}")
         
-        # ============================================================
-        # SEND INITIAL EMAILS (if first_reminder_timing is 'immediate')
-        # ============================================================
-        # When the user selects "immediate" timing, we send out the
-        # initial notification emails right now, not waiting for scheduler
-        # ============================================================
+        # ── SEND INITIAL EMAILS (if first_reminder_timing is 'immediate') ──
         initial_email_result = None
         if first_reminder_timing == 'immediate':
             print(f"\n📨 First reminder timing is 'immediate' - sending initial emails now...")
             form_title_for_email = data.get('title') or metadata.get('title', 'Untitled Form')
+            # Build a public view URL suitable for the provider
+            public_form_url = get_viewform_url(provider, form_url)
             initial_email_result = send_initial_emails(
                 request_id=doc_ref.id,
                 owner_id=user_id,
                 form_title=form_title_for_email,
-                form_url=form_url,
+                form_url=public_form_url,
                 group_id=group_id
             )
             print(f"   Initial email result: {initial_email_result}")
@@ -935,7 +949,7 @@ def create_form_request():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"Error creating form request: {error_msg}")
+        print(f"[CREATE] ❌ Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
             "details": error_msg

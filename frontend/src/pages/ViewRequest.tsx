@@ -51,6 +51,7 @@ interface FormRequest {
   title: string;
   description: string;
   form_url: string;
+  provider?: string;
   response_count: number;
   total_recipients: number;
   created_at: string;
@@ -542,6 +543,14 @@ export default function ViewRequest() {
                   color={formRequest.status === 'Active' ? 'success' : 'default'}
                   sx={{ fontWeight: 600 }}
                 />
+                {formRequest.provider && formRequest.provider !== 'google' && (
+                  <Chip
+                    label={formRequest.provider === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+                    size="small"
+                    color={formRequest.provider === 'jotform' ? 'warning' : 'info'}
+                    variant="outlined"
+                  />
+                )}
               </Box>
               <Typography variant="body2" color="text.secondary" mt={0.5}>
                 {formRequest.description || 'No description provided.'}
