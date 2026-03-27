@@ -1,21 +1,40 @@
+/**
+ * @file CreateGroup.tsx
+ * @description Provides a form for users to create a new recipient group.
+ * Upon successful creation, it presents a dialog allowing the user to copy 
+ * an invite link or manually bulk-add members via email addresses.
+ */
+
 import { useState } from 'react';
 import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, DialogContent, DialogActions, IconButton } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 export default function CreateGroup() {
   const navigate = useNavigate();
+  
+  // --- Form & UI State ---
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // --- Success Dialog State ---
   const [showSuccess, setShowSuccess] = useState(false);
-  const [createdGroup, setCreatedGroup] = useState<any>(null);
+  const [createdGroup, setCreatedGroup] = useState<any>(null); // Stores the response object of the newly created group
+  
+  // --- Member Addition State ---
   const [emails, setEmails] = useState('');
   const [addingMembers, setAddingMembers] = useState(false);
 
+  /**
+   * Submits the new group data to the backend.
+   * On success, it halts the form UI and opens the success dialog 
+   * so the user can immediately start adding members.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -42,18 +61,23 @@ export default function CreateGroup() {
         throw new Error(data.error || 'Failed to create group');
       }
       
-      console.log('✅ Group created:', data);
+      console.log('Group created:', data);
       setCreatedGroup(data.group);
       setShowSuccess(true);
       
     } catch (err: any) {
-      console.error('❌ Failed to create group:', err);
+      console.error('Failed to create group:', err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * Takes the raw string from the email textarea, sends it to the backend 
+   * to be parsed, and adds those users to the newly created group.
+   * Updates the local group state with the new member count upon success.
+   */
   const handleAddMembers = async () => {
     if (!emails.trim() || !createdGroup) return;
     
@@ -74,24 +98,28 @@ export default function CreateGroup() {
         throw new Error(data.error || 'Failed to add members');
       }
       
-      console.log('✅ Members added:', data);
+      console.log('Members added:', data);
       alert(`Added ${data.added_count} members!${data.skipped > 0 ? ` (${data.skipped} duplicates skipped)` : ''}`);
       setEmails('');
       
-      // Update member count
+      // Update member count in the dialog UI
       setCreatedGroup({
         ...createdGroup,
         member_count: data.total_members
       });
       
     } catch (err: any) {
-      console.error('❌ Failed to add members:', err);
+      console.error('Failed to add members:', err);
       alert(err.message);
     } finally {
       setAddingMembers(false);
     }
   };
 
+  /**
+   * Generates the unique invite link for the new group and writes it 
+   * directly to the user's system clipboard.
+   */
   const handleCopyLink = () => {
     if (!createdGroup) return;
     const inviteLink = `${window.location.origin}/groups/join/${createdGroup.invite_token}`;
@@ -99,6 +127,10 @@ export default function CreateGroup() {
     alert('Invite link copied to clipboard!');
   };
 
+  /**
+   * Closes the success dialog and redirects the user back to the 
+   * main groups dashboard.
+   */
   const handleClose = () => {
     setShowSuccess(false);
     navigate('/groups');
@@ -107,8 +139,12 @@ export default function CreateGroup() {
   return (
     <Box maxWidth="sm" sx={{ mx: 'auto' }}>
       <Paper sx={{ p: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          Create a New Group
+        <Typography variant="h5" component="h1" gutterBottom>
+          Create a New Group  <AnimatedInfoButton title="Creating a Group">
+                                <p>What is a group?</p>
+                                <p>A group is a collection of recipients that you can easily manage and send form requests to. Here you can create a group, give it a description, and add members to it. Then, when you want to send a form request, you can simply select the group as the recipient.</p>
+                                <p>Groups are perfect for teams, departments, or any set of people you frequently need to contact together. You can add or remove members from a group at any time, and each group has its own unique invite link for easy sharing.</p>
+                              </AnimatedInfoButton>
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
           Groups help you organize recipients for your form requests
@@ -164,9 +200,9 @@ export default function CreateGroup() {
 
       {/* Success Dialog */}
       <Dialog open={showSuccess} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitle>🎉 Group Created Successfully!</DialogTitle>
+        <DialogTitle>Group Created Successfully!</DialogTitle>
         <DialogContent>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant="h6" component="p" gutterBottom>
             {createdGroup?.name}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>

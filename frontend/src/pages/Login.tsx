@@ -64,7 +64,7 @@ function Login() {
       <Box sx={{ mt: 8 }}>
         <Paper elevation={3} sx={{ p: 4 }}>
           <Typography variant="h4" component="h1" gutterBottom align="center">
-            Login to FormReminder
+            Login to FormReminder 
           </Typography>
 
           {error && (
