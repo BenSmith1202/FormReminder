@@ -49,7 +49,7 @@ function Reset() {
       <Box sx={{ mt: 8 }}>
         <Paper elevation={3} sx={{ p: 4 }}>
           <Typography variant="h4" component="h1" gutterBottom align="center">
-            Reset Password
+            Reset Password 
           </Typography>
 
           <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 3 }}>

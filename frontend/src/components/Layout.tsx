@@ -13,7 +13,7 @@ import {
   ListItemIcon,
   ListItemText,
   Avatar,
-  Chip,
+  Tooltip,
 } from '@mui/material';
 import { useNavigate, Outlet, useLocation } from 'react-router-dom';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
@@ -84,7 +84,7 @@ export default function Layout() {
     return (
       <Box display="flex" alignItems="center" justifyContent="center" height="100vh">
         <CheckBoxIcon color="primary" sx={{ fontSize: 32, mr: 1 }} />
-        <Typography variant="h6" fontWeight="bold" color="text.secondary">
+        <Typography variant="h6" component="span" fontWeight="bold" color="text.secondary">
           FormReminder
         </Typography>
       </Box>
@@ -105,7 +105,7 @@ export default function Layout() {
       >
         <Box display="flex" alignItems="center" gap={1}>
           <CheckBoxIcon color="primary" />
-          <Typography variant="h6" fontWeight="bold">
+          <Typography variant="h6" component="span" fontWeight="bold">
             FormReminder
           </Typography>
         </Box>
@@ -114,7 +114,7 @@ export default function Layout() {
         </IconButton>
       </Box>
 
-      {/* User info */}
+      {/* User info (Mobile) */}
       {user && (
         <Box
           display="flex"
@@ -129,6 +129,7 @@ export default function Layout() {
               width: 36,
               height: 36,
               bgcolor: 'primary.main',
+              color: '#ffffff', // Explicitly setting white text
               fontSize: '0.85rem',
               fontWeight: 'bold',
             }}
@@ -159,8 +160,8 @@ export default function Layout() {
                   borderRadius: 2,
                   '&.Mui-selected': {
                     bgcolor: 'primary.50',
-                    color: 'primary.main',
-                    '& .MuiListItemIcon-root': { color: 'primary.main' },
+                    color: 'primary.dark',
+                    '& .MuiListItemIcon-root': { color: 'primary.dark' },
                   },
                 }}
               >
@@ -211,7 +212,7 @@ export default function Layout() {
             sx={{ cursor: 'pointer', flexGrow: 1 }}
           >
             <CheckBoxIcon color="primary" sx={{ fontSize: 22 }} />
-            <Typography variant="h6" fontWeight="bold" noWrap>
+            <Typography variant="h6" component="span" fontWeight="bold" noWrap>
               FormReminder
             </Typography>
           </Box>
@@ -231,7 +232,7 @@ export default function Layout() {
                     px: 1.5,
                     fontWeight: active ? 'bold' : 'medium',
                     bgcolor: active ? 'primary.50' : 'transparent',
-                    color: active ? 'primary.main' : 'text.primary',
+                    color: active ? 'primary.dark' : 'text.primary',
                     '&:hover': { bgcolor: active ? 'primary.100' : 'action.hover' },
                   }}
                 >
@@ -241,20 +242,23 @@ export default function Layout() {
             })}
           </Box>
 
-          {/* Desktop right side */}
+          {/* Desktop right side (Profile Refined) */}
           <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1, ml: 1 }}>
             {user && (
-              <Chip
-                avatar={
-                  <Avatar sx={{ bgcolor: 'primary.main', fontSize: '0.7rem', fontWeight: 'bold' }}>
-                    {user.username?.[0]?.toUpperCase()}
-                  </Avatar>
-                }
-                label={user.username}
-                size="small"
-                variant="outlined"
-                sx={{ borderColor: 'divider' }}
-              />
+              <Tooltip title={`Signed in as ${user.username}`} placement="bottom">
+                <Avatar
+                  sx={{
+                    width: 36,
+                    height: 36,
+                    bgcolor: 'primary.main',
+                    color: '#ffffff', // Explicitly setting white text
+                    fontSize: '0.85rem',
+                    fontWeight: 'bold',
+                  }}
+                >
+                  {user.username?.[0]?.toUpperCase()}
+                </Avatar>
+              </Tooltip>
             )}
             <NotificationBell />
             <Button
@@ -289,14 +293,14 @@ export default function Layout() {
         onClose={() => setDrawerOpen(false)}
         PaperProps={{ sx: { borderRadius: '16px 0 0 16px' } }}
       >
-        {drawer}
+                {drawer}
       </Drawer>
 
       {/* Page Content */}
       <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default' }}>
         <div key={location.pathname} className="page-fade-in">
-        <Outlet />
-      </div>
+          <Outlet />
+        </div>
       </Box>
     </Box>
   );

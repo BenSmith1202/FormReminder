@@ -38,6 +38,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -228,8 +229,13 @@ export default function EditRequest() {
             <AssignmentIcon color="primary" sx={{ fontSize: 22 }} />
           </Box>
           <Box>
-            <Typography variant="h5" fontWeight="bold">
-              Edit Request
+            <Typography variant="h5" component="h1" fontWeight="bold">
+              Edit Request      <AnimatedInfoButton title="Editing a form request">
+                                  <p>Here you can update the details of your form request.</p>
+                                  <p>Make sure to click "Save Changes" after making any updates. To discard changes and return to the request details page, click "Back to Request".</p>
+                                  <p>On this page, you can change the form URL, update the recipient group, set a new due date, and modify the reminder schedule.</p>
+                                  <p>When setting a reminder schedule, you can choose from preset options or create a custom schedule with specific days before the due date.</p>
+                                </AnimatedInfoButton>
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {requestTitle || 'Untitled Request'}
