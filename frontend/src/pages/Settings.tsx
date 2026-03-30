@@ -28,8 +28,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-
-const API_URL = 'http://localhost:5000';
+import API_URL from '../config';
 
 // ── Shared section wrapper ────────────────────────────────────────────────
 function Section({
