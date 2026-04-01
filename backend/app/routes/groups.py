@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
 import traceback
-import random
 
 # Import your models and database tools
 # Adjust these imports if your file structure is different
@@ -9,7 +8,6 @@ from models.group import Group
 from models.org_membership import OrgMembership
 from models.opt_out_event import OptOutEvent
 from models.database import get_db, Collections
-from utils.email_service import EmailService, _get_api_config
 
 # Define the Blueprint
 groups_bp = Blueprint('groups', __name__)
@@ -289,71 +287,58 @@ def get_group_by_token(invite_token: str):
 
 @groups_bp.post("/join/<invite_token>")
 def join_group(invite_token: str):
-    """PUBLIC: Join a group via invite link with 2-step verification"""
+    """PUBLIC: Join a group via invite link (no auth required)"""
     try:
         data = request.get_json()
-        email = data.get('email', '').strip()
-        user_code = data.get('code') # The 6-digit number from the user
-
-        if not email or not Group.validate_email(email):
-            return jsonify({"error": "Valid email is required"}), 400
-
-        # Step 1: Requesting a verification code
-        if not user_code:
-            # Generate a 6-digit code
-            verification_code = f"{random.randint(100000, 999999)}"
-            
-            # Store in session (expires when browser closes or session cleared)
-            session['verify_email'] = email.lower()
-            session['verify_code'] = verification_code
-            session['verify_token'] = invite_token
-            
-            # Send the email using your existing send_email logic
-            subject = "Your FormReminder Verification Code"
-            html_content = f"""
-                <h2>Verify your email</h2>
-                <p>You requested to join a group on FormReminder. Use the code below to verify your email:</p>
-                <h1 style="letter-spacing: 5px;">{verification_code}</h1>
-                <p>This code will expire shortly.</p>
-            """
-            EmailService.send_email(email, subject, html_content) 
-
-            return jsonify({
-                "success": True, 
-                "needs_verification": True,
-                "message": "Verification code sent to your email."
-            }), 200
-
-        # Step 2: Verifying the code
-        stored_code = session.get('verify_code')
-        stored_email = session.get('verify_email')
-        stored_token = session.get('verify_token')
-
-        if not stored_code or user_code != stored_code or email.lower() != stored_email or invite_token != stored_token:
-            return jsonify({"error": "Invalid or expired verification code"}), 400
-
-        # Code is valid - Proceed with joining
+        if not data or 'email' not in data:
+            return jsonify({"error": "Email is required"}), 400
+        
+        email = data['email'].strip()
+        
+        # Validate email format
+        if not Group.validate_email(email):
+            return jsonify({"error": "Invalid email format"}), 400
+        
+        print(f"User {email} joining group via token: {invite_token}")
+        
+        # Get group
         group = Group.get_by_invite_token(invite_token)
         if not group:
             return jsonify({"error": "Invalid invite link"}), 404
 
+        # Joining via invite link is an explicit opt-in; re-activate org membership if previously left.
         OrgMembership.ensure_active(group.owner_id, email, source="invite_join")
         
+        # Add member
         success = group.add_member(email)
         
-        # Clear session after success
-        session.pop('verify_code', None)
-        session.pop('verify_email', None)
-
+        if not success:
+            # Check if already a member
+            existing_emails = {member['email'].lower() for member in group.members}
+            if email.lower() in existing_emails:
+                return jsonify({
+                    "success": True,
+                    "message": "You're already a member of this group!",
+                    "already_member": True
+                }), 200
+            else:
+                return jsonify({"error": "Failed to join group"}), 500
+        
         return jsonify({
             "success": True,
             "message": f"Successfully joined {group.name}!",
             "group_name": group.name
         }), 200
-
+        
     except Exception as e:
+        import traceback
+        error_msg = str(e)
         traceback.print_exc()
-        return jsonify({"error": "Failed to process request", "details": str(e)}), 500
+        print(f"Error joining group: {error_msg}")
+        return jsonify({
+            "error": "Failed to join group",
+            "details": error_msg
+        }), 500
 
 @groups_bp.put("/<group_id>")
 def update_group(group_id):

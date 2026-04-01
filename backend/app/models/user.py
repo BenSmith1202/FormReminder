@@ -63,6 +63,55 @@ class User:
         return check_password_hash(password_hash, password)
     
     @staticmethod
+    def create_user(username: str, email: str, password: str) -> Optional['User']:
+        """Create a new user in the database"""
+        try:
+            db = get_db()
+            
+            # Check if username already exists
+            users_ref = db.collection(Collections.USERS)
+            existing_username = users_ref.where(filter=FieldFilter('username', '==', username)).limit(1).stream()
+            if len(list(existing_username)) > 0:
+                print(f"Username {username} already exists")
+                return None
+            
+            # Check if email already exists
+            existing_email = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1).stream()
+            if len(list(existing_email)) > 0:
+                print(f"Email {email} already exists")
+                return None
+            
+            # Create user document
+            password_hash = User.hash_password(password)
+            user_data = {
+                'username': username,
+                'email': email,
+                'password_hash': password_hash,
+                'google_access_token': None,
+                'google_refresh_token': None,
+                'token_expiry': None,
+                'created_at': datetime.utcnow().isoformat() + 'Z'
+            }
+            
+            # Add to database
+            doc_ref = users_ref.document()
+            doc_ref.set(user_data)
+            
+            print(f"User created successfully: {doc_ref.id}")
+            return User(
+                user_id=doc_ref.id,
+                username=username,
+                email=email,
+                password_hash=password_hash
+            )
+            
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @staticmethod
     def edit_username(user_id: str, newUsername: str) -> Optional['User']:
         """Edit a given user's username"""
         try:
@@ -80,24 +129,44 @@ class User:
             import traceback
             traceback.print_exc()
             return None
-        
+
     @staticmethod
-    def get_id_by_email(email: str) -> Optional[str]:
-        """Find a user's id by email"""
+    def reset_password(username: str, password: str) -> Optional['User']:
+        """Reset a given user's password"""
         try:
             db = get_db()
             users_ref = db.collection(Collections.USERS)
-            query = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1).stream()
+            thisUser = User.get_by_username(username)
             
-            for doc in query:
-                return doc.id
+            # Check if user exists before proceeding
+            if not thisUser:
+                print(f"User not found: {username}")
+                return None
+                
+            thisUserDoc = users_ref.document(thisUser.id)
             
+
+            newPwdHash = User.hash_password(password)
+
+            # Update database entry
+            thisUserDoc.update({"password_hash" : newPwdHash})
+            
+            
+            print(f"Password reset successfully: {thisUser.id}")
+            return User(
+                user_id=thisUser.id,
+                username=username,
+                email = thisUser.email,
+                password_hash=newPwdHash
+            )
+
+
         except Exception as e:
-            print(f"Error getting user by email: {e}")
+            print(f"Error reseting password: {e}")
             import traceback
             traceback.print_exc()
             return None
-        
+    
 
     @staticmethod
     def get_by_username(username: str) -> Optional['User']:
