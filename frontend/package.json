@@ -18,7 +18,6 @@
     "@mui/x-data-grid": "^8.21.0",
     "@mui/x-date-pickers": "^8.25.0",
     "date-fns": "^4.1.0",
-    "firebase": "^12.11.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.10.1",

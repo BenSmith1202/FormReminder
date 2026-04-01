@@ -5,7 +5,6 @@ import json
 import sys
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
-from firebase_admin import auth
 
 # Add the parent directory to the path so imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -128,29 +127,6 @@ def _resolve_org_context(session_user_id: str, org_id: str | None):
 
     return org_id, membership, None
 
-def migrate_users():
-    # Fetch all users from your Firestore collection
-    db = get_db()
-    users_ref = db.collection('users').stream()
-    
-    for doc in users_ref:
-        user_data = doc.to_dict()
-        email = user_data.get('email')
-        
-        try:
-            # 1. Create the user in Firebase Auth
-            # We don't provide a password; Firebase creates the account as "Unset"
-            firebase_user = auth.create_user(email=email)
-            print(f"Successfully migrated: {email}")
-            
-            # 2. (Optional) Trigger the reset email right now
-            # trigger_password_reset(email) 
-            
-        except Exception as e:
-            print(f"Error migrating {email}: {e}")
-
-# migrate_users()
-
 
 def _send_invite_email(
     to_email: str,
@@ -218,6 +194,147 @@ def root():
 
 
 # AUTHENTICATION ROUTES
+
+@app.post("/api/register")
+def register():
+    """Register a new user"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        
+        # Validate input
+        if not username or not email or not password:
+            return jsonify({"error": "Username, email, and password are required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        print(f"Attempting to register user: {username}")
+        
+        user = User.create_user(username, email, password)
+        
+        if not user:
+            return jsonify({"error": "Username or email already exists"}), 409
+        
+        session['user_id'] = user.id
+        
+        print(f"User registered and logged in: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "User registered successfully",
+            "user": user.to_safe_dict()
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during registration: {error_msg}")
+        return jsonify({
+            "error": "Registration failed",
+            "details": error_msg
+        }), 500
+
+@app.post("/api/reset")
+def reset():
+    """Reset a user's password"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        password = data.get('password')
+        
+        # Validate input
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        
+        if len(password) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        
+        print(f"Attempting to reset password for user: {username}")
+        
+        user = User.reset_password(username, password)
+        
+        if not user:
+            return jsonify({"error": "Password reset failed"}), 409
+        
+        session['user_id'] = user.id
+        
+        print(f"User password reset: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Password reset successfully",
+            "user": user.to_safe_dict()
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during registration: {error_msg}")
+        return jsonify({
+            "error": "Password reset failed",
+            "details": error_msg
+        }), 500
+
+@app.post("/api/login")
+def login():
+    """Login an existing user"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({"error": "Username and password are required"}), 400
+        
+        print(f"Login attempt for username: {username}")
+        
+        user = User.get_by_username(username)
+        
+        if not user:
+            print(f"User not found: {username}")
+            return jsonify({"error": "Invalid username or password"}), 401
+        
+        if not User.verify_password(user.password_hash, password):
+            print(f"Invalid password for user: {username}")
+            return jsonify({"error": "Invalid username or password"}), 401
+        
+        session['user_id'] = user.id
+        
+        print(f"User logged in successfully: {user.id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Logged in successfully",
+            "user": user.to_safe_dict()
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Error during login: {error_msg}")
+        return jsonify({
+            "error": "Login failed",
+            "details": error_msg
+        }), 500
+
 
 @app.post("/api/logout")
 def logout():
@@ -2758,4 +2875,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
     
-
