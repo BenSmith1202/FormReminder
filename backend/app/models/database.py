@@ -41,17 +41,24 @@ class FirestoreDB:
                 print(f"Loaded Firebase credentials from FIREBASE_CREDENTIALS_JSON env var")
             
             if not cred_path:
-                # Try backend/firebase-credentials.json (one level up from app/models)
-                backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                default_path = os.path.join(backend_dir, 'firebase-credentials.json')
-                if os.path.exists(default_path):
-                    cred_path = default_path
+                # 1. Explicit path from settings / env var (FIREBASE_CREDENTIALS_PATH)
+                if settings.FIREBASE_CREDENTIALS_PATH and os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
+                    cred_path = settings.FIREBASE_CREDENTIALS_PATH
                 else:
-                    # Try backend/app/firebase-credentials.json
+                    # 2. Project root (one level above backend/)
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                    root_path = os.path.join(project_root, 'firebase-credentials.json')
+                    # 3. backend/ directory
+                    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                    backend_path = os.path.join(backend_dir, 'firebase-credentials.json')
+                    # 4. backend/app/ directory
                     app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                    default_path2 = os.path.join(app_dir, 'firebase-credentials.json')
-                    if os.path.exists(default_path2):
-                        cred_path = default_path2
+                    app_path = os.path.join(app_dir, 'firebase-credentials.json')
+
+                    for candidate in (root_path, backend_path, app_path):
+                        if os.path.exists(candidate):
+                            cred_path = candidate
+                            break
             
             if cred_path and os.path.exists(cred_path):
                 print(f"Using credentials from: {cred_path}")
@@ -148,6 +155,8 @@ class Collections:
     BOUNCED_EMAILS = "bounced_emails"
     # Sub-user memberships within an owner's organization
     ORG_MEMBERS = "org_members"
+    # Tracking-pixel open events recorded when a recipient loads a reminder email
+    EMAIL_OPEN_EVENTS = "email_open_events"
 
 # Helper function
 def get_db():

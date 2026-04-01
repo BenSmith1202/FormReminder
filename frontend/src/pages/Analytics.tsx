@@ -10,6 +10,9 @@ import {
   Button,
   Chip,
   Snackbar,
+  Divider,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import {
@@ -24,7 +27,6 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
 
 import API_URL from '../config';
 
@@ -39,23 +41,27 @@ interface OptOutEventRow {
   timestamp: string;
 }
 
-interface SubmissionPerFormRow {
-  form_request_id: string;
+interface EmailOpenPerForm {
+  request_id: string | null;
   form_title: string;
-  count: number;
+  opens: number;
 }
 
-interface SubmissionMonthlyRow {
+interface EmailOpenMonthly {
   month: string;
   label: string;
-  count: number;
+  opens: number;
 }
 
-interface SubmissionAnalytics {
-  total_submissions: number;
-  submissions_this_month: number;
-  per_form: SubmissionPerFormRow[];
-  monthly: SubmissionMonthlyRow[];
+interface EmailOpenAnalytics {
+  total_opens: number;
+  unique_opens: number;
+  opens_this_month: number;
+  total_sent: number;
+  open_rate: number;
+  unique_open_rate: number;
+  per_form: EmailOpenPerForm[];
+  monthly: EmailOpenMonthly[];
 }
 
 function formatTimestamp(ts: string): string {
@@ -82,13 +88,16 @@ function getEventTypeChipColor(eventType: string): 'error' | 'warning' | 'succes
 }
 
 export default function Analytics() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
   const [user, setUser] = useState<{ id: string } | null>(null);
-  const [events, setEvents] = useState<OptOutEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
+  const [emailOpenStats, setEmailOpenStats] = useState<EmailOpenAnalytics | null>(null);
+  const [events, setEvents] = useState<OptOutEventRow[]>([]);
   const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
-  const [submissionStats, setSubmissionStats] = useState<SubmissionAnalytics | null>(null);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
 
   useEffect(() => {
     const loadUser = async () => {
@@ -102,54 +111,47 @@ export default function Analytics() {
         }
         setError('Not authenticated');
         return null;
-      } catch (e) {
+      } catch {
         setError('Failed to load user');
         return null;
       }
     };
 
+    const loadEmailOpens = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/analytics/email-opens`, { credentials: 'include' });
+        if (!res.ok) {
+          // eslint-disable-next-line no-console
+          console.error('Failed to load email open analytics', res.status);
+        } else {
+          const data: EmailOpenAnalytics = await res.json();
+          setEmailOpenStats(data);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load email open analytics', e);
+      }
+    };
+
     const loadEvents = async (ownerId: string) => {
       try {
-        const res = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, {
-          credentials: 'include',
-        });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(errBody?.error || `Failed to load events (${res.status})`);
+        const res = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setEvents(Array.isArray(data?.events) ? data.events : []);
         }
-        const data = await res.json();
-        setEvents(Array.isArray(data?.events) ? data.events : []);
-      } catch (e: any) {
-        setError(e.message || 'Failed to load events');
-        setEvents([]);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load opt-out events', e);
       } finally {
         setLoading(false);
       }
     };
 
-    const loadSubmissions = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/analytics/submissions-over-time`, {
-          credentials: 'include',
-        });
-        if (!res.ok) {
-          // Do not override existing error state with this; just log for debugging.
-          // eslint-disable-next-line no-console
-          console.error('Failed to load submissions analytics', res.status);
-          return;
-        }
-        const data: SubmissionAnalytics = await res.json();
-        setSubmissionStats(data);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to load submissions analytics', e);
-      }
-    };
-
     loadUser().then((ownerId) => {
       if (ownerId) {
+        loadEmailOpens();
         loadEvents(ownerId);
-        loadSubmissions();
       } else {
         setLoading(false);
       }
@@ -158,71 +160,31 @@ export default function Analytics() {
 
   const refreshEvents = async () => {
     if (!user?.id) return;
-    setLoading(true);
-    setError(null);
     try {
-      const res = await fetch(`${API_URL}/api/organizations/${user.id}/opt-out-events`, {
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error('Failed to load events');
-      const data = await res.json();
-      setEvents(Array.isArray(data.events) ? data.events : []);
-    } catch (e: any) {
-      setError(e.message || 'Failed to load events');
-    } finally {
-      setLoading(false);
+      const res = await fetch(`${API_URL}/api/organizations/${user.id}/opt-out-events`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setEvents(Array.isArray(data.events) ? data.events : []);
+      }
+    } catch {
+      // non-fatal
     }
   };
 
-  const stats = useMemo(() => {
-    const now = new Date();
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    let totalOptOuts = 0;
-    let optOutsThisMonth = 0;
-    let totalResubscribes = 0;
-    const latestByRecipient: Record<string, string> = {};
+  const latestByRecipient = useMemo(() => {
+    const map: Record<string, string> = {};
     const sorted = [...events].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     for (const e of sorted) {
-      const email = e.recipient_email?.toLowerCase?.() ?? '';
-      if (email && latestByRecipient[email] === undefined) {
-        latestByRecipient[email] = e.event_type;
-      }
-      if (e.event_type === 'opted_out') {
-        totalOptOuts++;
-        if (new Date(e.timestamp) >= thisMonthStart) optOutsThisMonth++;
-      } else if (e.event_type === 'added_back_by_owner' || e.event_type === 'resubscribed') {
-        totalResubscribes++;
-      }
+      const key = (e.recipient_email ?? '').toLowerCase();
+      if (key && map[key] === undefined) map[key] = e.event_type;
     }
-    let activeOptedOut = 0;
-    for (const et of Object.values(latestByRecipient)) {
-      if (et === 'opted_out' || et === 'left_group') activeOptedOut++;
-    }
-    return {
-      totalOptOuts,
-      optOutsThisMonth,
-      totalResubscribes,
-      activeOptedOut,
-      latestByRecipient,
-    };
+    return map;
   }, [events]);
 
-  const barData = useMemo(() => {
-    if (!submissionStats) return [];
-    return submissionStats.per_form.map((row) => ({
-      name: row.form_title || 'Untitled',
-      count: row.count,
-    }));
-  }, [submissionStats]);
-
-  const lineData = useMemo(() => {
-    if (!submissionStats) return [];
-    return submissionStats.monthly.map((row) => ({
-      month: row.month,
-      label: row.label,
-      submissions: row.count,
-    }));
-  }, [submissionStats]);
+  const canResubscribe = (email: string) => {
+    const latest = latestByRecipient[(email ?? '').toLowerCase()];
+    return latest === 'opted_out' || latest === 'left_group';
+  };
 
   const handleResubscribe = async (email: string) => {
     if (!user?.id) return;
@@ -248,35 +210,19 @@ export default function Analytics() {
     }
   };
 
-  const canResubscribe = (email: string) => {
-    const latest = stats.latestByRecipient[email?.toLowerCase?.() ?? ''];
-    return latest === 'opted_out' || latest === 'left_group';
-  };
-
-  const handleExportCsv = () => {
-    const headers = ['Email', 'Event Type', 'Group', 'Source', 'Performed By', 'Timestamp'];
-    const rows = events.map((e) => [
-      e.recipient_email ?? '',
-      e.event_type ?? '',
-      e.group_name ?? '',
-      e.source ?? '',
-      e.performed_by ?? '',
-      formatTimestamp(e.timestamp),
-    ]);
-    const escape = (v: string) => {
-      const s = String(v);
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-      return s;
-    };
-    const csv = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `opt-out-events-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const rows = useMemo(
+    () => events.map((e) => ({
+      id: e.id,
+      recipient_email: e.recipient_email,
+      event_type: e.event_type,
+      group_name: e.group_name,
+      group_id: e.group_id,
+      source: e.source,
+      performed_by: e.performed_by,
+      timestamp: e.timestamp,
+    })),
+    [events]
+  );
 
   const columns: GridColDef[] = useMemo(
     () => [
@@ -284,7 +230,7 @@ export default function Analytics() {
       {
         field: 'event_type',
         headerName: 'Event Type',
-        width: 140,
+        width: 145,
         renderCell: (params: GridRenderCellParams) => (
           <Chip
             label={params.value}
@@ -298,14 +244,14 @@ export default function Analytics() {
         field: 'group_name',
         headerName: 'Group',
         width: 140,
-        valueGetter: (_, row) => row.group_name ?? '—',
+        valueGetter: (_: unknown, row: OptOutEventRow) => row.group_name ?? '—',
       },
       { field: 'source', headerName: 'Source', width: 120 },
-      { field: 'performed_by', headerName: 'Performed By', width: 110 },
+      { field: 'performed_by', headerName: 'Performed By', width: 120 },
       {
         field: 'timestamp',
         headerName: 'Timestamp',
-        width: 180,
+        width: 185,
         valueFormatter: (value: string) => formatTimestamp(value),
       },
       {
@@ -331,25 +277,26 @@ export default function Analytics() {
         },
       },
     ],
-    [stats.latestByRecipient, resubscribingEmail]
+    [latestByRecipient, resubscribingEmail]
   );
 
-  const rows = useMemo(
-    () =>
-      events.map((e) => ({
-        id: e.id,
-        recipient_email: e.recipient_email,
-        event_type: e.event_type,
-        group_name: e.group_name,
-        group_id: e.group_id,
-        source: e.source,
-        performed_by: e.performed_by,
-        timestamp: e.timestamp,
-      })),
-    [events]
-  );
+  const openBarData = useMemo(() => {
+    if (!emailOpenStats) return [];
+    return emailOpenStats.per_form.map((row) => ({
+      name: row.form_title || 'Untitled',
+      opens: row.opens,
+    }));
+  }, [emailOpenStats]);
 
-  if (loading && events.length === 0) {
+  const openLineData = useMemo(() => {
+    if (!emailOpenStats) return [];
+    return emailOpenStats.monthly.map((row) => ({
+      label: row.label,
+      opens: row.opens,
+    }));
+  }, [emailOpenStats]);
+
+  if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 5 }}>
         <CircularProgress />
@@ -357,7 +304,7 @@ export default function Analytics() {
     );
   }
 
-  if (error && events.length === 0) {
+  if (error) {
     return (
       <Box sx={{ p: 2 }}>
         <Typography variant="h5" component="h1" gutterBottom>Analytics</Typography>
@@ -371,84 +318,156 @@ export default function Analytics() {
       <Typography variant="h5" component="h1" gutterBottom sx={{ fontWeight: 600 }}>
         Analytics
       </Typography>
-      {events.length === 0 && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Showing data for your account. No opt-out events have been recorded yet. Events are added when recipients
-          unsubscribe from reminder emails, when you remove someone from a group, or when you re-subscribe someone here.
-        </Alert>
-      )}
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Total opt-outs (all time)</Typography>
-              <Typography variant="h4" component="p">{stats.totalOptOuts}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Opt-outs this month</Typography>
-              <Typography variant="h4" component="p">{stats.optOutsThisMonth}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Total re-subscribes (all time)</Typography>
-              <Typography variant="h4" component="p">{stats.totalResubscribes}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
-        <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 200px' }, minWidth: 0 }}>
-          <Card>
-            <CardContent>
-              <Typography color="text.secondary" variant="body2" gutterBottom>Active opted-out count</Typography>
-              <Typography variant="h4" component="p">{stats.activeOptedOut}</Typography>
-            </CardContent>
-          </Card>
-        </Box>
+      {/* ── Stat cards ── */}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1.5, sm: 2 }, mb: 3 }}>
+        {[
+          { label: 'Emails sent', value: emailOpenStats?.total_sent ?? '—', highlight: false },
+          { label: 'Open rate', value: emailOpenStats != null ? `${emailOpenStats.open_rate}%` : '—', highlight: true },
+        ].map(({ label, value, highlight }) => (
+          <Box key={label} sx={{ flex: { xs: '1 1 calc(50% - 6px)', sm: '1 1 200px' }, minWidth: 0 }}>
+            <Card
+              sx={{
+                height: '100%',
+                borderColor: highlight ? 'primary.main' : undefined,
+                borderWidth: highlight ? 2 : 1,
+                borderStyle: 'solid',
+              }}
+            >
+              <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
+                <Typography
+                  color="text.secondary"
+                  variant="body2"
+                  gutterBottom
+                  sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, lineHeight: 1.3 }}
+                >
+                  {label}
+                </Typography>
+                <Typography
+                  component="p"
+                  sx={{
+                    fontSize: { xs: '1.5rem', sm: '2.125rem' },
+                    fontWeight: 700,
+                    lineHeight: 1.2,
+                    color: highlight ? 'primary.main' : 'text.primary',
+                  }}
+                >
+                  {value}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Box>
+        ))}
       </Box>
 
+      {/* ── Open rate charts ── */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
           <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Submissions per form</Typography>
+            <Typography variant="subtitle1" gutterBottom>Email opens per form</Typography>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={barData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={openBarData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#1976d2" name="Submissions" />
+                <Bar dataKey="opens" fill="#43a047" name="Opens" />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
         </Box>
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
           <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Submissions over time (last 6 months)</Typography>
+            <Typography variant="subtitle1" gutterBottom>Email opens over time (last 6 months)</Typography>
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={lineData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <LineChart data={openLineData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="submissions" name="Submissions" stroke="#1976d2" strokeWidth={2} dot />
+                <Line type="monotone" dataKey="opens" name="Opens" stroke="#43a047" strokeWidth={2} dot />
               </LineChart>
             </ResponsiveContainer>
           </Paper>
         </Box>
       </Box>
 
-      <Paper sx={{ p: { xs: 1.5, sm: 2 }, mb: 2, overflow: 'hidden' }}>
-        <Typography variant="subtitle1" gutterBottom>Opted-Out Recipients</Typography>
-        <Box sx={{ height: { xs: 350, sm: 400 }, width: '100%', overflowX: 'auto', minWidth: 0 }}>
-          <Box sx={{ minWidth: 800, height: '100%' }}>
+      {/* ── Opted-Out Recipients ── */}
+      <Paper sx={{ p: { xs: 1.5, sm: 2 }, overflow: 'hidden' }}>
+        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
+          Opted-Out Recipients
+        </Typography>
+
+        {isMobile ? (
+          /* ── Mobile: one card per row ── */
+          <Box>
+            {rows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+                No opt-out events recorded.
+              </Typography>
+            ) : (
+              rows.map((row, idx) => (
+                <Box key={row.id}>
+                  {idx > 0 && <Divider sx={{ my: 1 }} />}
+                  <Box sx={{ py: 1 }}>
+                    {/* Email + chip */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1, mb: 0.75 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontWeight: 600, wordBreak: 'break-all', flex: 1, fontSize: '0.8rem' }}
+                      >
+                        {row.recipient_email}
+                      </Typography>
+                      <Chip
+                        label={row.event_type}
+                        color={getEventTypeChipColor(row.event_type)}
+                        size="small"
+                        variant="outlined"
+                        sx={{ flexShrink: 0 }}
+                      />
+                    </Box>
+
+                    {/* Group / source */}
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 0.75 }}>
+                      {row.group_name && (
+                        <Typography variant="caption" color="text.secondary">
+                          Group: <strong>{row.group_name}</strong>
+                        </Typography>
+                      )}
+                      {row.source && (
+                        <Typography variant="caption" color="text.secondary">
+                          Source: <strong>{row.source}</strong>
+                        </Typography>
+                      )}
+                    </Box>
+
+                    {/* Timestamp + re-subscribe */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatTimestamp(row.timestamp)}
+                      </Typography>
+                      {canResubscribe(row.recipient_email) && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={resubscribingEmail === row.recipient_email}
+                          onClick={() => handleResubscribe(row.recipient_email)}
+                          startIcon={resubscribingEmail === row.recipient_email ? <CircularProgress size={12} /> : undefined}
+                          sx={{ fontSize: '0.7rem', py: 0.25, px: 1 }}
+                        >
+                          {resubscribingEmail === row.recipient_email ? 'Sending...' : 'Re-subscribe'}
+                        </Button>
+                      )}
+                    </Box>
+                  </Box>
+                </Box>
+              ))
+            )}
+          </Box>
+        ) : (
+          /* ── Desktop: DataGrid ── */
+          <Box sx={{ height: 400, width: '100%' }}>
             <DataGrid
               aria-label="Opted-out recipients"
               disableVirtualization
@@ -459,16 +478,7 @@ export default function Analytics() {
               disableRowSelectionOnClick
             />
           </Box>
-        </Box>
-        <Button
-          variant="outlined"
-          startIcon={<FileDownloadIcon />}
-          onClick={handleExportCsv}
-          sx={{ mt: 2 }}
-          fullWidth
-        >
-          Export to CSV
-        </Button>
+        )}
       </Paper>
 
       <Snackbar

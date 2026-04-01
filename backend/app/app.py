@@ -15,6 +15,7 @@ from models.group import Group
 from models.org_membership import OrgMembership
 from models.opt_out_event import OptOutEvent
 from models.org_member import OrgMember
+from models.email_open_event import EmailOpenEvent
 from config import settings
 from utils.google_forms_service import GoogleFormsService
 from utils.email_service import EmailService
@@ -2140,6 +2141,177 @@ def get_submissions_over_time():
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Failed to get submissions analytics", "details": str(e)}), 500
+
+
+# Minimal 1×1 transparent GIF (43 bytes, RFC-compliant).
+_TRACKING_PIXEL = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00"
+    b"!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01"
+    b"\x00\x00\x02\x02D\x01\x00;"
+)
+
+
+@app.get("/api/track/open/<token>")
+def track_email_open(token: str):
+    """Public endpoint: serve a 1×1 tracking pixel and log the email open.
+
+    The token is a URL-safe base64-encoded JSON object containing the fields
+    owner_id, recipient_email, request_id, and form_title produced by
+    EmailService.build_tracking_token().  No authentication is required
+    because this endpoint is called by the recipient's email client.
+    """
+    import base64
+
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        owner_id = payload.get("o", "")
+        recipient_email = payload.get("e", "")
+        request_id = payload.get("r", "") or None
+        form_title = payload.get("f", "") or None
+
+        print(
+            f"track_email_open: token decoded owner_id={owner_id!r} "
+            f"email={recipient_email!r} request_id={request_id!r} form={form_title!r}"
+        )
+        if owner_id and recipient_email:
+            ua = request.headers.get("User-Agent", "")
+            ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+            logged = EmailOpenEvent.log(
+                owner_id,
+                recipient_email,
+                request_id=request_id,
+                form_title=form_title,
+                user_agent=ua,
+                ip_address=ip.split(",")[0].strip() if ip else "",
+            )
+            print(f"track_email_open: logged={logged} email={recipient_email!r}")
+        else:
+            print(f"track_email_open: skipped — missing owner_id or email in token")
+    except Exception as e:
+        print(f"track_email_open: failed to decode/log token={token!r}: {e}")
+
+    from flask import Response
+    return Response(
+        _TRACKING_PIXEL,
+        status=200,
+        headers={
+            "Content-Type": "image/gif",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+@app.get("/api/analytics/email-opens")
+def get_email_open_analytics():
+    """Owner-only: Return email open rate analytics for the Analytics dashboard."""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        from datetime import datetime
+
+        events = EmailOpenEvent.get_events_for_owner(user_id)
+
+        now = datetime.utcnow()
+        this_month_start = datetime(now.year, now.month, 1)
+
+        # Pre-compute the last 6 month slots.
+        month_keys: list[str] = []
+        month_counts: dict[str, int] = {}
+        for i in range(5, -1, -1):
+            year, month = now.year, now.month - i
+            while month <= 0:
+                year -= 1
+                month += 12
+            key = f"{year}-{month:02d}"
+            if key not in month_counts:
+                month_keys.append(key)
+                month_counts[key] = 0
+
+        total_opens = len(events)
+        opens_this_month = 0
+        unique_recipients: set[str] = set()
+        per_form: dict[str, dict] = {}
+
+        for e in events:
+            ts_str = e.timestamp or ""
+            try:
+                dt = datetime.fromisoformat(ts_str.rstrip("Z"))
+            except Exception:
+                dt = None
+
+            if dt and dt >= this_month_start:
+                opens_this_month += 1
+
+            email_key = e.recipient_email or ""
+            if email_key:
+                unique_recipients.add(email_key)
+
+            req_key = e.request_id or "__unknown__"
+            title = e.form_title or "Untitled"
+            if req_key not in per_form:
+                per_form[req_key] = {
+                    "request_id": req_key if req_key != "__unknown__" else None,
+                    "form_title": title,
+                    "opens": 0,
+                }
+            per_form[req_key]["opens"] += 1
+
+            if dt:
+                mk = f"{dt.year}-{dt.month:02d}"
+                if mk in month_counts:
+                    month_counts[mk] += 1
+
+        # Fetch total emails sent (from email_logs) to compute open rate.
+        db = get_db()
+        sent_logs = db.collection(Collections.EMAIL_LOGS)\
+            .where("success", "==", True)\
+            .stream()
+        total_sent = sum(1 for _ in sent_logs)
+
+        open_rate = round(total_opens / total_sent * 100, 1) if total_sent > 0 else 0.0
+        unique_open_rate = round(len(unique_recipients) / total_sent * 100, 1) if total_sent > 0 else 0.0
+
+        monthly = []
+        for key in sorted(month_keys):
+            year, month_str = key.split("-")
+            label_dt = datetime(int(year), int(month_str), 1)
+            monthly.append({
+                "month": key,
+                "label": label_dt.strftime("%b '%y"),
+                "opens": month_counts.get(key, 0),
+            })
+
+        per_form_list = sorted(
+            per_form.values(),
+            key=lambda x: x["opens"],
+            reverse=True,
+        )
+
+        print(
+            f"get_email_open_analytics: owner_id={user_id!r} "
+            f"total_opens={total_opens} unique={len(unique_recipients)} "
+            f"total_sent={total_sent} open_rate={open_rate}%"
+        )
+
+        return jsonify({
+            "total_opens": total_opens,
+            "unique_opens": len(unique_recipients),
+            "opens_this_month": opens_this_month,
+            "total_sent": total_sent,
+            "open_rate": open_rate,
+            "unique_open_rate": unique_open_rate,
+            "per_form": per_form_list,
+            "monthly": monthly,
+        }), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get email open analytics", "details": str(e)}), 500
 
 
 # ============= END GROUPS ROUTES =============

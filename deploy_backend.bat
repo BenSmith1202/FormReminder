@@ -51,8 +51,8 @@ call gcloud run deploy %SERVICE_NAME% ^
   --clear-base-image ^
   --min-instances 1 ^
   --max-instances 30 ^
-  --set-secrets="FIREBASE_CREDENTIALS_JSON=FIREBASE_CREDENTIALS_JSON:latest,GOOGLE_CLIENT_SECRET_JSON=GOOGLE_CLIENT_SECRET_JSON:latest,SECRET_KEY=FLASK_SECRET_KEY:latest,SMTP_PASSWORD=GMAIL_APP_PASSWORD:latest" ^
-  --set-env-vars="FIREBASE_PROJECT_ID=form-helper-478620-q3,GOOGLE_CLIENT_ID=176029126556-mmrs8trp6mue4f997j8aqmuu12t2fn5f.apps.googleusercontent.com,GOOGLE_REDIRECT_URI=https://formreminder-backend-176029126556.us-central1.run.app/oauth/callback,BACKEND_PUBLIC_URL=https://formreminder-backend-176029126556.us-central1.run.app,FRONTEND_URL=https://formreminder-frontend-176029126556.us-central1.run.app,DEBUG=False"
+  --set-secrets="FIREBASE_CREDENTIALS_JSON=FIREBASE_CREDENTIALS_JSON:latest,GOOGLE_CLIENT_SECRET_JSON=GOOGLE_CLIENT_SECRET_JSON:latest,SECRET_KEY=FLASK_SECRET_KEY:latest,SMTP_PASSWORD=GMAIL_APP_PASSWORD:latest,EMAILIT_API_KEY=EMAILIT_API_KEY:latest" ^
+  --set-env-vars="FIREBASE_PROJECT_ID=form-helper-478620-q3,GOOGLE_CLIENT_ID=176029126556-mmrs8trp6mue4f997j8aqmuu12t2fn5f.apps.googleusercontent.com,GOOGLE_REDIRECT_URI=https://formreminder-backend-176029126556.us-central1.run.app/oauth/callback,BACKEND_PUBLIC_URL=https://formreminder-backend-176029126556.us-central1.run.app,FRONTEND_URL=https://formreminder-frontend-176029126556.us-central1.run.app,DEBUG=False,EMAILIT_FROM_ADDRESS=reminders@mail.formreminder.com,EMAILIT_FROM_NAME=FormReminder"
 
 :: NOTE on --min-instances 1:
 :: Your app uses APScheduler for automatic reminders. Cloud Run scales to 0
