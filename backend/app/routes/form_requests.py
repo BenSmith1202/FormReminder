@@ -914,6 +914,13 @@ def update_form_request(request_id):
         if 'description' in data:
             updates['description'] = data['description']
 
+        if 'activity' in data:
+            updates['is_active'] = data['activity']
+            if not data['activity']:
+                updates['status'] = "Inactive"
+            else:
+                updates['status'] = "Active"
+
         if 'form_url' in data and data['form_url'] != existing_data.get('form_url'):
             # Note: Changing URL might invalidate existing responses, but we allow the config change
             updates['form_url'] = data['form_url']
