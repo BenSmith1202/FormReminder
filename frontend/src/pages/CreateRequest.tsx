@@ -5,7 +5,7 @@
  * and configure automated reminder schedules (preset or custom).
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -30,13 +30,15 @@ import {
   Divider,
   Container,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import DescriptionIcon from '@mui/icons-material/Description';
 import GroupIcon from '@mui/icons-material/Group';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import LinkIcon from '@mui/icons-material/Link';
 import { TimePicker } from '@mui/x-date-pickers/TimePicker';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -107,8 +109,12 @@ function SectionHeader({
   );
 }
 
+/** sessionStorage key for persisting the form draft across navigation */
+const DRAFT_KEY = 'fr_create_request_draft';
+
 export default function CreateRequest() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // --- Core Form State ---
   const [provider, setProvider] = useState('google'); // 'google', 'jotform', 'microsoft'
@@ -135,10 +141,112 @@ export default function CreateRequest() {
   const [error, setError] = useState<string | null>(null);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
 
+  // --- Connected providers gating ---
+  const [connectedProviders, setConnectedProviders] = useState<{ google: boolean; jotform: boolean; microsoft: boolean }>({
+    google: false, jotform: false, microsoft: false,
+  });
+  const [connectDialogProvider, setConnectDialogProvider] = useState<string | null>(null);
+  const [jotformApiKey, setJotformApiKey] = useState('');
+  const [jotformError, setJotformError] = useState('');
+  const [connectLoading, setConnectLoading] = useState(false);
+
+  // --- Flag to prevent the save-effect from firing while we're still restoring ---
+  const [draftRestored, setDraftRestored] = useState(false);
+
   // Load available recipient groups when the component mounts
   useEffect(() => {
     loadGroups();
   }, []);
+
+  // Fetch connected provider status on mount
+  const fetchConnectedProviders = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/connected-accounts`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setConnectedProviders({ google: data.google, jotform: data.jotform, microsoft: data.microsoft });
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { fetchConnectedProviders(); }, [fetchConnectedProviders]);
+
+  // Re-check when window regains focus (covers OAuth popup flows)
+  useEffect(() => {
+    const onFocus = () => { fetchConnectedProviders(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [fetchConnectedProviders]);
+
+  /**
+   * Restore form draft from sessionStorage on mount.
+   * Also handles the ?newGroupId query param that comes back from
+   * the "New Group" round-trip so the freshly created group is
+   * auto-selected in the dropdown.
+   */
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft.provider) setProvider(draft.provider);
+        if (draft.requestTitle) setRequestTitle(draft.requestTitle);
+        if (draft.formUrl) setFormUrl(draft.formUrl);
+        if (draft.groupId) setGroupId(draft.groupId);
+        if (draft.dueDate) setDueDate(new Date(draft.dueDate));
+        if (draft.reminderSchedule) setReminderSchedule(draft.reminderSchedule);
+        if (draft.firstReminderTiming) setFirstReminderTiming(draft.firstReminderTiming);
+        if (draft.scheduledDate) setScheduledDate(new Date(draft.scheduledDate));
+        if (draft.scheduledTime) setScheduledTime(new Date(draft.scheduledTime));
+        if (draft.customDays) setCustomDays(draft.customDays);
+      }
+    } catch {
+      // Ignore corrupted draft data
+    }
+
+    // If we arrived here with ?newGroupId=<id>, auto-select that group
+    const newGroupId = searchParams.get('newGroupId');
+    if (newGroupId) {
+      setGroupId(newGroupId);
+      // Clean the query param from the URL without a navigation
+      searchParams.delete('newGroupId');
+      setSearchParams(searchParams, { replace: true });
+    }
+
+    // Allow the save-effect to start persisting
+    setDraftRestored(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Persist form fields to sessionStorage on every change so the user
+   * doesn't lose progress when navigating away and coming back.
+   * Only runs after the initial draft has been restored.
+   */
+  const saveDraft = useCallback(() => {
+    if (!draftRestored) return;
+    const draft: Record<string, unknown> = {
+      provider,
+      requestTitle,
+      formUrl,
+      groupId,
+      dueDate: dueDate ? dueDate.toISOString() : null,
+      reminderSchedule,
+      firstReminderTiming,
+      scheduledDate: scheduledDate ? scheduledDate.toISOString() : null,
+      scheduledTime: scheduledTime ? scheduledTime.toISOString() : null,
+      customDays,
+    };
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  }, [
+    draftRestored, provider, requestTitle, formUrl, groupId, dueDate,
+    reminderSchedule, firstReminderTiming, scheduledDate, scheduledTime, customDays,
+  ]);
+
+  useEffect(() => { saveDraft(); }, [saveDraft]);
+
+  /** Clear the draft from sessionStorage (called on submit / cancel). */
+  const clearDraft = () => sessionStorage.removeItem(DRAFT_KEY);
 
   /**
    * Fetches the user's available recipient groups from the backend
@@ -153,6 +261,83 @@ export default function CreateRequest() {
       console.error('Failed to load groups');
     }
   };
+
+  // ── Provider connect helpers (inline dialog) ──
+
+  /** Called when user selects a provider; gates on connection status. */
+  const handleProviderChange = (value: string) => {
+    if (connectedProviders[value as keyof typeof connectedProviders]) {
+      setProvider(value);
+      setFormUrl('');
+    } else {
+      // Open the connect dialog instead of changing the provider
+      setConnectDialogProvider(value);
+    }
+  };
+
+  const connectOAuthProvider = async (key: string) => {
+    setConnectLoading(true);
+    try {
+      const endpoint = key === 'google' ? '/login/google' : '/login/microsoft';
+      const res = await fetch(`${API_URL}${endpoint}`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.open(data.authorization_url, '_blank', 'width=600,height=700');
+      } else {
+        setError(data.error || `Could not start ${key} connect`);
+      }
+    } catch {
+      setError(`Failed to connect ${key}`);
+    } finally {
+      setConnectLoading(false);
+    }
+  };
+
+  const submitJotformConnect = async () => {
+    const key = jotformApiKey.trim();
+    if (!key) { setJotformError('Please enter your API key.'); return; }
+    setConnectLoading(true);
+    setJotformError('');
+    try {
+      const res = await fetch(`${API_URL}/api/auth/jotform/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ api_key: key }),
+      });
+      if (res.ok) {
+        await fetchConnectedProviders();
+        setProvider('jotform');
+        setFormUrl('');
+        setConnectDialogProvider(null);
+        setJotformApiKey('');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setJotformError(data.error || 'Invalid API key.');
+      }
+    } catch {
+      setJotformError('Connection failed. Please try again.');
+    } finally {
+      setConnectLoading(false);
+    }
+  };
+
+  /** Called when the user dismisses the connect dialog without connecting. */
+  const handleConnectDialogClose = () => {
+    setConnectDialogProvider(null);
+    setJotformApiKey('');
+    setJotformError('');
+  };
+
+  /** Called after a successful OAuth flow is detected via the focus listener. */
+  useEffect(() => {
+    // If the connect dialog is open and the provider just became connected, select it
+    if (connectDialogProvider && connectedProviders[connectDialogProvider as keyof typeof connectedProviders]) {
+      setProvider(connectDialogProvider);
+      setFormUrl('');
+      setConnectDialogProvider(null);
+    }
+  }, [connectedProviders, connectDialogProvider]);
 
   /**
    * Validates and adds a new number (representing days before due date) 
@@ -247,7 +432,8 @@ export default function CreateRequest() {
         throw new Error(data.message || data.error || 'Failed to create form request');
       }
 
-      // Success
+      // Success — clear the draft so stale data doesn't hang around
+      clearDraft();
       setNeedsGoogleReconnect(false);
       navigate('/');
       
@@ -313,108 +499,7 @@ export default function CreateRequest() {
 
         <Box component="form" onSubmit={handleSubmit} display="flex" flexDirection="column" gap={3}>
 
-          {/* ── Section 1: General ── */}
-          <Paper
-            elevation={0}
-            sx={{ p: { xs: 3, sm: 4 }, border: '1px solid', borderColor: 'divider', borderRadius: 3 }}
-          >
-            <SectionHeader
-              icon={<DescriptionIcon sx={{ fontSize: 22 }} />}
-              title="General Information"
-              description="Choose a form provider, name this request, and paste in the form link."
-            />
-            <Box display="flex" flexDirection="column" gap={2.5}>
-              {/* Provider selector */}
-              <FormControl size="small" fullWidth required>
-                <InputLabel>Form Provider</InputLabel>
-                <Select
-                  value={provider}
-                  label="Form Provider"
-                  onChange={(e) => {
-                    setProvider(e.target.value);
-                    setFormUrl('');
-                  }}
-                >
-                  <MenuItem value="google">Google Forms</MenuItem>
-                  <MenuItem value="jotform">Jotform</MenuItem>
-                  <MenuItem value="microsoft">Microsoft Forms</MenuItem>
-                </Select>
-              </FormControl>
-
-              <TextField
-                label="Request Title"
-                fullWidth
-                size="small"
-                placeholder="e.g. Q1 Survey — Team Alpha"
-                value={requestTitle}
-                onChange={(e) => setRequestTitle(e.target.value)}
-              />
-
-              <Box>
-                <TextField
-                  label={
-                    provider === 'google'
-                      ? 'Google Form URL'
-                      : provider === 'jotform'
-                        ? 'Jotform URL or Form ID'
-                        : 'Microsoft Form URL'
-                  }
-                  fullWidth
-                  size="small"
-                  required
-                  placeholder={
-                    provider === 'google'
-                      ? 'https://docs.google.com/forms/d/…/edit'
-                      : provider === 'jotform'
-                        ? 'https://form.jotform.com/242630266486159'
-                        : 'https://forms.office.com/r/AbCdEf1234'
-                  }
-                  value={formUrl}
-                  onChange={(e) => setFormUrl(e.target.value)}
-                />
-
-                {/* Provider-specific helper text */}
-                {provider === 'google' && (
-                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
-                    Use the form's <strong>edit link</strong> (URL contains <code>/edit</code>). The share/view link won't work for response syncing.
-                  </Typography>
-                )}
-                {provider === 'jotform' && (
-                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
-                    Paste your Jotform URL (e.g. <code>https://form.jotform.com/242630266486159</code>) or just the numeric form ID.
-                    Make sure the form has an <strong>email field</strong> so we can match responses to recipients.
-                  </Typography>
-                )}
-                {provider === 'microsoft' && (
-                  <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
-                    <Typography variant="caption" display="block" gutterBottom>
-                      <strong>How to set up your Microsoft Form:</strong>
-                    </Typography>
-                    <Typography variant="caption" display="block" component="div">
-                      1. Open your form in <strong>Microsoft Forms</strong><br />
-                      2. Add an <strong>email question</strong> to your form (e.g. "Your email address") — Microsoft
-                         Forms shows respondents as "Anonymous" so we need this field to identify who responded<br />
-                      3. <strong>Fill out at least one test response</strong> yourself — this is required before
-                         Microsoft Forms will let you export to Excel<br />
-                      4. Go to the <strong>Responses</strong> tab → click <strong>"Open in Excel"</strong> to
-                         create the response spreadsheet in your OneDrive<br />
-                      5. Click the <strong>"Collect responses"</strong> button (or <strong>Share</strong>) and
-                         copy the link — it will look like <code>https://forms.office.com/r/AbCdEf1234</code><br />
-                      6. Enter the <strong>Request Title</strong> above — it must match your Microsoft Form title exactly<br />
-                      7. Paste the link above
-                    </Typography>
-                    <Typography variant="caption" display="block" mt={0.5} sx={{ color: 'warning.dark' }}>
-                      <strong>Important:</strong> The request title must <em>exactly</em> match the title of your
-                      Microsoft Form. We use it to find the response Excel file in your OneDrive. If the names
-                      don't match, creation will fail.
-                    </Typography>
-                  </Alert>
-                )}
-              </Box>
-            </Box>
-          </Paper>
-
-          {/* ── Section 2: Recipients ── */}
+          {/* ── Section 1: Recipients (shown first so users pick a group early) ── */}
           <Paper
             elevation={0}
             sx={{ p: { xs: 3, sm: 4 }, border: '1px solid', borderColor: 'divider', borderRadius: 3 }}
@@ -451,11 +536,120 @@ export default function CreateRequest() {
               <Button
                 variant="outlined"
                 startIcon={<AddIcon />}
-                onClick={() => navigate('/groups/new')}
+                onClick={() => {
+                  // Save the current draft so it's restored when the user comes back
+                  saveDraft();
+                  navigate('/groups/new?returnTo=create-request');
+                }}
                 sx={{ flexShrink: 0, height: 40 }}
               >
                 New Group
               </Button>
+            </Box>
+          </Paper>
+
+          {/* ── Section 2: General ── */}
+          <Paper
+            elevation={0}
+            sx={{ p: { xs: 3, sm: 4 }, border: '1px solid', borderColor: 'divider', borderRadius: 3 }}
+          >
+            <SectionHeader
+              icon={<DescriptionIcon sx={{ fontSize: 22 }} />}
+              title="General Information"
+              description="Choose a form provider, name this request, and paste in the form link."
+            />
+            <Box display="flex" flexDirection="column" gap={2.5}>
+              {/* Provider selector */}
+              <FormControl size="small" fullWidth required>
+                <InputLabel>Form Provider</InputLabel>
+                <Select
+                  value={provider}
+                  label="Form Provider"
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                >
+                  {(['google', 'jotform', 'microsoft'] as const).map((key) => (
+                    <MenuItem key={key} value={key}>
+                      <Box display="flex" alignItems="center" gap={1} width="100%">
+                        {key === 'google' ? 'Google Forms' : key === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+                        {connectedProviders[key] && (
+                          <CheckCircleIcon sx={{ fontSize: 16, color: 'success.main', ml: 'auto' }} />
+                        )}
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <TextField
+                label="Request Title"
+                fullWidth
+                size="small"
+                placeholder="e.g. Q1 Survey — Team Alpha"
+                value={requestTitle}
+                onChange={(e) => setRequestTitle(e.target.value)}
+              />
+
+              <Box>
+                <TextField
+                  label={
+                    provider === 'google'
+                      ? 'Google Form URL'
+                      : provider === 'jotform'
+                        ? 'Jotform URL or Form ID'
+                        : 'Microsoft Form URL'
+                  }
+                  fullWidth
+                  size="small"
+                  required
+                  placeholder={
+                    provider === 'google'
+                      ? 'https://docs.google.com/forms/d/…/edit  or  /viewform'
+                      : provider === 'jotform'
+                        ? 'https://form.jotform.com/242630266486159'
+                        : 'https://forms.office.com/r/AbCdEf1234'
+                  }
+                  value={formUrl}
+                  onChange={(e) => setFormUrl(e.target.value)}
+                />
+
+                {/* Provider-specific helper text */}
+                {provider === 'google' && (
+                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
+                    Paste the form's <strong>edit</strong> or <strong>viewform</strong> link (URL contains <code>/d/FORM_ID/</code>). Published share links (<code>/d/e/…</code>) use a different ID and won't work.
+                  </Typography>
+                )}
+                {provider === 'jotform' && (
+                  <Typography variant="caption" color="text.secondary" display="block" mt={0.75} ml={0.25}>
+                    Paste your Jotform URL (e.g. <code>https://form.jotform.com/242630266486159</code>) or just the numeric form ID.
+                    Make sure the form has an <strong>email field</strong> so we can match responses to recipients.
+                  </Typography>
+                )}
+                {provider === 'microsoft' && (
+                  <Alert severity="info" sx={{ mt: 1 }} variant="outlined">
+                    <Typography variant="caption" display="block" gutterBottom>
+                      <strong>How to set up your Microsoft Form:</strong>
+                    </Typography>
+                    <Typography variant="caption" display="block" component="div">
+                      1. Open your form in <strong>Microsoft Forms</strong><br />
+                      2. Add an <strong>email question</strong> to your form (e.g. "Your email address") — Microsoft
+                         Forms shows respondents as "Anonymous" so we need this field to identify who responded<br />
+                      3. <strong>Fill out at least one test response</strong> yourself — this is required before
+                         Microsoft Forms will let you export to Excel<br />
+                      4. Go to the <strong>Responses</strong> tab → click <strong>"Open in Excel"</strong> to
+                         create the response spreadsheet in your OneDrive<br />
+                      5. Click the <strong>"Collect responses"</strong> button (or <strong>Share</strong>) and
+                         copy the link — it will look like <code>https://forms.office.com/r/AbCdEf1234</code><br />
+                      6. Enter the <strong>Request Title</strong> above — it must match your Microsoft Form title exactly<br />
+                      7. Paste the link above
+                    </Typography>
+                    <Typography variant="caption" display="block" mt={0.5} sx={{ color: 'warning.dark' }}>
+                      <strong>Important:</strong> The request title must <em>exactly</em> match the title of your
+                      Microsoft Form. We use it to find the response Excel file in your OneDrive. If the names
+                      don't match, creation will fail.
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
             </Box>
           </Paper>
 
@@ -615,7 +809,7 @@ export default function CreateRequest() {
           <Box display="flex" justifyContent="flex-end" gap={2} pb={2}>
             <Button
               variant="outlined"
-              onClick={() => navigate('/')}
+              onClick={() => { clearDraft(); navigate('/'); }}
               disabled={loading}
             >
               Cancel
@@ -732,6 +926,63 @@ export default function CreateRequest() {
             >
               Save Schedule
             </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* ── Provider Connect Dialog ── */}
+        <Dialog
+          open={!!connectDialogProvider}
+          onClose={handleConnectDialogClose}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <LinkIcon fontSize="small" />
+            Connect {connectDialogProvider === 'google' ? 'Google Forms' : connectDialogProvider === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+          </DialogTitle>
+          <DialogContent>
+            {connectDialogProvider === 'jotform' ? (
+              <>
+                <Typography variant="body2" color="text.secondary" mb={2}>
+                  Enter your Jotform API key. You can find it at{' '}
+                  <a href="https://www.jotform.com/myaccount/api" target="_blank" rel="noopener noreferrer">
+                    jotform.com/myaccount/api
+                  </a>.
+                </Typography>
+                <TextField
+                  autoFocus
+                  fullWidth
+                  size="small"
+                  label="API Key"
+                  value={jotformApiKey}
+                  onChange={(e) => setJotformApiKey(e.target.value)}
+                  error={!!jotformError}
+                  helperText={jotformError}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitJotformConnect(); }}
+                />
+              </>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                You need to connect your {connectDialogProvider === 'google' ? 'Google' : 'Microsoft'} account before
+                creating form requests with this provider. Click the button below to authorize.
+              </Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleConnectDialogClose}>Cancel</Button>
+            {connectDialogProvider === 'jotform' ? (
+              <Button variant="contained" onClick={submitJotformConnect} disabled={connectLoading}>
+                {connectLoading ? <CircularProgress size={16} /> : 'Connect'}
+              </Button>
+            ) : (
+              <Button
+                variant="contained"
+                disabled={connectLoading}
+                onClick={() => connectOAuthProvider(connectDialogProvider!)}
+              >
+                {connectLoading ? <CircularProgress size={16} /> : 'Authorize'}
+              </Button>
+            )}
           </DialogActions>
         </Dialog>
       </Container>

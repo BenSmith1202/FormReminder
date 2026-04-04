@@ -395,3 +395,22 @@ class User:
         except Exception as e:
             print(f"Error clearing Microsoft tokens: {e}")
             return False
+
+    def clear_google_tokens(self):
+        """Remove user's Google tokens"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({
+                'google_access_token': None,
+                'google_refresh_token': None,
+                'token_expiry': None,
+            })
+            self.google_access_token = None
+            self.google_refresh_token = None
+            self.token_expiry = None
+            print(f"Cleared Google tokens for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error clearing Google tokens: {e}")
+            return False

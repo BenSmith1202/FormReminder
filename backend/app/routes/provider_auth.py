@@ -198,3 +198,37 @@ def microsoft_disconnect():
 
     user.clear_microsoft_tokens()
     return jsonify({"message": "Microsoft account disconnected", "microsoft": False}), 200
+
+
+# -----------------------------------------------------------------------
+# Google disconnect
+# -----------------------------------------------------------------------
+
+@provider_auth_bp.post("/api/auth/google/disconnect")
+def google_disconnect():
+    """Remove the user's stored Google tokens and best-effort revoke them."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    user = User.get_by_id(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Best-effort revocation with Google
+    token = user.google_access_token or user.google_refresh_token
+    if token:
+        try:
+            import requests as http_requests
+            http_requests.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=5,
+            )
+            print(f"[Google] Revoked token for user {user.username}")
+        except Exception as e:
+            print(f"[Google] Token revocation failed (non-fatal): {e}")
+
+    user.clear_google_tokens()
+    return jsonify({"message": "Google account disconnected", "google": False}), 200
