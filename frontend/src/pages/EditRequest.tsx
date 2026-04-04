@@ -23,6 +23,7 @@ import {
   Divider,
   Container,
   Skeleton,
+  Switch
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -57,6 +58,7 @@ export default function EditRequest() {
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [active, setActive] = useState<Boolean>();
 
   // Schedule State
   const [reminderSchedule, setReminderSchedule] = useState('normal');
@@ -97,6 +99,7 @@ export default function EditRequest() {
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
+      setActive(request.activity ?? true);
       setProvider(request.provider || 'google');
 
       if (request.due_date) {
@@ -143,11 +146,18 @@ export default function EditRequest() {
       if (!formUrl || !groupId || !dueDate)
         throw new Error('Please fill in all required fields');
 
+      const now = new Date();
+      // If user is trying to set it to Active, but the due date has passed
+      if (active && dueDate < now) {
+        throw new Error('Cannot set an expired request to Active. Please extend the Due Date first.');
+      }
+
       const requestBody: any = {
         title: requestTitle,
         form_url: formUrl,
         group_id: groupId,
         due_date: dueDate.toISOString(),
+        activity: active,
         reminder_schedule: reminderSchedule,
         first_reminder_timing: firstReminderTiming,
       };
@@ -329,6 +339,29 @@ export default function EditRequest() {
                 ))}
               </Select>
             </FormControl>
+            <Box mt={1}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={!!active}
+                    onChange={(e) => setActive(e.target.checked)}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight="medium">
+                      Request Status: {active ? 'Active' : 'Inactive'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {active 
+                        ? 'Reminders will be sent according to the schedule.' 
+                        : 'Reminders are currently paused for this request.'}
+                    </Typography>
+                  </Box>
+                }
+              />
+            </Box>
           </Box>
         </Paper>
 
