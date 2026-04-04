@@ -18,6 +18,7 @@ import ViewRequest from './pages/ViewRequest';
 import Analytics from './pages/Analytics';
 import EditRequest from './pages/EditRequest';
 import EditGroup from './pages/EditGroup';
+import ConnectForms from './pages/ConnectForms';
 
 const theme = createTheme({
   palette: {
@@ -80,6 +81,7 @@ const router = createBrowserRouter([
   { path: '/register', element: <Register /> },
   { path: '/reset', element: <Reset /> },
   { path: '/groups/join/:token', element: <JoinGroup /> },
+  { path: '/connect-forms', element: <ConnectForms /> },
   
   // Protected routes
   {

@@ -17,7 +17,13 @@ class User:
                  google_refresh_token: str = None,
                  token_expiry: str = None,
                  created_at: str = None,
-                 email_custom_message: str = None):
+                 email_custom_message: str = None,
+                 # Jotform credentials
+                 jotform_api_key: str = None,
+                 # Microsoft credentials
+                 microsoft_access_token: str = None,
+                 microsoft_refresh_token: str = None,
+                 microsoft_token_expiry: str = None):
         self.id = user_id
         self.username = username
         self.email = email
@@ -27,6 +33,10 @@ class User:
         self.token_expiry = token_expiry
         self.created_at = created_at or datetime.utcnow().isoformat() + 'Z'
         self.email_custom_message = email_custom_message  # Custom message for reminder emails (max 200 chars)
+        self.jotform_api_key = jotform_api_key
+        self.microsoft_access_token = microsoft_access_token
+        self.microsoft_refresh_token = microsoft_refresh_token
+        self.microsoft_token_expiry = microsoft_token_expiry
     
     def to_dict(self):
         """Convert user to dictionary for storage"""
@@ -38,7 +48,11 @@ class User:
             'google_refresh_token': self.google_refresh_token,
             'token_expiry': self.token_expiry,
             'created_at': self.created_at,
-            'email_custom_message': self.email_custom_message
+            'email_custom_message': self.email_custom_message,
+            'jotform_api_key': self.jotform_api_key,
+            'microsoft_access_token': self.microsoft_access_token,
+            'microsoft_refresh_token': self.microsoft_refresh_token,
+            'microsoft_token_expiry': self.microsoft_token_expiry,
         }
     
     def to_safe_dict(self):
@@ -48,6 +62,8 @@ class User:
             'username': self.username,
             'email': self.email,
             'has_google_auth': bool(self.google_access_token),
+            'has_jotform_auth': bool(self.jotform_api_key),
+            'has_microsoft_auth': bool(self.microsoft_access_token),
             'created_at': self.created_at,
             'email_custom_message': self.email_custom_message
         }
@@ -187,7 +203,11 @@ class User:
                     google_refresh_token=user_data.get('google_refresh_token'),
                     token_expiry=user_data.get('token_expiry'),
                     created_at=user_data.get('created_at'),
-                    email_custom_message=user_data.get('email_custom_message')
+                    email_custom_message=user_data.get('email_custom_message'),
+                    jotform_api_key=user_data.get('jotform_api_key'),
+                    microsoft_access_token=user_data.get('microsoft_access_token'),
+                    microsoft_refresh_token=user_data.get('microsoft_refresh_token'),
+                    microsoft_token_expiry=user_data.get('microsoft_token_expiry'),
                 )
             
             return None
@@ -219,7 +239,11 @@ class User:
                 google_refresh_token=user_data.get('google_refresh_token'),
                 token_expiry=user_data.get('token_expiry'),
                 created_at=user_data.get('created_at'),
-                email_custom_message=user_data.get('email_custom_message')
+                email_custom_message=user_data.get('email_custom_message'),
+                jotform_api_key=user_data.get('jotform_api_key'),
+                microsoft_access_token=user_data.get('microsoft_access_token'),
+                microsoft_refresh_token=user_data.get('microsoft_refresh_token'),
+                microsoft_token_expiry=user_data.get('microsoft_token_expiry'),
             )
             
         except Exception as e:
@@ -302,4 +326,91 @@ class User:
             print(f"Error updating Google tokens: {e}")
             import traceback
             traceback.print_exc()
+            return False
+
+    def update_jotform_key(self, api_key: str):
+        """Update user's Jotform API key"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({'jotform_api_key': api_key})
+            self.jotform_api_key = api_key
+            print(f"Updated Jotform API key for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error updating Jotform key: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def clear_jotform_key(self):
+        """Remove user's Jotform API key"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({'jotform_api_key': None})
+            self.jotform_api_key = None
+            print(f"Cleared Jotform API key for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error clearing Jotform key: {e}")
+            return False
+
+    def update_microsoft_tokens(self, access_token: str, refresh_token: str, expiry: str):
+        """Update user's Microsoft OAuth tokens"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({
+                'microsoft_access_token': access_token,
+                'microsoft_refresh_token': refresh_token,
+                'microsoft_token_expiry': expiry,
+            })
+            self.microsoft_access_token = access_token
+            self.microsoft_refresh_token = refresh_token
+            self.microsoft_token_expiry = expiry
+            print(f"Updated Microsoft tokens for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error updating Microsoft tokens: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def clear_microsoft_tokens(self):
+        """Remove user's Microsoft tokens"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({
+                'microsoft_access_token': None,
+                'microsoft_refresh_token': None,
+                'microsoft_token_expiry': None,
+            })
+            self.microsoft_access_token = None
+            self.microsoft_refresh_token = None
+            self.microsoft_token_expiry = None
+            print(f"Cleared Microsoft tokens for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error clearing Microsoft tokens: {e}")
+            return False
+
+    def clear_google_tokens(self):
+        """Remove user's Google tokens"""
+        try:
+            db = get_db()
+            user_ref = db.collection(Collections.USERS).document(self.id)
+            user_ref.update({
+                'google_access_token': None,
+                'google_refresh_token': None,
+                'token_expiry': None,
+            })
+            self.google_access_token = None
+            self.google_refresh_token = None
+            self.token_expiry = None
+            print(f"Cleared Google tokens for user {self.username}")
+            return True
+        except Exception as e:
+            print(f"Error clearing Google tokens: {e}")
             return False

@@ -25,7 +25,7 @@ class GoogleFormsService:
     ]
     
     @staticmethod
-    def create_oauth_flow():
+    def create_oauth_flow(redirect_uri: str = None):
         try:
             # Try env var first (Cloud Run / production)
             client_secret_str = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
@@ -54,7 +54,7 @@ class GoogleFormsService:
             flow = Flow.from_client_secrets_file(
                 client_secret_path,
                 scopes=GoogleFormsService.SCOPES,
-                redirect_uri=settings.GOOGLE_REDIRECT_URI
+                redirect_uri=redirect_uri or settings.GOOGLE_REDIRECT_URI
             )
             return flow
         except Exception as e:
@@ -64,10 +64,10 @@ class GoogleFormsService:
             raise
     
     @staticmethod
-    def get_authorization_url(state: str) -> str:
+    def get_authorization_url(state: str, redirect_uri: str = None) -> str:
         """Generate the Google OAuth authorization URL"""
         try:
-            flow = GoogleFormsService.create_oauth_flow()
+            flow = GoogleFormsService.create_oauth_flow(redirect_uri)
             authorization_url, _ = flow.authorization_url(
                 access_type='offline',
                 include_granted_scopes='true',
@@ -83,10 +83,10 @@ class GoogleFormsService:
             raise
     
     @staticmethod
-    def exchange_code_for_tokens(code: str, state: str) -> Dict:
+    def exchange_code_for_tokens(code: str, state: str, redirect_uri: str = None) -> Dict:
         """Exchange authorization code for access and refresh tokens"""
         try:
-            flow = GoogleFormsService.create_oauth_flow()
+            flow = GoogleFormsService.create_oauth_flow(redirect_uri)
             flow.fetch_token(code=code)
             
             credentials = flow.credentials

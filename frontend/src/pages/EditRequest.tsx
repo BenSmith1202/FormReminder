@@ -51,6 +51,7 @@ export default function EditRequest() {
   const navigate = useNavigate();
 
   // Form State
+  const [provider, setProvider] = useState('google');
   const [requestTitle, setRequestTitle] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -96,6 +97,7 @@ export default function EditRequest() {
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
+      setProvider(request.provider || 'google');
 
       if (request.due_date) {
         const parsedDate = new Date(request.due_date);
@@ -288,6 +290,16 @@ export default function EditRequest() {
           <Divider sx={{ mb: 3 }} />
 
           <Box display="grid" gap={2.5}>
+            <Box>
+              <Typography variant="body2" fontWeight="medium" gutterBottom>
+                Form Provider
+              </Typography>
+              <Chip
+                label={provider === 'google' ? 'Google Forms' : provider === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+                size="small"
+                color={provider === 'google' ? 'primary' : provider === 'jotform' ? 'warning' : 'info'}
+              />
+            </Box>
             <TextField
               label="Request Title"
               fullWidth

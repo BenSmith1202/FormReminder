@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, DialogContent, DialogActions, IconButton } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 import API_URL from '../config';
@@ -15,6 +15,10 @@ import AnimatedInfoButton from '../components/InfoButton';
 
 export default function CreateGroup() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // If the user arrived from CreateRequest, we'll send them back afterwards
+  const returnTo = searchParams.get('returnTo');
   
   // --- Form & UI State ---
   const [name, setName] = useState('');
@@ -128,12 +132,18 @@ export default function CreateGroup() {
   };
 
   /**
-   * Closes the success dialog and redirects the user back to the 
-   * main groups dashboard.
+   * Closes the success dialog and redirects the user.
+   * If we came from CreateRequest (returnTo=create-request), go back there
+   * with the new group ID so it can be auto-selected in the dropdown.
+   * Otherwise, go to the groups dashboard.
    */
   const handleClose = () => {
     setShowSuccess(false);
-    navigate('/groups');
+    if (returnTo === 'create-request' && createdGroup?.id) {
+      navigate(`/requests/new?newGroupId=${createdGroup.id}`);
+    } else {
+      navigate('/groups');
+    }
   };
 
   return (
@@ -181,7 +191,14 @@ export default function CreateGroup() {
           <Box display="flex" gap={2}>
             <Button
               variant="outlined"
-              onClick={() => navigate('/groups')}
+              onClick={() => {
+                // Go back to CreateRequest if we came from there, otherwise groups list
+                if (returnTo === 'create-request') {
+                  navigate('/requests/new');
+                } else {
+                  navigate('/groups');
+                }
+              }}
               disabled={loading}
             >
               Cancel
