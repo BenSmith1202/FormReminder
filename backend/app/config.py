@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: str = "http://localhost:5000/oauth/callback"
     
+    # Microsoft OAuth Settings (Azure AD)
+    MICROSOFT_CLIENT_ID: Optional[str] = None
+    MICROSOFT_CLIENT_SECRET: Optional[str] = None
+    MICROSOFT_REDIRECT_URI: str = "http://localhost:5000/oauth/microsoft/callback"
+    MICROSOFT_AUTHORITY: str = "https://login.microsoftonline.com/common"
+    
+    # Jotform Settings
+    JOTFORM_API_KEY: Optional[str] = None  # Master/fallback API key
+    
     # CORS Settings
     CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000"]
     

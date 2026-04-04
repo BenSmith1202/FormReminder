@@ -51,6 +51,7 @@ interface FormRequest {
   title: string;
   description: string;
   form_url: string;
+  provider?: string;
   response_count: number;
   total_recipients: number;
   created_at: string;
@@ -320,12 +321,20 @@ export default function ViewRequest() {
     fetchOptOutData();
   }, [tabIndex, optOutFetched]);
 
-  // Poll every 30s + refresh immediately on tab visibility regain
+  // Provider-specific poll intervals (ms): Google 30s, Jotform 2min, Microsoft 5min
+  const PROVIDER_POLL_INTERVALS: Record<string, number> = {
+    google: 30_000,
+    jotform: 120_000,
+    microsoft: 300_000,
+  };
+
   useEffect(() => {
     if (!requestId) return;
+    const provider = formRequest?.provider || 'google';
+    const interval = PROVIDER_POLL_INTERVALS[provider] ?? 30_000;
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') syncAndLoadData();
-    }, 30000);
+    }, interval);
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') syncAndLoadData();
     };
@@ -334,7 +343,7 @@ export default function ViewRequest() {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [requestId]);
+  }, [requestId, formRequest?.provider]);
 
   // Seconds-since-update ticker
   useEffect(() => {
@@ -542,6 +551,14 @@ export default function ViewRequest() {
                   color={formRequest.status === 'Active' ? 'success' : 'default'}
                   sx={{ fontWeight: 600 }}
                 />
+                {formRequest.provider && formRequest.provider !== 'google' && (
+                  <Chip
+                    label={formRequest.provider === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+                    size="small"
+                    color={formRequest.provider === 'jotform' ? 'warning' : 'info'}
+                    variant="outlined"
+                  />
+                )}
               </Box>
               <Typography variant="body2" color="text.secondary" mt={0.5}>
                 {formRequest.description || 'No description provided.'}

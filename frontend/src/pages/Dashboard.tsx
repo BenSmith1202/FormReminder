@@ -16,7 +16,7 @@
  *  - Subsequent refreshes update local state without a full page reload
  */
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
   Paper, Typography, Box, Chip, Button, IconButton, Card, CardContent,
@@ -53,6 +53,7 @@ interface HealthResponse {
 interface FormRequestRow {
   id: string;
   title: string;
+  provider?: string;           // 'google' | 'jotform' | 'microsoft'
   response_count: number;      // How many recipients have responded
   total_recipients: number;    // Total number of recipients for this form
   created_at: string;          // ISO date string
@@ -386,6 +387,28 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
 
+  // Guard to prevent overlapping background refresh cycles
+  const refreshInProgress = useRef<boolean>(false);
+  // Track last refresh time per request to throttle slower providers
+  const lastRefreshTime = useRef<Record<string, number>>({});
+
+  // ── Redirect to onboarding if no providers connected ─────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/connected-accounts`, { credentials: 'include' });
+        if (!res.ok) return;
+        const accts = await res.json();
+        // Only redirect if the user is logged in but has zero providers
+        if (accts.authenticated && !accts.google && !accts.jotform && !accts.microsoft) {
+          navigate('/connect-forms', { replace: true });
+        }
+      } catch {
+        // ignore — dashboard still renders normally
+      }
+    })();
+  }, [navigate]);
+
   // ── Derived state ─────────────────────────────────────────────────────────
 
   /**
@@ -655,7 +678,7 @@ export default function Dashboard() {
    */
   const handleManualRefresh = async (): Promise<void> => {
     setRefreshing(true);
-    await refreshAllFormRequests();
+    await refreshAllFormRequests(true);
     setRefreshing(false);
   };
 
@@ -664,26 +687,49 @@ export default function Dashboard() {
    *
    * Full sync cycle:
    *  1. Fetches the current list of form request IDs
-   *  2. Fires POST /api/form-requests/:id/refresh for every request in parallel
-   *     (individual failures are swallowed so one bad form doesn't block the rest)
+   *  2. Fires POST /api/form-requests/:id/refresh for eligible requests
+   *     (respects provider-specific intervals: Google 30s, Jotform 2min, Microsoft 5min)
    *  3. Reloads the local list via loadFormRequests()
    *  4. Refreshes the health status chip in the header
    *
-   * Used both by the manual "Sync Now" button and the 30-second polling interval.
+   * @param force - If true, ignore provider throttles (used by manual "Sync Now")
    */
-  const refreshAllFormRequests = async (): Promise<void> => {
+  const refreshAllFormRequests = async (force = false): Promise<void> => {
+    // Prevent overlapping refresh cycles (e.g. a slow Microsoft refresh
+    // could overlap with the next 30-second poll).
+    if (refreshInProgress.current) return;
+    refreshInProgress.current = true;
     try {
       const response = await fetch(`${API_URL}/api/form-requests`, { credentials: 'include' });
       if (!response.ok) return;
       const formRequests = await response.json();
 
-      // Trigger a backend sync for every form, ignoring individual failures
+      const now = Date.now();
+      // Provider-specific minimum intervals (ms)
+      const PROVIDER_INTERVALS: Record<string, number> = {
+        google: 30_000,     // 30 seconds
+        jotform: 120_000,   // 2 minutes
+        microsoft: 300_000, // 5 minutes
+      };
+
+      // Filter to requests that are due for a refresh
+      const eligible = formRequests.filter((req: any) => {
+        if (force) return true;
+        const provider = req.provider || 'google';
+        const minInterval = PROVIDER_INTERVALS[provider] ?? 30_000;
+        const lastTime = lastRefreshTime.current[req.id] || 0;
+        return now - lastTime >= minInterval;
+      });
+
+      // Trigger a backend sync for every eligible form, ignoring individual failures
       await Promise.all(
-        formRequests.map((req: any) =>
+        eligible.map((req: any) =>
           fetch(`${API_URL}/api/form-requests/${req.id}/refresh`, {
             method: 'POST',
             credentials: 'include',
-          }).catch(() => null)
+          })
+            .then(() => { lastRefreshTime.current[req.id] = Date.now(); })
+            .catch(() => null)
         )
       );
 
@@ -695,6 +741,8 @@ export default function Dashboard() {
         .catch(() => {});
     } catch (error) {
       console.error('Refresh error:', error);
+    } finally {
+      refreshInProgress.current = false;
     }
   };
 
