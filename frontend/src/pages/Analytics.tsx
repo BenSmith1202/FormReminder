@@ -16,7 +16,14 @@ import {
   Dialog,
   DialogContent,
   DialogActions,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import {
   BarChart,
@@ -32,6 +39,8 @@ import {
 } from 'recharts';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import BarChartIcon from '@mui/icons-material/BarChart';
+import SendIcon from '@mui/icons-material/Send';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
@@ -115,6 +124,30 @@ export default function Analytics() {
     localStorage.setItem('fr_welcome_analytics_seen', 'true');
   };
 
+  const [selectedFormId, setSelectedFormId] = useState<string>('__all__');
+  const [timeRange, setTimeRange] = useState<string>('6m');
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  const loadEmailOpens = async (range: string) => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/analytics/email-opens?range=${range}`, { credentials: 'include' });
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to load email open analytics', res.status);
+      } else {
+        const data: EmailOpenAnalytics = await res.json();
+        setEmailOpenStats(data);
+        setSelectedFormId('__all__');
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load email open analytics', e);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
   useEffect(() => {
     const loadUser = async () => {
       try {
@@ -130,22 +163,6 @@ export default function Analytics() {
       } catch {
         setError('Failed to load user');
         return null;
-      }
-    };
-
-    const loadEmailOpens = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/analytics/email-opens`, { credentials: 'include' });
-        if (!res.ok) {
-          // eslint-disable-next-line no-console
-          console.error('Failed to load email open analytics', res.status);
-        } else {
-          const data: EmailOpenAnalytics = await res.json();
-          setEmailOpenStats(data);
-        }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to load email open analytics', e);
       }
     };
 
@@ -166,13 +183,22 @@ export default function Analytics() {
 
     loadUser().then((ownerId) => {
       if (ownerId) {
-        loadEmailOpens();
+        loadEmailOpens(timeRange);
         loadEvents(ownerId);
       } else {
         setLoading(false);
       }
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-fetch email open stats whenever the time range changes (skip initial mount — handled above)
+  const isFirstRender = useState(true);
+  useEffect(() => {
+    if (isFirstRender[0]) { isFirstRender[1](false); return; }
+    loadEmailOpens(timeRange);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange]);
 
   const refreshEvents = async () => {
     if (!user?.id) return;
@@ -296,13 +322,26 @@ export default function Analytics() {
     [latestByRecipient, resubscribingEmail]
   );
 
-  const openBarData = useMemo(() => {
+  const formOptions = useMemo(() => {
     if (!emailOpenStats) return [];
     return emailOpenStats.per_form.map((row) => ({
+      id: row.request_id ?? row.form_title,
+      label: row.form_title || 'Untitled',
+    }));
+  }, [emailOpenStats]);
+
+  const openBarData = useMemo(() => {
+    if (!emailOpenStats) return [];
+    const filtered = selectedFormId === '__all__'
+      ? emailOpenStats.per_form
+      : emailOpenStats.per_form.filter(
+          (row) => (row.request_id ?? row.form_title) === selectedFormId
+        );
+    return filtered.map((row) => ({
       name: row.form_title || 'Untitled',
       opens: row.opens,
     }));
-  }, [emailOpenStats]);
+  }, [emailOpenStats, selectedFormId]);
 
   const openLineData = useMemo(() => {
     if (!emailOpenStats) return [];
@@ -339,64 +378,163 @@ export default function Analytics() {
 
       {/* ── Stat cards ── */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1.5, sm: 2 }, mb: 3 }}>
-        {[
-          { label: 'Emails sent', value: emailOpenStats?.total_sent ?? '—', highlight: false },
-          { label: 'Open rate', value: emailOpenStats != null ? `${emailOpenStats.open_rate}%` : '—', highlight: true },
-        ].map(({ label, value, highlight }) => (
-          <Box key={label} sx={{ flex: { xs: '1 1 calc(50% - 6px)', sm: '1 1 200px' }, minWidth: 0 }}>
-            <Card
-              sx={{
-                height: '100%',
-                borderColor: highlight ? 'primary.main' : undefined,
-                borderWidth: highlight ? 2 : 1,
-                borderStyle: 'solid',
-              }}
-            >
-              <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
-                <Typography
-                  color="text.secondary"
-                  variant="body2"
-                  gutterBottom
-                  sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, lineHeight: 1.3 }}
-                >
-                  {label}
-                </Typography>
-                <Typography
-                  component="p"
-                  sx={{
-                    fontSize: { xs: '1.5rem', sm: '2.125rem' },
-                    fontWeight: 700,
-                    lineHeight: 1.2,
-                    color: highlight ? 'primary.main' : 'text.primary',
-                  }}
-                >
-                  {value}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Box>
-        ))}
+        {/* Emails sent */}
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 6px)', sm: '1 1 200px' }, minWidth: 0 }}>
+          <Card
+            elevation={0}
+            sx={{
+              height: '100%',
+              borderRadius: 3,
+              border: '1px solid',
+              borderColor: 'divider',
+              background: 'linear-gradient(135deg, #f4f9ff 0%, #ffffff 100%)',
+              transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+              boxShadow: '0 4px 10px -4px rgba(0,0,0,0.1)',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: '0 12px 24px -10px rgba(0,0,0,0.2)',
+              },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 2, sm: 2.5 }, '&:last-child': { pb: { xs: 2, sm: 2.5 } } }}>
+              <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight="bold" display="block" gutterBottom>
+                    EMAILS SENT
+                  </Typography>
+                  <Typography variant="h4" component="p" fontWeight="bold" lineHeight={1}>
+                    {emailOpenStats?.total_sent ?? '—'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" mt={0.75}>
+                    Total successfully delivered
+                  </Typography>
+                </Box>
+                <Box sx={{ width: 44, height: 44, borderRadius: 2, bgcolor: 'grey.100', color: 'text.secondary', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <SendIcon fontSize="small" />
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Open rate */}
+        <Box sx={{ flex: { xs: '1 1 calc(50% - 6px)', sm: '1 1 200px' }, minWidth: 0 }}>
+          <Card
+            elevation={0}
+            sx={{
+              height: '100%',
+              borderRadius: 3,
+              border: '1px solid',
+              borderColor: 'divider',
+              background: 'linear-gradient(135deg, #f4f9ff 0%, #ffffff 100%)',
+              transition: 'transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
+              boxShadow: '0 4px 10px -4px rgba(0,0,0,0.1)',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: '0 12px 24px -10px rgba(0,0,0,0.2)',
+              },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 2, sm: 2.5 }, '&:last-child': { pb: { xs: 2, sm: 2.5 } } }}>
+              <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight="bold" display="block" gutterBottom>
+                    OPEN RATE
+                  </Typography>
+                  <Typography variant="h4" component="p" fontWeight="bold" lineHeight={1}>
+                    {emailOpenStats != null ? `${emailOpenStats.open_rate}%` : '—'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" mt={0.75}>
+                    {emailOpenStats != null
+                      ? `${emailOpenStats.unique_opens} unique opener${emailOpenStats.unique_opens !== 1 ? 's' : ''}`
+                      : 'Of emails delivered'}
+                  </Typography>
+                </Box>
+                <Box sx={{ width: 44, height: 44, borderRadius: 2, bgcolor: 'grey.100', color: 'text.secondary', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <TrendingUpIcon fontSize="small" />
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+      </Box>
+
+      {/* ── Time range filter ── */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+        <Typography variant="subtitle2" color="text.secondary">Email open analytics</Typography>
+        <ToggleButtonGroup
+          size="small"
+          value={timeRange}
+          exclusive
+          onChange={(_e, val) => { if (val) setTimeRange(val); }}
+          sx={{ '& .MuiToggleButton-root': { px: 1.5, py: 0.4, fontSize: '0.75rem', textTransform: 'none' } }}
+        >
+          {[
+            { value: '7d',  label: '7D' },
+            { value: '30d', label: '30D' },
+            { value: '3m',  label: '3M' },
+            { value: '6m',  label: '6M' },
+            { value: '1y',  label: '1Y' },
+            { value: 'all', label: 'All' },
+          ].map(({ value, label }) => (
+            <ToggleButton key={value} value={value}>{label}</ToggleButton>
+          ))}
+        </ToggleButtonGroup>
       </Box>
 
       {/* ── Open rate charts ── */}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3, position: 'relative' }}>
+        {statsLoading && (
+          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.6)', zIndex: 1, borderRadius: 2 }}>
+            <CircularProgress size={32} />
+          </Box>
+        )}
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
-          <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Email opens per form</Typography>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={openBarData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="opens" fill="#43a047" name="Opens" />
-              </BarChart>
-            </ResponsiveContainer>
+          <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 320, sm: 360 } }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+              <Typography variant="subtitle1">Email opens per form</Typography>
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel id="form-filter-label">Form</InputLabel>
+                <Select
+                  labelId="form-filter-label"
+                  label="Form"
+                  value={selectedFormId}
+                  onChange={(e: SelectChangeEvent) => setSelectedFormId(e.target.value)}
+                >
+                  <MenuItem value="__all__">All forms</MenuItem>
+                  {formOptions.map((opt) => (
+                    <MenuItem key={opt.id} value={opt.id ?? ''}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+            {openBarData.length === 0 ? (
+              <Box sx={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Typography variant="body2" color="text.secondary">No email open data for this form.</Typography>
+              </Box>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={openBarData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="opens" fill="#43a047" name="Opens" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </Paper>
         </Box>
         <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 400px' }, minWidth: 0 }}>
-          <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 280, sm: 320 } }}>
-            <Typography variant="subtitle1" gutterBottom>Email opens over time (last 6 months)</Typography>
+          <Paper sx={{ p: { xs: 1.5, sm: 2 }, height: { xs: 320, sm: 360 } }}>
+            <Typography variant="subtitle1" gutterBottom>
+              Email opens over time ({
+                { '7d': 'last 7 days', '30d': 'last 30 days', '3m': 'last 3 months',
+                  '6m': 'last 6 months', '1y': 'last year', 'all': 'all time' }[timeRange] ?? timeRange
+              })
+            </Typography>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={openLineData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />

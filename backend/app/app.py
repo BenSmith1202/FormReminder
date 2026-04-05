@@ -3,6 +3,13 @@ import hmac
 import hashlib
 import json
 import sys
+
+# Force UTF-8 output on Windows to prevent crashes from emoji/unicode in print statements
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
 
@@ -2289,107 +2296,171 @@ def track_email_open(token: str):
 
 @app.get("/api/analytics/email-opens")
 def get_email_open_analytics():
-    """Owner-only: Return email open rate analytics for the Analytics dashboard."""
+    """Owner-only: Return email open rate analytics for the Analytics dashboard.
+
+    Query params:
+        range: '7d' | '30d' | '3m' | '6m' (default) | '1y' | 'all'
+    """
     try:
         user_id = session.get("user_id")
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
 
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
-        events = EmailOpenEvent.get_events_for_owner(user_id)
-
+        db = get_db()
         now = datetime.utcnow()
-        this_month_start = datetime(now.year, now.month, 1)
 
-        # Pre-compute the last 6 month slots.
-        month_keys: list[str] = []
-        month_counts: dict[str, int] = {}
-        for i in range(5, -1, -1):
-            year, month = now.year, now.month - i
-            while month <= 0:
-                year -= 1
-                month += 12
-            key = f"{year}-{month:02d}"
-            if key not in month_counts:
-                month_keys.append(key)
-                month_counts[key] = 0
+        # ── Resolve the requested time range ──────────────────────────────────
+        range_param = request.args.get("range", "6m")
+        RANGE_MAP = {
+            "7d":  timedelta(days=7),
+            "30d": timedelta(days=30),
+            "3m":  timedelta(days=91),
+            "6m":  timedelta(days=182),
+            "1y":  timedelta(days=365),
+        }
+        cutoff: datetime | None = (now - RANGE_MAP[range_param]) if range_param in RANGE_MAP else None
+        use_daily = range_param in ("7d", "30d")
 
-        total_opens = len(events)
-        opens_this_month = 0
-        unique_recipients: set[str] = set()
+        # ── 1. Seed per_form from ALL owner's form requests (0 opens baseline) ─
+        all_requests = db.collection(Collections.FORM_REQUESTS)\
+            .where("owner_id", "==", user_id)\
+            .stream()
+
         per_form: dict[str, dict] = {}
+        owner_request_ids: set[str] = set()
+        for req_doc in all_requests:
+            data = req_doc.to_dict() or {}
+            req_id = data.get("id") or req_doc.id
+            title = data.get("title") or data.get("form_title") or "Untitled"
+            owner_request_ids.add(req_id)
+            per_form[req_id] = {"request_id": req_id, "form_title": title, "opens": 0}
 
-        for e in events:
+        # ── 2. Build time-series buckets for the selected range ───────────────
+        bucket_keys: list[str] = []
+        bucket_counts: dict[str, int] = {}
+
+        if use_daily:
+            days_back = 7 if range_param == "7d" else 30
+            for i in range(days_back - 1, -1, -1):
+                d = (now - timedelta(days=i)).date()
+                key = d.isoformat()  # YYYY-MM-DD
+                if key not in bucket_counts:
+                    bucket_keys.append(key)
+                    bucket_counts[key] = 0
+        else:
+            months_back = {"3m": 3, "6m": 6, "1y": 12}.get(range_param, 6)
+            if range_param == "all":
+                months_back = 24  # cap display at 24 months
+            for i in range(months_back - 1, -1, -1):
+                year, month = now.year, now.month - i
+                while month <= 0:
+                    year -= 1
+                    month += 12
+                key = f"{year}-{month:02d}"
+                if key not in bucket_counts:
+                    bucket_keys.append(key)
+                    bucket_counts[key] = 0
+
+        # ── 3. Process events, applying the cutoff filter ─────────────────────
+        all_events = EmailOpenEvent.get_events_for_owner(user_id)
+        total_opens = 0
+        opens_in_range = 0
+        unique_recipients: set[str] = set()
+
+        for e in all_events:
             ts_str = e.timestamp or ""
             try:
                 dt = datetime.fromisoformat(ts_str.rstrip("Z"))
             except Exception:
                 dt = None
 
-            if dt and dt >= this_month_start:
-                opens_this_month += 1
+            in_range = (dt is not None and (cutoff is None or dt >= cutoff))
 
-            email_key = e.recipient_email or ""
-            if email_key:
+            if in_range:
+                total_opens += 1
+                opens_in_range += 1
+
+            email_key = (e.recipient_email or "").strip().lower()
+            if email_key and in_range:
                 unique_recipients.add(email_key)
 
             req_key = e.request_id or "__unknown__"
             title = e.form_title or "Untitled"
-            if req_key not in per_form:
-                per_form[req_key] = {
-                    "request_id": req_key if req_key != "__unknown__" else None,
-                    "form_title": title,
-                    "opens": 0,
-                }
-            per_form[req_key]["opens"] += 1
 
-            if dt:
-                mk = f"{dt.year}-{dt.month:02d}"
-                if mk in month_counts:
-                    month_counts[mk] += 1
+            if in_range:
+                if req_key in per_form:
+                    if title and title != "Untitled":
+                        per_form[req_key]["form_title"] = title
+                    per_form[req_key]["opens"] += 1
+                else:
+                    per_form[req_key] = {
+                        "request_id": req_key if req_key != "__unknown__" else None,
+                        "form_title": title,
+                        "opens": 1,
+                    }
 
-        # Fetch total emails sent (from email_logs) to compute open rate.
-        db = get_db()
-        sent_logs = db.collection(Collections.EMAIL_LOGS)\
-            .where("success", "==", True)\
-            .stream()
-        total_sent = sum(1 for _ in sent_logs)
+            if dt and in_range:
+                if use_daily:
+                    bk = dt.date().isoformat()
+                else:
+                    bk = f"{dt.year}-{dt.month:02d}"
+                if bk in bucket_counts:
+                    bucket_counts[bk] += 1
+
+        # ── 4. Total sent in range from owner's email_logs ────────────────────
+        cutoff_str = cutoff.isoformat() + "Z" if cutoff else None
+        total_sent = 0
+        if owner_request_ids:
+            req_id_list = list(owner_request_ids)
+            for i in range(0, len(req_id_list), 30):
+                chunk = req_id_list[i:i + 30]
+                logs = db.collection(Collections.EMAIL_LOGS)\
+                    .where("request_id", "in", chunk)\
+                    .where("success", "==", True)\
+                    .stream()
+                for log_doc in logs:
+                    log_data = log_doc.to_dict() or {}
+                    if cutoff_str is None or log_data.get("sent_at", "") >= cutoff_str:
+                        total_sent += 1
 
         open_rate = round(total_opens / total_sent * 100, 1) if total_sent > 0 else 0.0
         unique_open_rate = round(len(unique_recipients) / total_sent * 100, 1) if total_sent > 0 else 0.0
 
-        monthly = []
-        for key in sorted(month_keys):
-            year, month_str = key.split("-")
-            label_dt = datetime(int(year), int(month_str), 1)
-            monthly.append({
-                "month": key,
-                "label": label_dt.strftime("%b '%y"),
-                "opens": month_counts.get(key, 0),
-            })
+        # ── 5. Build the time-series response list ────────────────────────────
+        time_series = []
+        for key in sorted(bucket_keys):
+            if use_daily:
+                d = datetime.fromisoformat(key)
+                label = d.strftime("%b %-d") if hasattr(d, 'strftime') else key
+                try:
+                    label = d.strftime("%b %-d")
+                except ValueError:
+                    label = d.strftime("%b %#d")  # Windows fallback
+            else:
+                year, month_str = key.split("-")
+                label = datetime(int(year), int(month_str), 1).strftime("%b '%y")
+            time_series.append({"month": key, "label": label, "opens": bucket_counts.get(key, 0)})
 
-        per_form_list = sorted(
-            per_form.values(),
-            key=lambda x: x["opens"],
-            reverse=True,
-        )
+        per_form_list = sorted(per_form.values(), key=lambda x: x["opens"], reverse=True)
 
         print(
-            f"get_email_open_analytics: owner_id={user_id!r} "
+            f"get_email_open_analytics: owner_id={user_id!r} range={range_param!r} "
             f"total_opens={total_opens} unique={len(unique_recipients)} "
-            f"total_sent={total_sent} open_rate={open_rate}%"
+            f"total_sent={total_sent} open_rate={open_rate}% forms={len(per_form_list)}"
         )
 
         return jsonify({
             "total_opens": total_opens,
             "unique_opens": len(unique_recipients),
-            "opens_this_month": opens_this_month,
+            "opens_in_range": opens_in_range,
             "total_sent": total_sent,
             "open_rate": open_rate,
             "unique_open_rate": unique_open_rate,
             "per_form": per_form_list,
-            "monthly": monthly,
+            "monthly": time_series,
+            "range": range_param,
         }), 200
     except Exception as e:
         import traceback

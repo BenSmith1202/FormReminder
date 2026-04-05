@@ -158,6 +158,61 @@ def save_custom_message():
         return jsonify({"error": "Failed to save custom message"}), 500
     
 
+@settings_bp.post('/api/settings/profile-photo')
+def upload_profile_photo():
+    """Save a base64-encoded profile photo for the current user.
+
+    Expects JSON: { "photo": "<data:image/...;base64,...>" }
+    Rejects payloads larger than 700 KB (base64 string length) to keep
+    Firestore document sizes reasonable.
+    """
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json()
+        photo = data.get('photo', '')
+
+        if not photo:
+            return jsonify({"error": "No photo provided"}), 400
+
+        if not photo.startswith('data:image/'):
+            return jsonify({"error": "Invalid image format"}), 400
+
+        # ~700 KB base64 string ≈ ~525 KB decoded — safe for Firestore's 1 MB doc limit
+        if len(photo) > 700_000:
+            return jsonify({"error": "Image is too large. Please upload an image under 500 KB."}), 400
+
+        db = get_db()
+        db.collection('users').document(user_id).update({'profile_photo_url': photo})
+
+        print(f"Profile photo updated for user {user_id}")
+        return jsonify({"success": True, "profile_photo_url": photo}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "Failed to save profile photo", "details": str(e)}), 500
+
+
+@settings_bp.delete('/api/settings/profile-photo')
+def delete_profile_photo():
+    """Remove the current user's profile photo."""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        db = get_db()
+        db.collection('users').document(user_id).update({'profile_photo_url': None})
+
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "Failed to remove profile photo", "details": str(e)}), 500
+
+
 @settings_bp.post('/api/settings/toggle-notification')
 def toggle_notification():
     try:
