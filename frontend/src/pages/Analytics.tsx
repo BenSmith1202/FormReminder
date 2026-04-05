@@ -13,6 +13,9 @@ import {
   Divider,
   useTheme,
   useMediaQuery,
+  Dialog,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
 import {
@@ -27,8 +30,11 @@ import {
   Line,
   Legend,
 } from 'recharts';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import BarChartIcon from '@mui/icons-material/BarChart';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface OptOutEventRow {
   id: string;
@@ -98,6 +104,16 @@ export default function Analytics() {
   const [events, setEvents] = useState<OptOutEventRow[]>([]);
   const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; isError?: boolean }>({ open: false, message: '' });
+
+  // One-time welcome dialog — only shown to new users who haven't seen it before
+  const [showWelcome, setShowWelcome] = useState<boolean>(
+    () => !localStorage.getItem('fr_welcome_analytics_seen')
+  );
+
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    localStorage.setItem('fr_welcome_analytics_seen', 'true');
+  };
 
   useEffect(() => {
     const loadUser = async () => {
@@ -316,7 +332,9 @@ export default function Analytics() {
   return (
     <Box sx={{ px: { xs: 1, sm: 2 }, py: 2 }}>
       <Typography variant="h5" component="h1" gutterBottom sx={{ fontWeight: 600 }}>
-        Analytics
+        Analytics <AnimatedInfoButton title="Analytics Guide">
+                    <p>This page provides insights into opt-out events and submission trends for your forms.</p>
+                  </AnimatedInfoButton>
       </Typography>
 
       {/* ── Stat cards ── */}
@@ -490,6 +508,40 @@ export default function Analytics() {
           sx: snackbar.isError ? { bgcolor: 'error.main', color: 'white' } : undefined,
         }}
       />
+
+      {/* ── One-time welcome dialog for new users ── */}
+      <Dialog
+        open={showWelcome}
+        onClose={dismissWelcome}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, p: { xs: 1, sm: 2 } } }}
+      >
+        <DialogContent sx={{ textAlign: 'center', pt: { xs: 3, sm: 4 } }}>
+          <Box
+            sx={{
+              width: 56, height: 56, borderRadius: '50%', bgcolor: 'primary.50',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 2,
+            }}
+          >
+            <BarChartIcon sx={{ fontSize: 28, color: 'primary.main' }} />
+          </Box>
+          <Typography variant="h5" fontWeight="bold" gutterBottom>
+            Welcome to Analytics!
+          </Typography>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 420, mx: 'auto' }}>
+            Here you can track patterns and trends for your forms. View submission statistics,
+            monitor opt-out events, and export data to gain insights into how your recipients
+            are engaging with your form requests.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: 'center', pb: 3 }}>
+          <Button variant="contained" size="large" onClick={dismissWelcome} sx={{ px: 5 }}>
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
     </Box>
   );
 }

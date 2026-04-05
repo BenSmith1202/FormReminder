@@ -34,6 +34,10 @@ def send_single_reminder(request_id: str, email: str):
             return jsonify({"error": "Form request not found"}), 404
         
         request_data = request_doc.to_dict()
+
+        # Don't send if not active
+        if not request_data.get('is_active'):
+            return jsonify({"error": "Cannot send emails on inactive forms"}), 400
         
         # Verify ownership
         if request_data.get('owner_id') != user_id:
@@ -88,6 +92,10 @@ def send_bulk_reminders(request_id: str):
             return jsonify({"error": "Form request not found"}), 404
         
         request_data = request_doc.to_dict()
+
+        # Don't send if not active
+        if not request_data.get('is_active'):
+            return jsonify({"error": "Cannot send emails on inactive forms"}), 400
         
         # Verify ownership
         if request_data.get('owner_id') != user_id:

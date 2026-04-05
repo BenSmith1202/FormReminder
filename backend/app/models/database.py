@@ -28,6 +28,18 @@ class FirestoreDB:
         try:
             cred_path = None
 
+            # Honor explicit env configuration first (supports local dev from backend/.env).
+            configured_cred_path = settings.FIREBASE_CREDENTIALS_PATH
+            if configured_cred_path:
+                resolved = configured_cred_path
+                if not os.path.isabs(resolved):
+                    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                    resolved = os.path.abspath(os.path.join(backend_dir, resolved))
+                if os.path.exists(resolved):
+                    cred_path = resolved
+                else:
+                    print(f"Warning: FIREBASE_CREDENTIALS_PATH was set but file was not found: {resolved}")
+
             # --- CLOUD RUN: credentials arrive as a JSON string via Secret Manager ---
             import json, tempfile
             creds_json_str = os.environ.get("FIREBASE_CREDENTIALS_JSON")
@@ -84,9 +96,12 @@ class FirestoreDB:
                 )
             else:
                 print("Warning: No credentials file found, using default credentials")
-                # Use default credentials (for development or Google Cloud environment)
+                # Use ADC credentials but keep targeting the configured non-default database.
                 cls._app = firebase_admin.initialize_app()
-                cls._db = firestore.client()
+                cls._db = gcp_firestore.Client(
+                    project=settings.FIREBASE_PROJECT_ID,
+                    database='formreminder'
+                )
             
             print("Firebase Firestore initialized successfully")
             return cls._db

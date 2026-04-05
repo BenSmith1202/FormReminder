@@ -23,6 +23,7 @@ import {
   Divider,
   Container,
   Skeleton,
+  Switch
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -38,6 +39,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -50,11 +52,13 @@ export default function EditRequest() {
   const navigate = useNavigate();
 
   // Form State
+  const [provider, setProvider] = useState('google');
   const [requestTitle, setRequestTitle] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [active, setActive] = useState<Boolean>();
 
   // Schedule State
   const [reminderSchedule, setReminderSchedule] = useState('normal');
@@ -95,6 +99,8 @@ export default function EditRequest() {
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
+      setActive(request.activity ?? true);
+      setProvider(request.provider || 'google');
 
       if (request.due_date) {
         const parsedDate = new Date(request.due_date);
@@ -140,11 +146,18 @@ export default function EditRequest() {
       if (!formUrl || !groupId || !dueDate)
         throw new Error('Please fill in all required fields');
 
+      const now = new Date();
+      // If user is trying to set it to Active, but the due date has passed
+      if (active && dueDate < now) {
+        throw new Error('Cannot set an expired request to Active. Please extend the Due Date first.');
+      }
+
       const requestBody: any = {
         title: requestTitle,
         form_url: formUrl,
         group_id: groupId,
         due_date: dueDate.toISOString(),
+        activity: active,
         reminder_schedule: reminderSchedule,
         first_reminder_timing: firstReminderTiming,
       };
@@ -229,7 +242,12 @@ export default function EditRequest() {
           </Box>
           <Box>
             <Typography variant="h5" component="h1" fontWeight="bold">
-              Edit Request
+              Edit Request      <AnimatedInfoButton title="Editing a form request">
+                                  <p>Here you can update the details of your form request.</p>
+                                  <p>Make sure to click "Save Changes" after making any updates. To discard changes and return to the request details page, click "Back to Request".</p>
+                                  <p>On this page, you can change the form URL, update the recipient group, set a new due date, and modify the reminder schedule.</p>
+                                  <p>When setting a reminder schedule, you can choose from preset options or create a custom schedule with specific days before the due date.</p>
+                                </AnimatedInfoButton>
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {requestTitle || 'Untitled Request'}
@@ -282,6 +300,16 @@ export default function EditRequest() {
           <Divider sx={{ mb: 3 }} />
 
           <Box display="grid" gap={2.5}>
+            <Box>
+              <Typography variant="body2" fontWeight="medium" gutterBottom>
+                Form Provider
+              </Typography>
+              <Chip
+                label={provider === 'google' ? 'Google Forms' : provider === 'jotform' ? 'Jotform' : 'Microsoft Forms'}
+                size="small"
+                color={provider === 'google' ? 'primary' : provider === 'jotform' ? 'warning' : 'info'}
+              />
+            </Box>
             <TextField
               label="Request Title"
               fullWidth
@@ -311,6 +339,29 @@ export default function EditRequest() {
                 ))}
               </Select>
             </FormControl>
+            <Box mt={1}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={!!active}
+                    onChange={(e) => setActive(e.target.checked)}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight="medium">
+                      Request Status: {active ? 'Active' : 'Inactive'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {active 
+                        ? 'Reminders will be sent according to the schedule.' 
+                        : 'Reminders are currently paused for this request.'}
+                    </Typography>
+                  </Box>
+                }
+              />
+            </Box>
           </Box>
         </Paper>
 

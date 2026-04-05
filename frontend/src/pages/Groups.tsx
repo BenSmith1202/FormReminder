@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
   Typography, Button, Box, CircularProgress, Alert, Card, CardContent,
-  CardActionArea, IconButton, Tooltip, Divider, Container
+  CardActionArea, IconButton, Tooltip, Divider, Container,
+  Dialog, DialogContent, DialogActions,
 } from '@mui/material';
 import GroupIcon from '@mui/icons-material/Group';
 import AddIcon from '@mui/icons-material/Add';
@@ -12,6 +13,7 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
   id: string;
@@ -39,6 +41,17 @@ export default function Groups() {
   const [error, setError] = useState<string | null>(loaderError);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
+  // One-time welcome dialog — only shown to new users who haven't seen it before
+  const [showWelcome, setShowWelcome] = useState<boolean>(
+    () => !localStorage.getItem('fr_welcome_groups_seen')
+  );
+
+  /** Dismiss the welcome dialog and persist that the user has seen it. */
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    localStorage.setItem('fr_welcome_groups_seen', 'true');
+  };
+
   const handleDuplicate = async (e: React.MouseEvent, groupId: string) => {
     e.stopPropagation();
     try {
@@ -62,7 +75,10 @@ export default function Groups() {
       {/* Page Header */}
       <Box mb={4}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          Groups
+          Groups            <AnimatedInfoButton title="Groups Overview">
+                              <p>Here is the groups page. You can view and manage recipient groups for your form requests here.</p>
+                              <p>Click "Create New Group" to set up a new group, or click on an existing group to view its details and members.</p>
+                            </AnimatedInfoButton>
         </Typography>
         <Typography variant="body1" color="text.secondary">
           Manage recipient groups for your form requests.
@@ -270,6 +286,40 @@ export default function Groups() {
           </Typography>
         </Box>
       )}
+
+      {/* ── One-time welcome dialog for new users ── */}
+      <Dialog
+        open={showWelcome}
+        onClose={dismissWelcome}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, p: { xs: 1, sm: 2 } } }}
+      >
+        <DialogContent sx={{ textAlign: 'center', pt: { xs: 3, sm: 4 } }}>
+          <Box
+            sx={{
+              width: 56, height: 56, borderRadius: '50%', bgcolor: 'primary.50',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 2,
+            }}
+          >
+            <GroupIcon sx={{ fontSize: 28, color: 'primary.main' }} />
+          </Box>
+          <Typography variant="h5" fontWeight="bold" gutterBottom>
+            Welcome to Groups!
+          </Typography>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 420, mx: 'auto' }}>
+            Here you can create and customize groups that contain the emails of your form recipients.
+            FormReminder uses these groups to track who has and hasn't filled out your form, and to send
+            helpful reminders to those who still need to complete it.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: 'center', pb: 3 }}>
+          <Button variant="contained" size="large" onClick={dismissWelcome} sx={{ px: 5 }}>
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
     </Container>
   );
 }

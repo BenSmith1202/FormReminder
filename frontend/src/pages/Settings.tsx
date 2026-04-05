@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -18,6 +18,11 @@ import {
   Avatar,
   Skeleton,
   Collapse,
+  Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
@@ -28,6 +33,8 @@ import PersonIcon from '@mui/icons-material/Person';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import LinkIcon from '@mui/icons-material/Link';
+import AnimatedInfoButton from '../components/InfoButton';
 import API_URL from '../config';
 
 // ── Shared section wrapper ────────────────────────────────────────────────
@@ -116,6 +123,32 @@ export default function Settings() {
   const [customMessageLoading, setCustomMessageLoading] = useState(false);
   const [customMessageSaved, setCustomMessageSaved] = useState(true);
 
+  // ── Connected providers state ──
+  const [connectedProviders, setConnectedProviders] = useState<{ google: boolean; jotform: boolean; microsoft: boolean }>({
+    google: false, jotform: false, microsoft: false,
+  });
+  const [jotformDialogOpen, setJotformDialogOpen] = useState(false);
+  const [jotformApiKey, setJotformApiKey] = useState('');
+  const [jotformError, setJotformError] = useState('');
+  const [disconnectConfirm, setDisconnectConfirm] = useState<string | null>(null);
+  const [providerLoading, setProviderLoading] = useState(false);
+
+  const PROVIDERS = [
+    { key: 'google' as const, label: 'Google Forms', logo: '/google-forms-logo.svg', color: '#673ab7' },
+    { key: 'jotform' as const, label: 'Jotform', logo: '/jotform-logo.svg', color: '#FF6100' },
+    { key: 'microsoft' as const, label: 'Microsoft Forms', logo: '/microsoft-forms-logo.svg', color: '#0078d4' },
+  ];
+
+  const fetchProviderStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/connected-accounts`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setConnectedProviders({ google: data.google, jotform: data.jotform, microsoft: data.microsoft });
+      }
+    } catch { /* silent */ }
+  }, []);
+
   // ── Auth & data loading ──
   useEffect(() => {
     const checkAuth = async () => {
@@ -136,6 +169,17 @@ export default function Settings() {
     };
     checkAuth();
   }, [navigate]);
+
+  useEffect(() => {
+    fetchProviderStatus();
+  }, [fetchProviderStatus]);
+
+  // Re-check provider status when window regains focus (covers OAuth popup flows)
+  useEffect(() => {
+    const onFocus = () => fetchProviderStatus();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [fetchProviderStatus]);
 
   useEffect(() => {
     const fetchUserForms = async () => {
@@ -312,6 +356,80 @@ export default function Settings() {
     }
   };
 
+  // ── Provider connect / disconnect ──
+  const connectProvider = async (key: 'google' | 'jotform' | 'microsoft') => {
+    if (key === 'jotform') {
+      setJotformApiKey('');
+      setJotformError('');
+      setJotformDialogOpen(true);
+      return;
+    }
+
+    setProviderLoading(true);
+    try {
+      const endpoint = key === 'google' ? '/login/google' : '/login/microsoft';
+      const res = await fetch(`${API_URL}${endpoint}`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.open(data.authorization_url, '_blank', 'width=600,height=700');
+      } else {
+        setError(data.error || `Could not start ${key} connect`);
+      }
+    } catch {
+      setError(`Failed to connect ${key}`);
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
+  const submitJotformKey = async () => {
+    const key = jotformApiKey.trim();
+    if (!key) { setJotformError('Please enter your API key.'); return; }
+    setProviderLoading(true);
+    setJotformError('');
+    try {
+      const res = await fetch(`${API_URL}/api/auth/jotform/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ api_key: key }),
+      });
+      if (res.ok) {
+        setJotformDialogOpen(false);
+        fetchProviderStatus();
+        setSuccess('Jotform connected!');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setJotformError(data.error || 'Invalid API key.');
+      }
+    } catch {
+      setJotformError('Connection failed. Please try again.');
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
+  const disconnectProvider = async (key: 'google' | 'jotform' | 'microsoft') => {
+    setDisconnectConfirm(null);
+    setProviderLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/${key}/disconnect`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        fetchProviderStatus();
+        setSuccess(`${PROVIDERS.find(p => p.key === key)?.label} disconnected.`);
+      } else {
+        setError('Failed to disconnect provider.');
+      }
+    } catch {
+      setError('Connection error.');
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
   // ── Loading skeleton ──
   if (loading) {
     return (
@@ -329,7 +447,11 @@ export default function Settings() {
       {/* ── Page header ── */}
       <Box mb={4}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          Settings
+          Settings          <AnimatedInfoButton title="FormReminder Settings">
+                              <p>This page allows you to manage your FormReminder account settings.</p>
+                              <p>Here you can update your username, set a custom message for your reminder emails, and toggle notification preferences for each of your active forms.</p>
+                              <p>Be sure to click "Save" after making any changes to ensure your settings are updated.</p>
+                            </AnimatedInfoButton>
         </Typography>
         {/* User identity card */}
         <Box
@@ -409,6 +531,120 @@ export default function Settings() {
             </Button>
           </Box>
         </Section>
+
+        {/* ── Connected Providers ── */}
+        <Section
+          icon={<LinkIcon sx={{ fontSize: 20 }} />}
+          title="Connected Providers"
+          description="Form providers you have authorized"
+          iconBg="secondary.50"
+          iconColor="secondary.main"
+        >
+          <Box px={{ xs: 2.5, sm: 3 }} py={2}>
+            {PROVIDERS.map((p) => {
+              const connected = connectedProviders[p.key];
+              return (
+                <Box
+                  key={p.key}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="space-between"
+                  py={1.5}
+                  sx={{ '&:not(:last-child)': { borderBottom: '1px solid', borderColor: 'divider' } }}
+                >
+                  <Box display="flex" alignItems="center" gap={1.5}>
+                    <Box
+                      component="img"
+                      src={p.logo}
+                      alt={p.label}
+                      sx={{ width: 28, height: 28, objectFit: 'contain' }}
+                    />
+                    <Box>
+                      <Typography variant="body2" fontWeight="medium">{p.label}</Typography>
+                      <Chip
+                        label={connected ? 'Connected' : 'Not Connected'}
+                        size="small"
+                        color={connected ? 'success' : 'default'}
+                        variant={connected ? 'filled' : 'outlined'}
+                        sx={{ mt: 0.3, height: 20, fontSize: '0.7rem' }}
+                      />
+                    </Box>
+                  </Box>
+                  {connected ? (
+                    <Button
+                      size="small"
+                      color="error"
+                      variant="text"
+                      disabled={providerLoading}
+                      onClick={() => setDisconnectConfirm(p.key)}
+                      sx={{ fontWeight: 'bold', textTransform: 'none' }}
+                    >
+                      Disconnect
+                    </Button>
+                  ) : (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={providerLoading}
+                      onClick={() => connectProvider(p.key)}
+                      sx={{ textTransform: 'none' }}
+                    >
+                      Connect
+                    </Button>
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        </Section>
+
+        {/* Disconnect confirmation dialog */}
+        <Dialog open={!!disconnectConfirm} onClose={() => setDisconnectConfirm(null)}>
+          <DialogTitle>Disconnect {PROVIDERS.find(p => p.key === disconnectConfirm)?.label}?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              You will need to re-authorize this provider before creating new form requests with it.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDisconnectConfirm(null)}>Cancel</Button>
+            <Button color="error" variant="contained"
+              onClick={() => disconnectProvider(disconnectConfirm as 'google' | 'jotform' | 'microsoft')}
+            >
+              Disconnect
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Jotform API key dialog */}
+        <Dialog open={jotformDialogOpen} onClose={() => setJotformDialogOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Connect Jotform</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" mb={2}>
+              Enter your Jotform API key. You can find it at{' '}
+              <a href="https://www.jotform.com/myaccount/api" target="_blank" rel="noopener noreferrer">
+                jotform.com/myaccount/api
+              </a>.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              label="API Key"
+              value={jotformApiKey}
+              onChange={(e) => setJotformApiKey(e.target.value)}
+              error={!!jotformError}
+              helperText={jotformError}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitJotformKey(); }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setJotformDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={submitJotformKey} disabled={providerLoading}>
+              {providerLoading ? <CircularProgress size={16} /> : 'Connect'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* ── Profile ── */}
         <Section

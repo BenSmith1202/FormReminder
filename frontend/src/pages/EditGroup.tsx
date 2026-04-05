@@ -33,6 +33,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import API_URL from '../config';
+import AnimatedInfoButton from '../components/InfoButton';
 
 interface Member {
   email: string;
@@ -224,7 +225,12 @@ export default function EditGroup() {
       </Box>
 
       <Typography variant="h5" component="h1" fontWeight="bold" gutterBottom>
-        Edit Group
+        Edit Group        <AnimatedInfoButton title="Editing a group">
+                            <p>On this page, you can update the name and description of your group.</p>
+                            <p>You can also add new members by entering their email addresses and clicking "Add Members". To remove a member, click the trash icon next to their email.</p>
+                            <p>Be careful when deleting a group, as this action cannot be undone. Deleting a group will remove it from all associated form requests.</p>
+                            <p> to return to the group details page without making changes, click "Back to Group".</p>
+                          </AnimatedInfoButton>
       </Typography>
 
       {/* ── Alerts ── */}

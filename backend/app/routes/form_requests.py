@@ -13,11 +13,148 @@ from models.notification import (
     notify_unrecognized_submission
 )
 from utils.google_forms_service import GoogleFormsService
+from utils.form_provider import (
+    detect_provider, extract_form_id as provider_extract_form_id,
+    get_form_metadata as provider_get_metadata,
+    get_form_responses as provider_get_responses,
+    get_credentials_for_provider, get_viewform_url,
+    PROVIDER_GOOGLE, PROVIDER_JOTFORM, PROVIDER_MICROSOFT,
+)
 from utils.scheduler import send_initial_emails  # For immediate email sending
 
 
 # Define the Blueprint
 form_requests_bp = Blueprint('form_requests', __name__)
+
+
+def _classify_forms_api_error(err: Exception) -> str:
+    """Normalize provider API errors into warning-friendly reason codes."""
+    text = str(err or "").lower()
+    if (
+        "requested entity was not found" in text
+        or " 404" in text
+        or "404 " in text
+        or "not found" in text
+    ):
+        return "form_not_found"
+    if (
+        "forbidden" in text
+        or " 403" in text
+        or "403 " in text
+        or "permission" in text
+        or "insufficient" in text
+        or "access denied" in text
+    ):
+        return "account_mismatch_or_no_access"
+    if "invalid_grant" in text or "revoked" in text or "credentials" in text:
+        return "credentials_invalid"
+    if "excel" in text or "onedrive" in text or "workbook" in text:
+        return "excel_not_found"
+    return "api_error"
+
+
+# ── Provider display names ──
+_PROVIDER_LABELS = {
+    "google": "Google Forms",
+    "jotform": "Jotform",
+    "microsoft": "Microsoft Forms",
+}
+
+
+def _build_form_warnings(form_data: dict, provider: str = "google") -> list[str]:
+    """Build user-facing warnings from the latest persisted form state.
+
+    Messages are tailored to the *provider* so the user sees relevant
+    instructions instead of generic "Google" references.
+    """
+    warnings: list[str] = []
+    label = _PROVIDER_LABELS.get(provider, provider.title())
+
+    form_settings = form_data.get('form_settings', {}) or {}
+    email_checked = form_settings.get('email_collection_checked', True)
+    email_collection_enabled = form_settings.get('email_collection_enabled', True)
+    if email_checked and not email_collection_enabled:
+        if provider == "google":
+            warnings.append(
+                "Email collection is currently OFF for this Google Form. "
+                "In Google Forms: Settings → Responses → turn on 'Collect email addresses'."
+            )
+        elif provider == "jotform":
+            warnings.append(
+                "This Jotform does not appear to have an email field. "
+                "Without one, we cannot match responses to recipients. "
+                "Add a 'Short Text: Email' field to your form."
+            )
+        elif provider == "microsoft":
+            warnings.append(
+                "This Microsoft Form may not have an email question. "
+                "Add an email question so respondents enter their email address — "
+                "otherwise responses will appear as 'Anonymous'."
+            )
+
+    # Microsoft-specific: no email column found in the Excel response data
+    if provider == "microsoft" and form_settings.get('ms_no_email_column'):
+        warnings.append(
+            "No email column was found in the response spreadsheet. "
+            "We cannot identify who responded without it. "
+            "Add an email question to your Microsoft Form, collect at least one new response, "
+            "then sync again."
+        )
+
+    api_access_available = form_data.get('api_access_available', True)
+    api_error_reason = form_data.get('api_error_reason')
+    if not api_access_available:
+        if api_error_reason == 'account_mismatch_or_no_access':
+            if provider == "google":
+                warnings.append(
+                    "The Google account you connected does not have edit access to this form. "
+                    "Connect the correct Google account or share the form with that account as an editor."
+                )
+            elif provider == "jotform":
+                warnings.append(
+                    "Your Jotform API key does not have access to this form. "
+                    "Make sure the form belongs to the account whose API key you connected."
+                )
+            elif provider == "microsoft":
+                warnings.append(
+                    "The Microsoft account you connected does not have access to this form's data. "
+                    "Make sure you signed in with the account that owns the form."
+                )
+        elif api_error_reason == 'form_not_found':
+            if provider == "google":
+                warnings.append(
+                    "This form could not be found via the Google API. "
+                    "Use the Google Forms edit URL (contains /edit), not the public view/share URL."
+                )
+            elif provider == "jotform":
+                warnings.append(
+                    "This form could not be found on Jotform. "
+                    "Double-check the form ID or URL and make sure the form has not been deleted."
+                )
+            elif provider == "microsoft":
+                warnings.append(
+                    "This Microsoft Form could not be located. "
+                    "Verify the share link is correct and that the form still exists."
+                )
+        elif api_error_reason == 'credentials_invalid':
+            warnings.append(
+                f"Your {label} connection is no longer valid. "
+                f"Reconnect your {label} account to resume syncing."
+            )
+        elif api_error_reason == 'excel_not_found':
+            warnings.append(
+                "Could not find the response Excel file in OneDrive. "
+                "In Microsoft Forms: open the form → Responses tab → "
+                "'Open in Excel' to create the file, then sync again."
+            )
+        else:
+            warnings.append(
+                f"We could not access this form via the {label} API. "
+                "We will keep retrying on each sync, and this warning will "
+                "clear automatically once access works again."
+            )
+
+    return warnings
 
 
 # Get all form requests
@@ -79,23 +216,9 @@ def get_form_requests():
                 if not group_emails or resp_email in group_emails:
                     response_count += 1
             
-            # Calculate warnings dynamically
-            warnings = []
-            form_settings = form_data.get('form_settings', {})
-            email_collection_enabled = form_settings.get('email_collection_enabled', True)
-            api_access_available = form_data.get('api_access_available', True)
-            
-            if not email_collection_enabled:
-                warnings.append(
-                    "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
-                    "Responses → turn on 'Collect email addresses', or add a question that asks for email."
-                )
-            
-            if not api_access_available:
-                warnings.append(
-                    "Could not access this form via the API. If Refresh fails: reconnect your Google account "
-                    "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
-                )
+            # Calculate warnings from the latest persisted API/form state
+            req_provider = request_data.get('provider', 'google')
+            warnings = _build_form_warnings(form_data, provider=req_provider)
             
             # Merge form data into request_data - request_data takes precedence
             # IMPORTANT: We only use form_data for fields that don't exist in request_data
@@ -237,23 +360,9 @@ def get_form_request_responses(request_id: str):
         total_recipients = len(group.members) if group else 0
         response_count = len(responses_list)
         
-        # Calculate warnings dynamically
-        warnings = []
-        form_settings = form_data.get('form_settings', {})
-        email_collection_enabled = form_settings.get('email_collection_enabled', True)
-        api_access_available = form_data.get('api_access_available', True)
-        
-        if not email_collection_enabled:
-            warnings.append(
-                "Email collection may not be enabled on this form. In Google Forms: Settings (gear) → "
-                "Responses → turn on 'Collect email addresses', or add a question that asks for email."
-            )
-        
-        if not api_access_available:
-            warnings.append(
-                "Could not access this form via the API. If Refresh fails: reconnect your Google account "
-                "(e.g. from Create Request), or ensure the form owner has granted you edit access to the form."
-            )
+        # Calculate warnings from the latest persisted API/form state
+        resp_provider = request_data.get('provider', 'google')
+        warnings = _build_form_warnings(form_data, provider=resp_provider)
         
         # Merge form data into request_data for response - request_data takes precedence
         request_data_with_form = {
@@ -288,10 +397,10 @@ def get_form_request_responses(request_id: str):
         }), 500
 
 
-# Refresh responses from Google Forms
+# Refresh responses from form provider (Google / Jotform / Microsoft)
 @form_requests_bp.post("/<request_id>/refresh")
 def refresh_form_responses(request_id: str):
-    """Manually refresh responses from Google Forms"""
+    """Manually refresh responses from the form provider."""
     from datetime import datetime
     from models.database import Collections
     
@@ -301,8 +410,8 @@ def refresh_form_responses(request_id: str):
             return jsonify({"error": "Must be logged in"}), 401
         
         user = User.get_by_id(user_id)
-        if not user or not user.google_access_token:
-            return jsonify({"error": "Google account not connected"}), 403
+        if not user:
+            return jsonify({"error": "User not found"}), 404
         
         db = get_db()
         
@@ -319,61 +428,156 @@ def refresh_form_responses(request_id: str):
         if request_data.get('owner_id') != user_id:
             return jsonify({"error": "Unauthorized"}), 403
         
-        form_id = request_data.get('google_form_id') or request_data.get('form_id')
+        # ── Determine provider (fall back to google for legacy requests) ──
+        provider = request_data.get('provider', PROVIDER_GOOGLE)
+        form_id = request_data.get('form_id') or request_data.get('google_form_id')
         if not form_id:
-            return jsonify({"error": "No Google Form ID found"}), 400
+            return jsonify({"error": "No form ID found on this request"}), 400
         
-        print(f"Refreshing responses for form {form_id}")
+        print(f"\n{'='*60}")
+        print(f"[REFRESH] Provider: {provider}  |  Form ID: {form_id}")
+        print(f"{'='*60}")
         
-        # Get user's Google credentials
+        # ── Get credentials for the provider ──
         try:
-            credentials = GoogleFormsService.get_credentials_from_tokens(
-                access_token=user.google_access_token,
-                refresh_token=user.google_refresh_token,
-                token_expiry=user.token_expiry
-            )
+            credentials = get_credentials_for_provider(user, provider)
+            print(f"[REFRESH] ✅ Got credentials for '{provider}'")
         except ValueError as cred_error:
-            # Token was revoked or is invalid - clear it from database
-            print(f"Credentials invalid: {cred_error}")
-            print("Clearing invalid Google tokens from user account")
-            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+            print(f"[REFRESH] ❌ Credential error: {cred_error}")
+            action = "reconnect_google" if provider == PROVIDER_GOOGLE else f"connect_{provider}"
             return jsonify({
-                "error": "Google credentials have been revoked",
-                "message": "Please reconnect your Google account",
-                "action_required": "reconnect_google"
+                "error": str(cred_error),
+                "message": f"Please reconnect your {provider.title()} account",
+                "action_required": action,
             }), 401
         
-        # Fetch latest responses from Google
-        print(f"Fetching responses from Google Forms API for form {form_id}...")
+        # ── Fetch latest responses via the provider ──
+        print(f"[REFRESH] Fetching responses via {provider} for form {form_id}...")
+        # Build extra context for providers that need it (Microsoft needs
+        # excel_file_id and form_title to locate the OneDrive workbook).
+        provider_ctx = {}
+        no_email_col = False  # Microsoft-only: True when no email column header found
+        if provider == PROVIDER_MICROSOFT:
+            provider_ctx = {
+                "excel_file_id": request_data.get("excel_file_id"),
+                "form_title": request_data.get("title", ""),
+            }
         try:
-            responses = GoogleFormsService.get_form_responses(credentials, form_id)
+            responses = provider_get_responses(provider, credentials, form_id, **provider_ctx)
+            print(f"[REFRESH] ✅ Got {len(responses)} responses from {provider}")
+            for i, r in enumerate(responses[:5]):
+                print(f"[REFRESH]    [{i}] email={r.get('respondent_email','(none)')}, "
+                      f"id={r.get('response_id','')[:20]}")
+            if len(responses) > 5:
+                print(f"[REFRESH]    ... and {len(responses) - 5} more")
+
+            # If Microsoft returned an excel_file_id, persist it for next time
+            if provider == PROVIDER_MICROSOFT and responses:
+                discovered_file_id = responses[0].get("_excel_file_id")
+                if discovered_file_id and discovered_file_id != request_data.get("excel_file_id"):
+                    request_ref.update({"excel_file_id": discovered_file_id})
+                    print(f"[REFRESH] Stored excel_file_id={discovered_file_id[:20]}…")
+
+                # Check if any response flagged no email column
+                no_email_col = any(r.get("_no_email_column") for r in responses)
+                if no_email_col:
+                    print("[REFRESH] ⚠️  Microsoft: no email column detected in Excel")
+
+                # Strip internal keys so they don't leak into Firestore
+                for r in responses:
+                    r.pop("_excel_file_id", None)
+                    r.pop("_no_email_column", None)
         except Exception as api_err:
             err_str = str(api_err)
-            # 404 from Forms API = form ID not found (viewform URL uses a different "published" ID than the API expects)
+            api_error_reason = _classify_forms_api_error(api_err)
+            label = _PROVIDER_LABELS.get(provider, provider.title())
+
+            # Persist failure state so dashboard warnings explain the real reason.
+            form_doc_id = request_data.get('form_id') or request_data.get('google_form_id')
+            if form_doc_id:
+                try:
+                    db.collection(Collections.FORMS).document(form_doc_id).set(
+                        {
+                            'api_access_available': False,
+                            'api_error_reason': api_error_reason,
+                            'updated_at': datetime.now(timezone.utc).isoformat(),
+                        },
+                        merge=True,
+                    )
+                except Exception as persist_err:
+                    print(f"Warning: failed to persist API error reason: {persist_err}")
+
+            # ── Microsoft-specific: Excel file not found ──
+            if provider == PROVIDER_MICROSOFT and api_error_reason == 'excel_not_found':
+                return jsonify({
+                    "error": "Response Excel file not found",
+                    "message": (
+                        "Could not find the response Excel file in your OneDrive. "
+                        "In Microsoft Forms: open the form → Responses tab → 'Open in Excel'. "
+                        "You must have at least one response before you can export. "
+                        "Fill out one dummy response, export to Excel, then sync again."
+                    ),
+                    "code": "microsoft_excel_not_found",
+                }), 404
+
+            # ── Provider-aware 404 ──
             if "404" in err_str or "Requested entity was not found" in err_str or "not found" in err_str.lower():
+                if provider == PROVIDER_GOOGLE:
+                    msg = (
+                        "The form link you used is likely the view/share link. "
+                        "The API needs the edit link: open the form in Google Forms and copy the "
+                        "URL from the address bar (it contains /edit). Re-create the form request with that edit URL."
+                    )
+                elif provider == PROVIDER_JOTFORM:
+                    msg = (
+                        "This form could not be found on Jotform. "
+                        "Double-check the form ID or URL and make sure the form has not been deleted."
+                    )
+                else:
+                    msg = f"This form could not be found via the {label} API."
                 return jsonify({
                     "error": "Form not found",
-                    "message": "The form link you used is likely the view/share link. The API needs the edit link: open the form in Google Forms and copy the URL from the address bar (it contains /edit). Re-create the form request with that edit URL.",
-                    "code": "form_id_edit_link_required"
+                    "message": msg,
+                    "code": "form_not_found"
                 }), 404
-            # 403 from Google = no permission
+
+            # ── Provider-aware 403 ──
             if "403" in err_str or "Forbidden" in err_str:
+                if provider == PROVIDER_GOOGLE:
+                    msg = (
+                        "The connected Google account does not have edit access to this form. "
+                        "Connect the correct Google account or ask the form owner to share editor access."
+                    )
+                elif provider == PROVIDER_JOTFORM:
+                    msg = (
+                        "Your Jotform API key does not have permission to access this form. "
+                        "Make sure the form belongs to the account whose API key you connected."
+                    )
+                elif provider == PROVIDER_MICROSOFT:
+                    msg = (
+                        "The connected Microsoft account does not have access to this form's data. "
+                        "Make sure you signed in with the account that owns the form."
+                    )
+                else:
+                    msg = f"No access to this form via {label}."
                 return jsonify({
                     "error": "No access to this form",
-                    "message": "Reconnect your Google account or ensure the form owner has granted you edit access so we can sync responses.",
-                    "action_required": "reconnect_google"
+                    "message": msg,
+                    "action_required": f"reconnect_{provider}"
                 }), 403
-            # Credential/refresh errors
+
+            # ── Credential / refresh errors ──
             if "invalid_grant" in err_str or "revoked" in err_str or "credentials" in err_str.lower():
-                user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
+                if provider == PROVIDER_GOOGLE:
+                    user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
                 return jsonify({
-                    "error": "Google credentials invalid",
-                    "message": "Please reconnect your Google account",
-                    "action_required": "reconnect_google"
+                    "error": f"{label} credentials invalid",
+                    "message": f"Please reconnect your {label} account",
+                    "action_required": f"reconnect_{provider}"
                 }), 401
             raise
 
-        print(f"Found {len(responses)} total responses from Google")
+        print(f"Found {len(responses)} total responses from {provider}")
         if responses:
             # Log sample response emails for debugging
             sample_emails = [r.get('respondent_email', 'no email') for r in responses[:3]]
@@ -392,6 +596,9 @@ def refresh_form_responses(request_id: str):
                 existing_responses[response_id] = old_response.reference
         
         print(f"Found {len(existing_responses)} existing responses in database")
+        
+        # Snapshot the known IDs BEFORE the processing loop mutates the dict
+        previously_known_ids = set(existing_responses.keys())
         
         # Store new/updated responses with full answer data
         stored_count = 0
@@ -438,7 +645,7 @@ def refresh_form_responses(request_id: str):
         # Check if FormRequest has notifications enabled; default is True
         notifs = True
         if request_data.get("notifications_enabled") == False:
-            notifs == False
+            notifs = False
         
         # Only notify if the FormRequest has notifications enabled
 
@@ -469,7 +676,7 @@ def refresh_form_responses(request_id: str):
                         member_response_count += 1
                     
                     # If this is a new response, send appropriate notification
-                    if response_id and response_id not in existing_responses:
+                    if response_id and response_id not in previously_known_ids:
                         if group_emails and respondent_email.lower() not in group_emails:
                             # Unrecognized email - send yellow warning notification
                             notify_unrecognized_submission(
@@ -497,10 +704,18 @@ def refresh_form_responses(request_id: str):
                             form_reminder_id=request_id
                         )
             
-        # Infer email collection from responses: if any response has respondent_email, it's enabled
-        any_response_has_email = any(
-            (r.get('respondent_email') or '').strip() for r in responses
-        )
+        # Re-check metadata on every successful sync so warnings self-heal if user fixed settings.
+        metadata = {}
+        email_collection_checked = False
+        email_collection_enabled = True
+        try:
+            metadata = provider_get_metadata(provider, credentials, form_id, **provider_ctx)
+            if provider == PROVIDER_GOOGLE:
+                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+            email_collection_checked = True
+        except Exception as metadata_err:
+            # Don't fail refresh if metadata check fails; we still synced responses.
+            print(f"Warning: metadata re-check failed after refresh: {metadata_err}")
         
         # Update form document in forms collection with sync time
         form_doc_id = request_data.get('form_id')
@@ -513,22 +728,26 @@ def refresh_form_responses(request_id: str):
             form_doc = form_ref.get()
             sync_time = datetime.now(timezone.utc).isoformat()
             if form_doc.exists:
+                existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
                 update_data = {
                     'last_synced_at': sync_time,
                     'api_access_available': True,
+                    'api_error_reason': None,
                     'updated_at': sync_time
                 }
-                if any_response_has_email:
-                    try:
-                        existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
-                        if isinstance(existing_settings, dict):
-                            update_data['form_settings'] = {
-                                **existing_settings,
-                                'email_collection_enabled': True,
-                                'email_collection_type': 'VERIFIED'
-                            }
-                    except Exception:
-                        pass  # Don't fail refresh if form_settings update fails
+                if isinstance(existing_settings, dict):
+                    update_data['form_settings'] = {
+                        **existing_settings,
+                        'email_collection_checked': email_collection_checked,
+                    }
+                    if email_collection_checked:
+                        update_data['form_settings'].update({
+                            'email_collection_enabled': email_collection_enabled,
+                            'email_collection_type': metadata.get('email_collection_type', existing_settings.get('email_collection_type', 'UNKNOWN')),
+                        })
+                    # Microsoft: persist whether we found an email column
+                    if provider == PROVIDER_MICROSOFT:
+                        update_data['form_settings']['ms_no_email_column'] = no_email_col
                 try:
                     form_ref.update(update_data)
                     print(f"Updated form document {form_doc_id} with sync time")
@@ -546,8 +765,14 @@ def refresh_form_responses(request_id: str):
                     'updated_at': sync_time,
                     'is_active': True,
                     'api_access_available': True,
+                    'api_error_reason': None,
                     'last_synced_at': sync_time,
-                    'form_settings': request_data.get('form_settings', {})
+                    'form_settings': {
+                        **(request_data.get('form_settings', {}) or {}),
+                        'email_collection_checked': email_collection_checked,
+                        'email_collection_enabled': email_collection_enabled if email_collection_checked else True,
+                        'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN') if email_collection_checked else 'UNKNOWN',
+                    }
                 })
                 print(f"Created form document {form_doc_id} with sync time")
         
@@ -573,7 +798,7 @@ def refresh_form_responses(request_id: str):
 # Create a new form request
 @form_requests_bp.post("")
 def create_form_request():
-    """Create a new form request from a Google Form URL"""
+    """Create a new form request — supports Google Forms, Jotform, and Microsoft Forms."""
     from datetime import datetime
     from models.database import Collections
     
@@ -586,14 +811,6 @@ def create_form_request():
         user = User.get_by_id(user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
-        
-        # Check if user has connected Google account
-        if not user.google_access_token or not user.google_refresh_token:
-            return jsonify({
-                "error": "Google account not connected",
-                "message": "Please connect your Google account first",
-                "action_required": "reconnect_google"
-            }), 403
         
         data = request.get_json()
         if not data or 'form_url' not in data:
@@ -608,7 +825,34 @@ def create_form_request():
         form_url = data['form_url']
         group_id = data['group_id']
         
-        # Parse reminder schedule data
+        # ── Determine provider ──
+        provider = data.get('provider') or detect_provider(form_url)
+        if not provider:
+            return jsonify({"error": "Could not detect form provider from that URL. Please select a provider."}), 400
+        
+        print(f"\n{'='*60}")
+        print(f"[CREATE] Provider: {provider}")
+        print(f"[CREATE] Form URL: {form_url}")
+        print(f"{'='*60}")
+        
+        # ── Verify the user has connected this provider ──
+        try:
+            credentials = get_credentials_for_provider(user, provider)
+            print(f"[CREATE] ✅ Got credentials for provider '{provider}'")
+        except ValueError as cred_err:
+            error_msg = str(cred_err)
+            print(f"[CREATE] ❌ Credential error: {error_msg}")
+            action = (
+                "reconnect_google" if provider == PROVIDER_GOOGLE
+                else f"connect_{provider}"
+            )
+            return jsonify({
+                "error": error_msg,
+                "message": f"Please connect your {provider.title()} account first",
+                "action_required": action,
+            }), 403
+        
+        # ── Parse reminder schedule data ──
         reminder_schedule = data.get('reminder_schedule', 'normal')
         first_reminder_timing = data.get('first_reminder_timing', 'immediate')
         custom_days = data.get('custom_days')  # For custom schedules
@@ -634,7 +878,6 @@ def create_form_request():
                     )
                 except (ValueError, AttributeError):
                     return jsonify({"error": "Invalid scheduled_date format"}), 400
-            
             if data.get('scheduled_time'):
                 try:
                     scheduled_reminder_time = datetime.fromisoformat(
@@ -663,77 +906,106 @@ def create_form_request():
         if group.owner_id != user_id:
             return jsonify({"error": "You don't own this group"}), 403
         
-        print(f"Creating form request for URL: {form_url} with group: {group.name}")
-        
-        # Extract form ID
-        form_id = GoogleFormsService.extract_form_id(form_url)
+        # ── Extract form ID using the provider-specific extractor ──
+        form_id = provider_extract_form_id(provider, form_url)
         if not form_id:
-            return jsonify({"error": "Invalid Google Form URL"}), 400
+            return jsonify({"error": f"Could not extract a valid form ID from that URL for {provider.title()}."}), 400
         
-        print(f"Extracted form ID: {form_id}")
+        print(f"[CREATE] Extracted form ID: {form_id}")
         
-        # Get user's Google credentials
-        try:
-            credentials = GoogleFormsService.get_credentials_from_tokens(
-                access_token=user.google_access_token,
-                refresh_token=user.google_refresh_token,
-                token_expiry=user.token_expiry
-            )
-        except ValueError as cred_error:
-            # Token was revoked or is invalid - clear it from database
-            print(f"Credentials invalid: {cred_error}")
-            print("Clearing invalid Google tokens from user account")
-            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
-            return jsonify({
-                "error": "Google credentials have been revoked",
-                "message": "Please reconnect your Google account",
-                "action_required": "reconnect_google"
-            }), 401
-        
-        # Fetch form metadata (handle errors gracefully)
-        print("Fetching form metadata...")
+        # ── Fetch form metadata (handle errors gracefully) ──
+        print(f"[CREATE] Fetching form metadata via {provider}...")
         metadata = {}
         api_access_available = False
-        email_collection_enabled = False
+        api_error_reason = None
+        email_collection_enabled = True
+        email_collection_checked = False
+        excel_file_id = None  # Microsoft-only: OneDrive workbook ID
+        
+        # Build extra context for providers that need it
+        create_ctx = {}
+        if provider == PROVIDER_MICROSOFT:
+            create_ctx = {"form_title": data.get('title', ''), "excel_file_id": None}
         
         try:
-            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
+            metadata = provider_get_metadata(provider, credentials, form_id, **create_ctx)
             api_access_available = True
+            print(f"[CREATE] ✅ Metadata received: title='{metadata.get('title')}'")
             
-            # Check email collection (optional for now, just warn)
-            print("Checking email collection...")
-            try:
-                email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
-            except Exception as email_check_error:
-                print(f"Warning: Could not check email collection: {email_check_error}")
-                email_collection_enabled = False
+            # Microsoft metadata may include a discovered excel_file_id
+            if provider == PROVIDER_MICROSOFT:
+                excel_file_id = metadata.get("excel_file_id")
+                if excel_file_id:
+                    print(f"[CREATE] ✅ Found Excel file in OneDrive: {excel_file_id[:20]}…")
+                    create_ctx["excel_file_id"] = excel_file_id
+                else:
+                    # No matching Excel file → block creation
+                    user_title = data.get('title', '').strip()
+                    return jsonify({
+                        "error": "No matching Excel file found in OneDrive",
+                        "message": (
+                            f"We searched your OneDrive but could not find an Excel file matching "
+                            f"the title \"{user_title or '(untitled)'}\".\n\n"
+                            "Make sure:\n"
+                            "1. The request title here matches your Microsoft Form title exactly\n"
+                            "2. You filled out at least one response on the form\n"
+                            "3. You clicked 'Open in Excel' on the Responses tab to create the file"
+                        ),
+                        "code": "microsoft_excel_not_found",
+                    }), 400
+            
+            # Check email collection (Google-specific, others always True)
+            if provider == PROVIDER_GOOGLE:
+                try:
+                    email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
+                    email_collection_checked = True
+                    print(f"[CREATE] Email collection enabled: {email_collection_enabled}")
+                except Exception as email_check_error:
+                    print(f"[CREATE] Warning: Could not check email collection: {email_check_error}")
+            else:
+                email_collection_enabled = True
+                email_collection_checked = True
+                print(f"[CREATE] {provider} — email collection check skipped (always True)")
         except Exception as metadata_error:
-            print(f"Warning: Could not fetch form metadata: {metadata_error}")
-            print("This usually means you don't have edit access to the form.")
-            print("The form request will be created, but you'll need to grant edit access to sync responses.")
+            api_error_reason = _classify_forms_api_error(metadata_error)
+            print(f"[CREATE] ❌ Metadata fetch failed: {metadata_error}")
+            print(f"[CREATE]    Classified as: {api_error_reason}")
             api_access_available = False
-            # Use default metadata
             metadata = {
                 'title': data.get('title', f"Form {form_id[:8]}"),
                 'description': '',
-                'email_collection_enabled': False,
-                'email_collection_type': 'UNKNOWN'
+                'email_collection_enabled': True,
+                'email_collection_type': 'UNKNOWN',
             }
         
-        # Get initial response count (only if API access is available)
+        # ── Get initial responses (only if API access is available) ──
         responses = []
         if api_access_available:
-            print("Fetching initial responses...")
+            print(f"[CREATE] Fetching initial responses via {provider}...")
             try:
-                responses = GoogleFormsService.get_form_responses(credentials, form_id)
+                responses = provider_get_responses(provider, credentials, form_id, **create_ctx)
+                print(f"[CREATE] ✅ Got {len(responses)} initial responses")
+
+                # Microsoft: capture excel_file_id discovered during response fetch
+                if provider == PROVIDER_MICROSOFT and responses:
+                    discovered = responses[0].get("_excel_file_id")
+                    if discovered:
+                        excel_file_id = discovered
+                    for r in responses:
+                        r.pop("_excel_file_id", None)
+                for i, r in enumerate(responses[:5]):
+                    print(f"[CREATE]    [{i}] email={r.get('respondent_email','(none)')}, "
+                          f"id={r.get('response_id','')[:20]}")
+                if len(responses) > 5:
+                    print(f"[CREATE]    ... and {len(responses) - 5} more")
             except Exception as responses_error:
-                print(f"Warning: Could not fetch initial responses: {responses_error}")
+                print(f"[CREATE] ❌ Could not fetch initial responses: {responses_error}")
                 responses = []
         else:
-            print("Skipping initial response fetch (API access not available)")
+            print("[CREATE] Skipping initial response fetch (API access not available)")
         
         if not email_collection_enabled and api_access_available:
-            print("WARNING: Email collection may not be enabled on this form")
+            print("[CREATE] ⚠️  WARNING: Email collection may not be enabled on this form")
         
         db = get_db()
         
@@ -743,10 +1015,12 @@ def create_form_request():
         
         # Create or update form document in forms collection
         now = datetime.now(timezone.utc).isoformat()
-        form_doc_id = form_id  # Use google_form_id as the document ID
+        form_doc_id = form_id  # Use extracted form_id as the document ID
         
         form_data = {
-            'google_form_id': form_id,
+            'provider': provider,
+            'form_id': form_id,
+            'google_form_id': form_id if provider == PROVIDER_GOOGLE else None,
             'form_url': form_url,
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'description': metadata.get('description', ''),
@@ -754,44 +1028,44 @@ def create_form_request():
             'created_at': now,
             'updated_at': now,
             'is_active': True,
-            'api_access_available': api_access_available,  # Set based on whether we could fetch metadata
-            # Don't set last_synced_at on creation - it will be set when first synced
+            'api_access_available': api_access_available,
+            'api_error_reason': api_error_reason,
             'form_settings': {
                 'email_collection_enabled': email_collection_enabled,
-                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN')
+                'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN'),
+                'email_collection_checked': email_collection_checked,
             }
         }
         
         form_ref = db.collection(Collections.FORMS).document(form_doc_id)
         form_doc = form_ref.get()
         if form_doc.exists:
-            # Update existing form document (don't update last_synced_at unless syncing)
             form_ref.update({
                 'form_url': form_url,
+                'provider': provider,
                 'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
                 'description': metadata.get('description', ''),
                 'updated_at': now,
                 'api_access_available': api_access_available,
+                'api_error_reason': api_error_reason,
                 'form_settings': form_data['form_settings']
             })
         else:
-            # Create new form document (without last_synced_at - will be set on first sync)
             form_ref.set(form_data)
         
-        # Create form request document with enhanced metadata
-        # IMPORTANT: Store title directly in form_request, not just in forms collection
-        # This allows multiple form requests for the same form to have different titles
+        # Create form request document
         form_request_data = {
-            'form_id': form_doc_id,  # Reference to forms collection
-            'google_form_id': form_id,
+            'provider': provider,
+            'form_id': form_doc_id,
+            'google_form_id': form_id if provider == PROVIDER_GOOGLE else None,
+            'excel_file_id': excel_file_id,  # Microsoft-only: OneDrive workbook ID
             'owner_id': user_id,
             'group_id': group_id,
-            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),  # Store title here!
-            'form_url': form_url,  # Store form_url directly in the request
+            'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
+            'form_url': form_url,
             'created_at': now,
             'status': 'Active',
             'is_active': True,
-            # Reminder schedule configuration
             'due_date': due_date.isoformat(),
             'reminder_schedule': {
                 'schedule_type': reminder_schedule,
@@ -812,37 +1086,35 @@ def create_form_request():
         doc_ref.set(form_request_data)
         
         # Store responses in responses collection
-        for response in responses:
+        for response_item in responses:
             response_data = {
                 'request_id': doc_ref.id,
                 'form_id': form_id,
-                'respondent_email': response.get('respondent_email', ''),
-                'response_id': response.get('response_id', ''),
-                'submitted_at': response.get('submitted_at', ''),
+                'respondent_email': response_item.get('respondent_email', ''),
+                'response_id': response_item.get('response_id', ''),
+                'submitted_at': response_item.get('submitted_at', response_item.get('create_time', '')),
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             db.collection(Collections.RESPONSES).add(response_data)
         
-        print(f"Form request created with ID: {doc_ref.id}")
-        print(f"   Title: {metadata.get('title')}")
-        print(f"   Responses: {len(responses)}")
-        print(f"   Email collection: {email_collection_enabled}")
+        print(f"\n[CREATE] ✅ Form request created: {doc_ref.id}")
+        print(f"[CREATE]    Provider: {provider}")
+        print(f"[CREATE]    Title: {form_request_data['title']}")
+        print(f"[CREATE]    Responses stored: {len(responses)}")
+        print(f"[CREATE]    Email collection: {email_collection_enabled}")
         
-        # ============================================================
-        # SEND INITIAL EMAILS (if first_reminder_timing is 'immediate')
-        # ============================================================
-        # When the user selects "immediate" timing, we send out the
-        # initial notification emails right now, not waiting for scheduler
-        # ============================================================
+        # ── SEND INITIAL EMAILS (if first_reminder_timing is 'immediate') ──
         initial_email_result = None
         if first_reminder_timing == 'immediate':
             print(f"\n📨 First reminder timing is 'immediate' - sending initial emails now...")
             form_title_for_email = data.get('title') or metadata.get('title', 'Untitled Form')
+            # Build a public view URL suitable for the provider
+            public_form_url = get_viewform_url(provider, form_url)
             initial_email_result = send_initial_emails(
                 request_id=doc_ref.id,
                 owner_id=user_id,
                 form_title=form_title_for_email,
-                form_url=form_url,
+                form_url=public_form_url,
                 group_id=group_id
             )
             print(f"   Initial email result: {initial_email_result}")
@@ -862,7 +1134,7 @@ def create_form_request():
         import traceback
         error_msg = str(e)
         traceback.print_exc()
-        print(f"Error creating form request: {error_msg}")
+        print(f"[CREATE] ❌ Error creating form request: {error_msg}")
         return jsonify({
             "error": "Failed to create form request",
             "details": error_msg
@@ -913,6 +1185,13 @@ def update_form_request(request_id):
             
         if 'description' in data:
             updates['description'] = data['description']
+
+        if 'activity' in data:
+            updates['is_active'] = data['activity']
+            if not data['activity']:
+                updates['status'] = "Inactive"
+            else:
+                updates['status'] = "Active"
 
         if 'form_url' in data and data['form_url'] != existing_data.get('form_url'):
             # Note: Changing URL might invalidate existing responses, but we allow the config change
