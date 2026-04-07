@@ -23,7 +23,9 @@ class User:
                  # Microsoft credentials
                  microsoft_access_token: str = None,
                  microsoft_refresh_token: str = None,
-                 microsoft_token_expiry: str = None):
+                 microsoft_token_expiry: str = None,
+                 # Profile photo stored as a base64 data URL
+                 profile_photo_url: str = None):
         self.id = user_id
         self.username = username
         self.email = email
@@ -32,11 +34,12 @@ class User:
         self.google_refresh_token = google_refresh_token
         self.token_expiry = token_expiry
         self.created_at = created_at or datetime.utcnow().isoformat() + 'Z'
-        self.email_custom_message = email_custom_message  # Custom message for reminder emails (max 200 chars)
+        self.email_custom_message = email_custom_message
         self.jotform_api_key = jotform_api_key
         self.microsoft_access_token = microsoft_access_token
         self.microsoft_refresh_token = microsoft_refresh_token
         self.microsoft_token_expiry = microsoft_token_expiry
+        self.profile_photo_url = profile_photo_url
     
     def to_dict(self):
         """Convert user to dictionary for storage"""
@@ -53,6 +56,7 @@ class User:
             'microsoft_access_token': self.microsoft_access_token,
             'microsoft_refresh_token': self.microsoft_refresh_token,
             'microsoft_token_expiry': self.microsoft_token_expiry,
+            'profile_photo_url': self.profile_photo_url,
         }
     
     def to_safe_dict(self):
@@ -65,7 +69,8 @@ class User:
             'has_jotform_auth': bool(self.jotform_api_key),
             'has_microsoft_auth': bool(self.microsoft_access_token),
             'created_at': self.created_at,
-            'email_custom_message': self.email_custom_message
+            'email_custom_message': self.email_custom_message,
+            'profile_photo_url': self.profile_photo_url,
         }
     
     @staticmethod
@@ -208,6 +213,7 @@ class User:
                     microsoft_access_token=user_data.get('microsoft_access_token'),
                     microsoft_refresh_token=user_data.get('microsoft_refresh_token'),
                     microsoft_token_expiry=user_data.get('microsoft_token_expiry'),
+                    profile_photo_url=user_data.get('profile_photo_url'),
                 )
             
             return None
@@ -244,6 +250,7 @@ class User:
                 microsoft_access_token=user_data.get('microsoft_access_token'),
                 microsoft_refresh_token=user_data.get('microsoft_refresh_token'),
                 microsoft_token_expiry=user_data.get('microsoft_token_expiry'),
+                profile_photo_url=user_data.get('profile_photo_url'),
             )
             
         except Exception as e:

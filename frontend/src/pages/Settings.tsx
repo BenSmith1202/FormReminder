@@ -34,6 +34,8 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import LinkIcon from '@mui/icons-material/Link';
+import CameraAltIcon from '@mui/icons-material/CameraAlt';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AnimatedInfoButton from '../components/InfoButton';
 import API_URL from '../config';
 
@@ -133,11 +135,87 @@ export default function Settings() {
   const [disconnectConfirm, setDisconnectConfirm] = useState<string | null>(null);
   const [providerLoading, setProviderLoading] = useState(false);
 
+  // ── Profile photo state ──
+  const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+
   const PROVIDERS = [
     { key: 'google' as const, label: 'Google Forms', logo: '/google-forms-logo.svg', color: '#673ab7' },
     { key: 'jotform' as const, label: 'Jotform', logo: '/jotform-logo.svg', color: '#FF6100' },
     { key: 'microsoft' as const, label: 'Microsoft Forms', logo: '/microsoft-forms-logo.svg', color: '#0078d4' },
   ];
+
+  const handlePhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 256;
+      const scale = Math.min(MAX / img.width, MAX / img.height, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      setPhotoPreview(dataUrl);
+      URL.revokeObjectURL(objectUrl);
+    };
+    img.src = objectUrl;
+  };
+
+  const handlePhotoSave = async () => {
+    if (!photoPreview) return;
+    setPhotoLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/settings/profile-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ photo: photoPreview }),
+      });
+      if (res.ok) {
+        setUser((u: any) => ({ ...u, profile_photo_url: photoPreview }));
+        window.dispatchEvent(new CustomEvent('profile-photo-changed', { detail: { profile_photo_url: photoPreview } }));
+        setSuccess('Profile photo updated!');
+        setPhotoDialogOpen(false);
+        setPhotoPreview(null);
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Failed to save photo');
+      }
+    } catch {
+      setError('Connection failed.');
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const handlePhotoRemove = async () => {
+    setPhotoLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/settings/profile-photo`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        setUser((u: any) => ({ ...u, profile_photo_url: null }));
+        window.dispatchEvent(new CustomEvent('profile-photo-changed', { detail: { profile_photo_url: null } }));
+        setSuccess('Profile photo removed.');
+        setPhotoDialogOpen(false);
+        setPhotoPreview(null);
+      } else {
+        setError('Failed to remove photo');
+      }
+    } catch {
+      setError('Connection failed.');
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
 
   const fetchProviderStatus = useCallback(async () => {
     try {
@@ -467,18 +545,31 @@ export default function Settings() {
             background: 'linear-gradient(135deg, #f0f4ff 0%, #ffffff 60%)',
           }}
         >
-          <Avatar
-            sx={{
-              width: 52,
-              height: 52,
-              bgcolor: 'primary.main',
-              fontSize: '1.2rem',
-              fontWeight: 'bold',
-              flexShrink: 0,
-            }}
+          {/* Clickable avatar — opens the photo upload dialog */}
+          <Box
+            onClick={() => { setPhotoPreview(null); setPhotoDialogOpen(true); }}
+            sx={{ position: 'relative', cursor: 'pointer', flexShrink: 0, '&:hover .avatar-overlay': { opacity: 1 } }}
           >
-            {user?.username?.[0]?.toUpperCase()}
-          </Avatar>
+            <Avatar
+              src={user?.profile_photo_url || undefined}
+              sx={{ width: 56, height: 56, bgcolor: 'primary.main', fontSize: '1.3rem', fontWeight: 'bold' }}
+            >
+              {!user?.profile_photo_url && user?.username?.[0]?.toUpperCase()}
+            </Avatar>
+            {/* Camera overlay on hover */}
+            <Box
+              className="avatar-overlay"
+              sx={{
+                position: 'absolute', inset: 0, borderRadius: '50%',
+                bgcolor: 'rgba(0,0,0,0.45)', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                opacity: 0, transition: 'opacity 0.2s',
+              }}
+            >
+              <CameraAltIcon sx={{ color: '#fff', fontSize: 20 }} />
+            </Box>
+          </Box>
+
           <Box>
             <Typography variant="h6" component="p" fontWeight="bold" lineHeight={1.2}>
               {user?.username}
@@ -488,6 +579,55 @@ export default function Settings() {
             </Typography>
           </Box>
         </Box>
+
+        {/* ── Photo upload dialog ── */}
+        <Dialog open={photoDialogOpen} onClose={() => { setPhotoDialogOpen(false); setPhotoPreview(null); }} maxWidth="xs" fullWidth>
+          <DialogTitle>Profile Photo</DialogTitle>
+          <DialogContent sx={{ textAlign: 'center', pt: 2 }}>
+            {/* Current / preview avatar */}
+            <Avatar
+              src={photoPreview || user?.profile_photo_url || undefined}
+              sx={{ width: 100, height: 100, mx: 'auto', mb: 2, bgcolor: 'primary.main', fontSize: '2rem', fontWeight: 'bold' }}
+            >
+              {!photoPreview && !user?.profile_photo_url && user?.username?.[0]?.toUpperCase()}
+            </Avatar>
+
+            <Button
+              variant="outlined"
+              component="label"
+              startIcon={<CameraAltIcon />}
+              fullWidth
+              sx={{ mb: 1 }}
+            >
+              Choose Photo
+              <input type="file" accept="image/*" hidden onChange={handlePhotoFileChange} />
+            </Button>
+
+            {user?.profile_photo_url && !photoPreview && (
+              <Button
+                variant="text"
+                color="error"
+                startIcon={<DeleteOutlineIcon />}
+                fullWidth
+                disabled={photoLoading}
+                onClick={handlePhotoRemove}
+              >
+                Remove Photo
+              </Button>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => { setPhotoDialogOpen(false); setPhotoPreview(null); }}>Cancel</Button>
+            <Button
+              variant="contained"
+              disabled={!photoPreview || photoLoading}
+              onClick={handlePhotoSave}
+              startIcon={photoLoading ? <CircularProgress size={16} color="inherit" /> : undefined}
+            >
+              {photoLoading ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
 
       {/* ── Global alerts ── */}

@@ -51,6 +51,16 @@ export default function Layout() {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
+  // Keep the nav avatar in sync when the user updates their profile photo from Settings
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { profile_photo_url } = (e as CustomEvent).detail;
+      setUser((u: any) => u ? { ...u, profile_photo_url } : u);
+    };
+    window.addEventListener('profile-photo-changed', handler);
+    return () => window.removeEventListener('profile-photo-changed', handler);
+  }, []);
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -130,16 +140,17 @@ export default function Layout() {
           sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
         >
           <Avatar
+            src={user.profile_photo_url || undefined}
             sx={{
               width: 36,
               height: 36,
               bgcolor: 'primary.main',
-              color: '#ffffff', // Explicitly setting white text
+              color: '#ffffff',
               fontSize: '0.85rem',
               fontWeight: 'bold',
             }}
           >
-            {user.username?.[0]?.toUpperCase()}
+            {!user.profile_photo_url && user.username?.[0]?.toUpperCase()}
           </Avatar>
           <Box>
             <Typography variant="body2" fontWeight="medium">
@@ -250,18 +261,22 @@ export default function Layout() {
           {/* Desktop right side (Profile Refined) */}
           <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1, ml: 1 }}>
             {user && (
-              <Tooltip title={`Signed in as ${user.username}`} placement="bottom">
+              <Tooltip title="Go to Settings" placement="bottom">
                 <Avatar
+                  src={user.profile_photo_url || undefined}
+                  onClick={() => navigate('/settings')}
                   sx={{
                     width: 36,
                     height: 36,
                     bgcolor: 'primary.main',
-                    color: '#ffffff', // Explicitly setting white text
+                    color: '#ffffff',
                     fontSize: '0.85rem',
                     fontWeight: 'bold',
+                    cursor: 'pointer',
+                    '&:hover': { opacity: 0.85 },
                   }}
                 >
-                  {user.username?.[0]?.toUpperCase()}
+                  {!user.profile_photo_url && user.username?.[0]?.toUpperCase()}
                 </Avatar>
               </Tooltip>
             )}

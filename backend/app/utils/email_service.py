@@ -1,6 +1,7 @@
 # Email Service for sending reminders via Emailit HTTP API
 import os
 import json
+import base64
 import hmac
 import hashlib
 import urllib.parse
@@ -57,13 +58,28 @@ class EmailService:
         *,
         owner_id: Optional[str] = None,
         custom_message: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> str:
         """Load and render the email template with Jinja2.
-        Pass owner_id to include the organization opt-out link in the email.
-        Pass custom_message to include the sender's personal message.
+
+        Args:
+            form_title: Title of the form being requested.
+            form_url: Direct link to the form.
+            recipient_email: Recipient's email address.
+            owner_id: Owner ID; enables the opt-out link and tracking pixel.
+            custom_message: Optional personal message from the sender.
+            request_id: Form request ID for per-send open tracking.
+
+        Returns:
+            Rendered HTML string ready to be sent as an email body.
         """
         unsubscribe_url = (
             EmailService.build_unsubscribe_url(owner_id, recipient_email)
+            if owner_id
+            else None
+        )
+        tracking_url = (
+            EmailService.build_tracking_url(owner_id, recipient_email, request_id, form_title)
             if owner_id
             else None
         )
@@ -74,6 +90,7 @@ class EmailService:
             recipient_email=recipient_email,
             unsubscribe_url=unsubscribe_url,
             custom_message=custom_message,
+            tracking_url=tracking_url,
         )
 
     @staticmethod
@@ -96,6 +113,62 @@ class EmailService:
     def verify_unsubscribe_token(owner_id: str, recipient_email: str, token: str) -> bool:
         expected = EmailService._unsubscribe_token(owner_id, recipient_email.strip().lower())
         return hmac.compare_digest(expected, token or "")
+
+    @staticmethod
+    def build_tracking_token(
+        owner_id: str,
+        recipient_email: str,
+        request_id: Optional[str] = None,
+        form_title: Optional[str] = None,
+    ) -> str:
+        """Build a URL-safe base64 token encoding open-tracking context.
+
+        The token is compact: keys are single characters to keep the URL short.
+        It carries no sensitive secrets; recipients can decode it, but that
+        only reveals their own email address and the form name — both of which
+        they already know.
+
+        Args:
+            owner_id: ID of the owner/organization.
+            recipient_email: Normalized recipient email address.
+            request_id: ID of the associated form request.
+            form_title: Human-readable form name.
+
+        Returns:
+            URL-safe base64 string (no padding) suitable for embedding in a URL.
+        """
+        payload = {
+            "o": owner_id,
+            "e": (recipient_email or "").strip().lower(),
+            "r": request_id or "",
+            "f": form_title or "",
+        }
+        return base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ).rstrip(b"=").decode("utf-8")
+
+    @staticmethod
+    def build_tracking_url(
+        owner_id: str,
+        recipient_email: str,
+        request_id: Optional[str] = None,
+        form_title: Optional[str] = None,
+    ) -> str:
+        """Return the full tracking-pixel URL to embed in an email.
+
+        Args:
+            owner_id: ID of the owner/organization.
+            recipient_email: Recipient email address.
+            request_id: ID of the associated form request.
+            form_title: Human-readable form name.
+
+        Returns:
+            Absolute URL pointing to the /api/track/open/<token> endpoint.
+        """
+        token = EmailService.build_tracking_token(
+            owner_id, recipient_email, request_id, form_title
+        )
+        return f"{settings.BACKEND_PUBLIC_URL}/api/track/open/{token}"
 
     @staticmethod
     def is_bounced(recipient_email: str) -> bool:
@@ -164,7 +237,6 @@ class EmailService:
             "to": [to_email],
             "subject": subject,
             "html": html_content,
-            "tracking": {"loads": True, "clicks": True},
         }
 
         try:
@@ -278,6 +350,11 @@ class EmailService:
             if owner_id
             else None
         )
+        tracking_url = (
+            EmailService.build_tracking_url(owner_id, recipient_email, request_id, form_title)
+            if owner_id
+            else None
+        )
         template = EmailService.jinja_env.get_template("reminder_email.html")
         html_content = template.render(
             form_title=form_title,
@@ -285,6 +362,7 @@ class EmailService:
             recipient_email=recipient_email,
             unsubscribe_url=unsubscribe_url,
             custom_message=custom_message,
+            tracking_url=tracking_url,
         )
 
         send_result = EmailService.send_email(recipient_email, subject, html_content)
