@@ -569,6 +569,85 @@ def get_email_open_analytics():
         return jsonify({"error": "Failed to get email open analytics", "details": str(e)}), 500
 
 
+@app.get("/api/analytics/submissions")
+def get_submission_analytics():
+    """Owner-only: Return submission counts per form for the Analytics dashboard.
+
+    Query params:
+        range: '7d' | '30d' | '3m' | '6m' (default) | '1y' | 'all'
+    """
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        from datetime import datetime, timedelta
+
+        db = get_db()
+        now = datetime.utcnow()
+
+        RANGE_MAP = {
+            "7d":  timedelta(days=7),
+            "30d": timedelta(days=30),
+            "3m":  timedelta(days=91),
+            "6m":  timedelta(days=182),
+            "1y":  timedelta(days=365),
+        }
+        range_param = request.args.get("range", "6m")
+        cutoff: datetime | None = (now - RANGE_MAP[range_param]) if range_param in RANGE_MAP else None
+        cutoff_str = cutoff.isoformat() if cutoff else None
+
+        # ── 1. Get all owner form requests (title lookup + baseline 0 counts) ─
+        all_requests = db.collection(Collections.FORM_REQUESTS)\
+            .where("owner_id", "==", user_id)\
+            .stream()
+
+        per_form: dict[str, dict] = {}
+        owner_request_ids: list[str] = []
+        for req_doc in all_requests:
+            data = req_doc.to_dict() or {}
+            req_id = data.get("id") or req_doc.id
+            title = data.get("title") or "Untitled"
+            owner_request_ids.append(req_id)
+            per_form[req_id] = {"request_id": req_id, "form_title": title, "submissions": 0}
+
+        if not owner_request_ids:
+            return jsonify({"per_form": [], "total": 0, "range": range_param}), 200
+
+        # ── 2. Count responses per form (chunked to stay within Firestore 'in' limit) ─
+        for i in range(0, len(owner_request_ids), 30):
+            chunk = owner_request_ids[i:i + 30]
+            responses = db.collection(Collections.RESPONSES)\
+                .where("request_id", "in", chunk)\
+                .stream()
+            for resp_doc in responses:
+                resp = resp_doc.to_dict() or {}
+                if cutoff_str and resp.get("created_at", "") < cutoff_str:
+                    continue
+                req_id = resp.get("request_id", "")
+                if req_id in per_form:
+                    per_form[req_id]["submissions"] += 1
+
+        per_form_list = sorted(
+            per_form.values(),
+            key=lambda x: x["submissions"],
+            reverse=True,
+        )
+        total = sum(f["submissions"] for f in per_form_list)
+
+        print(
+            f"get_submission_analytics: owner_id={user_id!r} range={range_param!r} "
+            f"total={total} forms={len(per_form_list)}"
+        )
+
+        return jsonify({"per_form": per_form_list, "total": total, "range": range_param}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to get submission analytics", "details": str(e)}), 500
+
+
 # ============= END GROUPS ROUTES =============
 
 # ============= ORG MEMBER (SUB-USER) ROUTES =============
