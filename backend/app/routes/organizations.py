@@ -44,6 +44,27 @@ def leave_organization(owner_id: str):
         if not EmailService.verify_unsubscribe_token(owner_id, email, token):
             return jsonify({"error": "Invalid or expired token"}), 403
 
+        # Idempotency: if already opted out, return success without duplicate notifications.
+        # This prevents email security scanners (Barracuda, Safe Links, etc.) from
+        # creating multiple notifications when they prefetch GET links in emails.
+        if OrgMembership.is_opted_out(owner_id, email):
+            print(f"leave_organization: {email} already opted out of {owner_id}, returning early (idempotent)")
+            if request.method == "GET":
+                return (
+                    f"""
+                    <html>
+                      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; padding: 32px;">
+                        <h2>You're opted out</h2>
+                        <p><strong>{email}</strong> has already left this organization and will not receive emails from it.</p>
+                        <p>You may close this tab.</p>
+                      </body>
+                    </html>
+                    """,
+                    200,
+                    {"Content-Type": "text/html; charset=utf-8"},
+                )
+            return jsonify({"success": True, "message": "Already opted out"}), 200
+
         # Mark opted out first (so even partial failures still suppress future emails).
         OrgMembership.mark_left(owner_id, email, reason="opt_out", source="recipient_leave_link")
         try:

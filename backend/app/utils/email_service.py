@@ -44,8 +44,9 @@ class EmailService:
     FROM_EMAIL = "reminderform0@gmail.com"
     FROM_NAME = "FormReminder"
     
-    # Rate limiting: 1 hour between reminders to same person
+    # Rate limiting: max reminders per person per form request per hour
     RATE_LIMIT_HOURS = 1
+    RATE_LIMIT_MAX_PER_HOUR = 20
 
     TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
     jinja_env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
@@ -269,7 +270,7 @@ class EmailService:
 
     @staticmethod
     def can_send_reminder(request_id: str, recipient_email: str) -> bool:
-        """Check if enough time has passed since last reminder (rate limiting)"""
+        """Check if the per-recipient send count is under the hourly limit."""
         try:
             db = get_db()
             cutoff_time = datetime.utcnow() - timedelta(hours=EmailService.RATE_LIMIT_HOURS)
@@ -280,11 +281,12 @@ class EmailService:
                 .where('recipient_email', '==', recipient_email)\
                 .stream()
 
+            recent_count = 0
             for log in all_logs:
                 log_data = log.to_dict()
                 if log_data.get('sent_at', '') >= cutoff_str and log_data.get('success', False):
-                    return False
-            return True
+                    recent_count += 1
+            return recent_count < EmailService.RATE_LIMIT_MAX_PER_HOUR
         except Exception as e:
             print(f"Error checking rate limit: {e}")
             return True
@@ -334,7 +336,7 @@ class EmailService:
         if not skip_rate_limit and not EmailService.can_send_reminder(request_id, recipient_email):
             return {
                 'success': False,
-                'error': f'Rate limit: Already sent to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
+                'error': f'Rate limit: Already sent {EmailService.RATE_LIMIT_MAX_PER_HOUR} to {recipient_email} within last {EmailService.RATE_LIMIT_HOURS} hour(s)'
             }
 
         viewform_url = GoogleFormsService.get_viewform_url(form_url) if form_url else form_url

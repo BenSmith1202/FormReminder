@@ -122,8 +122,6 @@ def login():
         if not data:
             return jsonify({"error": "No data provided"}), 400
         
-        link = auth
-        
         username = data.get('username')
         password = data.get('password')
         
