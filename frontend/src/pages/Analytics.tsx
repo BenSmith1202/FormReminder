@@ -265,8 +265,12 @@ export default function Analytics() {
   }, [events]);
 
   const canResubscribe = (email: string) => {
-    const latest = latestByRecipient[(email ?? '').toLowerCase()];
-    return latest === 'opted_out' || latest === 'left_group';
+    //const latest = latestByRecipient[(email ?? '').toLowerCase()];
+    //return latest === 'opted_out' || latest === 'left_group';
+    if (latestByRecipient[email.toLowerCase()] === 'opted_out') {// nothing
+    };
+    return false; // Temporarily disable re-subscribe action 
+    //TODO: PLEASE REMOVE THIS FEATURE ENTIRELY
   };
 
   const handleResubscribe = async (email: string) => {

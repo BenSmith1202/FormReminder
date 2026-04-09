@@ -204,17 +204,20 @@ def get_form_requests():
                     total_recipients = len(group.members)
                     group_emails = {m['email'].lower() for m in group.members}
             
-            # Calculate response_count - only count responses from group members
-            response_count = 0
+            # Calculate response_count - count unique group-member emails that responded
+            responded_member_emails = set()
             responses_query = db.collection(Collections.RESPONSES)\
                 .where('request_id', '==', req.id)\
                 .stream()
             
             for resp in responses_query:
                 resp_email = resp.to_dict().get('respondent_email', '').lower()
+                if not resp_email:
+                    continue
                 # Only count if email is in group or no group exists
                 if not group_emails or resp_email in group_emails:
-                    response_count += 1
+                    responded_member_emails.add(resp_email)
+            response_count = len(responded_member_emails)
             
             # Calculate warnings from the latest persisted API/form state
             req_provider = request_data.get('provider', 'google')
@@ -358,7 +361,13 @@ def get_form_request_responses(request_id: str):
         
         # Calculate fresh total_recipients from group
         total_recipients = len(group.members) if group else 0
-        response_count = len(responses_list)
+        # Count unique group-member emails that responded (not total response records)
+        responded_member_emails = set()
+        for r in responses_list:
+            e = (r.get('respondent_email') or '').strip().lower()
+            if e:
+                responded_member_emails.add(e)
+        response_count = len(responded_member_emails)
         
         # Calculate warnings from the latest persisted API/form state
         resp_provider = request_data.get('provider', 'google')
@@ -664,16 +673,16 @@ def refresh_form_responses(request_id: str):
                     if group:
                         group_emails = {m['email'].lower() for m in group.members}
                 
-                # Track member response count for completion check
-                member_response_count = 0
+                # Track unique member emails for completion check
+                responded_member_emails = set()
                 
                 for response in responses:
                     response_id = response.get('response_id', '')
                     respondent_email = response.get('respondent_email', '').strip()
                     
-                    # Count member responses for completion check
-                    if not group_emails or respondent_email.lower() in group_emails:
-                        member_response_count += 1
+                    # Track unique member responses for completion check
+                    if respondent_email and (not group_emails or respondent_email.lower() in group_emails):
+                        responded_member_emails.add(respondent_email.lower())
                     
                     # If this is a new response, send appropriate notification
                     if response_id and response_id not in previously_known_ids:
@@ -694,10 +703,10 @@ def refresh_form_responses(request_id: str):
                                 respondent_email=respondent_email or 'Unknown'
                             )
                 
-                # Check if form is now fully completed (only count member responses)
+                # Check if form is now fully completed (unique member responses)
                 if group_id and group_emails:
                     total_recipients = len(group_emails)
-                    if total_recipients > 0 and member_response_count >= total_recipients:
+                    if total_recipients > 0 and len(responded_member_emails) >= total_recipients:
                         notify_form_completed(
                             user_id=owner_id,
                             form_name=form_title,

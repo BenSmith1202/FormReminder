@@ -26,7 +26,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import GroupIcon from '@mui/icons-material/Group';
-import VisibilityIcon from '@mui/icons-material/Visibility';
+//import VisibilityIcon from '@mui/icons-material/Visibility';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import SearchIcon from '@mui/icons-material/Search';
@@ -215,13 +215,7 @@ export default function EditGroup() {
         >
           Back to Group
         </Button>
-        <Button
-          variant="outlined"
-          startIcon={<VisibilityIcon />}
-          onClick={() => navigate(`/groups/${groupId}`)}
-        >
-          View Group
-        </Button>
+        
       </Box>
 
       <Typography variant="h5" component="h1" fontWeight="bold" gutterBottom>

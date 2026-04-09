@@ -27,7 +27,7 @@ EMAILIT_API_URL = "https://api.emailit.com/v2/emails"
 def _get_api_config() -> dict:
     """Read Emailit API config from environment (no hardcoded credentials)."""
     return {
-        "api_key": os.environ.get("EMAILIT_API_KEY"),
+        "api_key": (os.environ.get("EMAILIT_API_KEY") or "").strip(),
         "from_address": os.environ.get("EMAILIT_FROM_ADDRESS"),
         "from_name": os.environ.get("EMAILIT_FROM_NAME", "FormReminder"),
     }

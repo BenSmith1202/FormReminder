@@ -32,7 +32,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import StorageIcon from '@mui/icons-material/Storage';
+//import StorageIcon from '@mui/icons-material/Storage';
 import { TextField, InputAdornment } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
@@ -81,7 +81,7 @@ interface DashboardStats {
 function StatCard({
   title,
   value,
-  subtext,
+  //subtext,
   icon,
   iconBg,
   iconColor,
@@ -112,7 +112,8 @@ function StatCard({
         }
       }}
     >
-      <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
+      {/* Reduced padding to make the card slightly less tall */}
+      <CardContent sx={{ p: { xs: 2, sm: 2.5 }, '&:last-child': { pb: { xs: 2, sm: 2.5 } } }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start">
           {/* Left: title, value, optional subtext */}
           <Box>
@@ -122,11 +123,6 @@ function StatCard({
             <Typography variant="h4" component="p" fontWeight="bold" lineHeight={1}>
               {value}
             </Typography>
-            {subtext && (
-              <Typography variant="body2" color="text.secondary" mt={0.75}>
-                {subtext}
-              </Typography>
-            )}
           </Box>
           {/* Right: colour-coded icon avatar */}
           <Box
@@ -374,14 +370,13 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   // Pre-fetched data injected by dashboardLoader()
-  const { initialHealth, initialRows } = useLoaderData() as {
-    initialHealth: HealthResponse;
+  const { initialRows } = useLoaderData() as {
+    
     initialRows: FormRequestRow[];
   };
 
   // ── State ────────────────────────────────────────────────────────────────
 
-  const [data, setData] = useState<HealthResponse | null>(initialHealth);
   const [rows, setRows] = useState<FormRequestRow[]>(initialRows);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -737,7 +732,7 @@ export default function Dashboard() {
       await loadFormRequests();
       fetch(`${API_URL}/api/health`, { credentials: 'include' })
         .then((res) => res.json())
-        .then((healthData: HealthResponse) => setData(healthData))
+        //.then((healthData: HealthResponse) => setData(healthData))
         .catch(() => {});
     } catch (error) {
       console.error('Refresh error:', error);
@@ -766,8 +761,8 @@ export default function Dashboard() {
 
   // ── Derived booleans for the System Status stat card ──────────────────────
 
-  const isHealthy: boolean = data?.status === 'healthy';
-  const isDbConnected: boolean = data?.database === 'connected';
+  // const isHealthy: boolean = data?.status === 'healthy';
+  // const isDbConnected: boolean = data?.database === 'connected';
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -858,45 +853,38 @@ export default function Dashboard() {
       </Box>
 
       {/* ── Stat Cards ── */}
-      {/* 2-column on mobile, 4-column on desktop */}
+      {/* 2-column on mobile, 3-column on desktop */}
       <Box
         display="grid"
-        gridTemplateColumns={{ xs: '1fr 1fr', md: 'repeat(4, 1fr)' }}
+        gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr', md: 'repeat(3, 1fr)' }}
         gap={2.5}
         mb={4}
       >
         <StatCard
           title="Active Forms"
           value={stats.activeForms}
-          subtext={`${rows.length} total`}
-          icon={<AssignmentIcon fontSize="small" />}
+          //subtext={`Active form requests`}
+          icon={<AssignmentIcon fontSize="large" />}
           iconBg="primary.50"
           iconColor="primary.main"
         />
         <StatCard
           title="Total Responses"
           value={stats.totalResponses}
-          subtext="Across all forms"
-          icon={<AssessmentIcon fontSize="small" />}
+          //subtext="Across all forms"
+          icon={<AssessmentIcon fontSize="large" />}
           iconBg="info.50"
           iconColor="info.main"
         />
         <StatCard
           title="Response Rate"
           value={`${stats.overallRate}%`}
-          subtext="Average completion"
-          icon={<CheckCircleIcon fontSize="small" />}
+          //subtext="Total completion rate"
+          icon={<CheckCircleIcon fontSize="large" />}
           iconBg="success.50"
           iconColor="success.main"
         />
-        <StatCard
-          title="System Status"
-          value={isHealthy ? 'Healthy' : 'Issues'}
-          subtext={isDbConnected ? 'Database connected' : 'Database error'}
-          icon={<StorageIcon fontSize="small" />}
-          iconBg={isHealthy ? 'success.50' : 'warning.50'}
-          iconColor={isHealthy ? 'success.main' : 'warning.main'}
-        />
+        
       </Box>
 
       {/* ── Requests Panel ── */}
