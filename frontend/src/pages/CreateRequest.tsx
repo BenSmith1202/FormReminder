@@ -46,6 +46,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import { isValidDate, sanitizePickerDate } from '../utils/dateValidation';
 
 interface Group {
   id: string;
@@ -193,11 +194,11 @@ export default function CreateRequest() {
         if (draft.requestTitle) setRequestTitle(draft.requestTitle);
         if (draft.formUrl) setFormUrl(draft.formUrl);
         if (draft.groupId) setGroupId(draft.groupId);
-        if (draft.dueDate) setDueDate(new Date(draft.dueDate));
+        if (draft.dueDate) setDueDate(sanitizePickerDate(new Date(draft.dueDate as string)));
         if (draft.reminderSchedule) setReminderSchedule(draft.reminderSchedule);
         if (draft.firstReminderTiming) setFirstReminderTiming(draft.firstReminderTiming);
-        if (draft.scheduledDate) setScheduledDate(new Date(draft.scheduledDate));
-        if (draft.scheduledTime) setScheduledTime(new Date(draft.scheduledTime));
+        if (draft.scheduledDate) setScheduledDate(sanitizePickerDate(new Date(draft.scheduledDate as string)));
+        if (draft.scheduledTime) setScheduledTime(sanitizePickerDate(new Date(draft.scheduledTime as string)));
         if (draft.customDays) setCustomDays(draft.customDays);
       }
     } catch {
@@ -230,11 +231,11 @@ export default function CreateRequest() {
       requestTitle,
       formUrl,
       groupId,
-      dueDate: dueDate ? dueDate.toISOString() : null,
+      dueDate: isValidDate(dueDate) ? dueDate.toISOString() : null,
       reminderSchedule,
       firstReminderTiming,
-      scheduledDate: scheduledDate ? scheduledDate.toISOString() : null,
-      scheduledTime: scheduledTime ? scheduledTime.toISOString() : null,
+      scheduledDate: isValidDate(scheduledDate) ? scheduledDate.toISOString() : null,
+      scheduledTime: isValidDate(scheduledTime) ? scheduledTime.toISOString() : null,
       customDays,
     };
     sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
@@ -377,9 +378,15 @@ export default function CreateRequest() {
     // Initial Validation
     if (!formUrl) { setError('Please enter a form URL'); return; }
     if (!groupId) { setError('Please select a group'); return; }
-    if (!dueDate) { setError('Please select a due date'); return; }
-    if (firstReminderTiming === 'scheduled' && (!scheduledDate || !scheduledTime)) {
-      setError('Please select both a date and time for the scheduled reminder');
+    if (!isValidDate(dueDate)) {
+      setError('Please select a valid due date');
+      return;
+    }
+    if (
+      firstReminderTiming === 'scheduled' &&
+      (!isValidDate(scheduledDate) || !isValidDate(scheduledTime))
+    ) {
+      setError('Please select a valid date and time for the scheduled reminder');
       return;
     }
 
@@ -672,8 +679,8 @@ export default function CreateRequest() {
                 Due Date <Typography component="span" color="error">*</Typography>
               </Typography>
               <DatePicker
-                value={dueDate}
-                onChange={(v) => setDueDate(v)}
+                value={isValidDate(dueDate) ? dueDate : null}
+                onChange={(v) => setDueDate(sanitizePickerDate(v))}
                 slotProps={{
                   textField: { size: 'small', fullWidth: true, required: true },
                 }}
@@ -786,16 +793,16 @@ export default function CreateRequest() {
                 <Box display="flex" gap={2} mt={2} flexWrap="wrap" ml={{ xs: 0, sm: 3.5 }}>
                   <DatePicker
                     label="Start Date"
-                    value={scheduledDate}
-                    onChange={(v) => setScheduledDate(v)}
+                    value={isValidDate(scheduledDate) ? scheduledDate : null}
+                    onChange={(v) => setScheduledDate(sanitizePickerDate(v))}
                     slotProps={{
                       textField: { size: 'small', sx: { flex: 1, minWidth: 160 } },
                     }}
                   />
                   <TimePicker
                     label="Start Time"
-                    value={scheduledTime}
-                    onChange={(v) => setScheduledTime(v)}
+                    value={isValidDate(scheduledTime) ? scheduledTime : null}
+                    onChange={(v) => setScheduledTime(sanitizePickerDate(v))}
                     slotProps={{
                       textField: { size: 'small', sx: { flex: 1, minWidth: 160 } },
                     }}
