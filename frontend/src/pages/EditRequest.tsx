@@ -39,6 +39,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
+import { isValidDate, sanitizePickerDate } from '../utils/dateValidation';
 import AnimatedInfoButton from '../components/InfoButton';
 
 interface Group {
@@ -103,8 +104,7 @@ export default function EditRequest() {
       setProvider(request.provider || 'google');
 
       if (request.due_date) {
-        const parsedDate = new Date(request.due_date);
-        if (!isNaN(parsedDate.getTime())) setDueDate(parsedDate);
+        setDueDate(sanitizePickerDate(new Date(request.due_date)));
       }
 
       if (request.reminder_schedule) {
@@ -122,10 +122,16 @@ export default function EditRequest() {
         if (typeof request.first_reminder_timing === 'object') {
           timingType = request.first_reminder_timing.timing_type || 'immediate';
           if (timingType === 'scheduled') {
-            if (request.first_reminder_timing.scheduled_date)
-              setScheduledDate(new Date(request.first_reminder_timing.scheduled_date));
-            if (request.first_reminder_timing.scheduled_time)
-              setScheduledTime(new Date(request.first_reminder_timing.scheduled_time));
+            if (request.first_reminder_timing.scheduled_date) {
+              setScheduledDate(
+                sanitizePickerDate(new Date(request.first_reminder_timing.scheduled_date))
+              );
+            }
+            if (request.first_reminder_timing.scheduled_time) {
+              setScheduledTime(
+                sanitizePickerDate(new Date(request.first_reminder_timing.scheduled_time))
+              );
+            }
           }
         } else {
           timingType = request.first_reminder_timing;
@@ -143,8 +149,8 @@ export default function EditRequest() {
     setError(null);
     setSaving(true);
     try {
-      if (!formUrl || !groupId || !dueDate)
-        throw new Error('Please fill in all required fields');
+      if (!formUrl || !groupId || !isValidDate(dueDate))
+        throw new Error('Please fill in all required fields, including a valid due date');
 
       const now = new Date();
       // If user is trying to set it to Active, but the due date has passed
@@ -169,8 +175,9 @@ export default function EditRequest() {
       }
 
       if (firstReminderTiming === 'scheduled') {
-        if (!scheduledDate || !scheduledTime)
-          throw new Error('Please select a date and time for the scheduled reminder');
+        if (!isValidDate(scheduledDate) || !isValidDate(scheduledTime)) {
+          throw new Error('Please select a valid date and time for the scheduled reminder');
+        }
         const combined = new Date(scheduledDate);
         combined.setHours(scheduledTime.getHours());
         combined.setMinutes(scheduledTime.getMinutes());
@@ -409,8 +416,8 @@ export default function EditRequest() {
               Due Date
             </Typography>
             <DatePicker
-              value={dueDate}
-              onChange={(v) => setDueDate(v)}
+              value={isValidDate(dueDate) ? dueDate : null}
+              onChange={(v) => setDueDate(sanitizePickerDate(v))}
               slotProps={{ textField: { size: 'small', fullWidth: true } }}
             />
           </Box>
@@ -471,14 +478,14 @@ export default function EditRequest() {
               <Box display="flex" gap={2} mt={2} flexWrap="wrap">
                 <DatePicker
                   label="Start Date"
-                  value={scheduledDate}
-                  onChange={(v) => setScheduledDate(v)}
+                  value={isValidDate(scheduledDate) ? scheduledDate : null}
+                  onChange={(v) => setScheduledDate(sanitizePickerDate(v))}
                   slotProps={{ textField: { size: 'small', fullWidth: true, sx: { flex: 1, minWidth: 160 } } }}
                 />
                 <TimePicker
                   label="Start Time"
-                  value={scheduledTime}
-                  onChange={(v) => setScheduledTime(v)}
+                  value={isValidDate(scheduledTime) ? scheduledTime : null}
+                  onChange={(v) => setScheduledTime(sanitizePickerDate(v))}
                   slotProps={{ textField: { size: 'small', fullWidth: true, sx: { flex: 1, minWidth: 160 } } }}
                 />
               </Box>
