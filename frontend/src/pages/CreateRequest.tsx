@@ -47,6 +47,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 import { isValidDate, sanitizePickerDate } from '../utils/dateValidation';
 
 interface Group {
@@ -384,6 +385,12 @@ export default function CreateRequest() {
       setError('Please select a valid due date');
       return;
     }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (dueDate < today) {
+      setError('Due date cannot be in the past');
+      return;
+    }
     if (
       firstReminderTiming === 'scheduled' &&
       (!isValidDate(scheduledDate) || !isValidDate(scheduledTime))
@@ -472,40 +479,33 @@ export default function CreateRequest() {
           </Typography>
         </Box>
 
-        {/* Dynamic Error Banner (Handles Google OAuth Prompts) */}
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 3 }}
-            onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
-            action={
-              needsGoogleReconnect ? (
-                <Button
-                  color="inherit"
-                  size="small"
-                  onClick={async () => {
-                    try {
-                      // Trigger Google OAuth flow to refresh tokens
-                      const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
-                      const data = await res.json();
-                      if (data.authorization_url) {
-                        window.location.href = data.authorization_url;
-                      } else {
-                        setError(data.error || 'Could not start Google connect');
-                      }
-                    } catch {
-                      setError('Could not start Google connect');
+        <ErrorSnackbar
+          error={error}
+          onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    } else {
+                      setError(data.error || 'Could not start Google connect');
                     }
-                  }}
-                >
-                  Connect Google
-                </Button>
-              ) : undefined
-            }
-          >
-            {error}
-          </Alert>
-        )}
+                  } catch {
+                    setError('Could not start Google connect');
+                  }
+                }}
+              >
+                Connect Google
+              </Button>
+            ) : undefined
+          }
+        />
 
         <Box component="form" onSubmit={handleSubmit} display="flex" flexDirection="column" gap={3}>
 
@@ -686,6 +686,7 @@ export default function CreateRequest() {
               <DatePicker
                 value={isValidDate(dueDate) ? dueDate : null}
                 onChange={(v) => setDueDate(sanitizePickerDate(v))}
+                minDate={new Date()}
                 slotProps={{
                   textField: { size: 'small', fullWidth: true, required: true },
                 }}

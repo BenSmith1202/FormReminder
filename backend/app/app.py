@@ -1535,9 +1535,11 @@ def add_group_members(group_id: str):
             return jsonify({"error": "Unauthorized"}), 403
         
         # Parse emails from text
-        emails = Group.parse_emails(emails_text)
+        emails, invalid_count = Group.parse_emails(emails_text)
         
         if not emails:
+            if invalid_count > 0:
+                return jsonify({"error": f"No valid emails found. {invalid_count} entry(s) had improper formatting."}), 400
             return jsonify({"error": "No valid emails found"}), 400
 
         # Respect org-level opt-out (always scoped to the org owner).
@@ -2218,33 +2220,15 @@ def get_email_open_analytics():
 
 @app.get("/api/analytics/submissions")
 def get_submission_analytics():
-    """Owner-only: Return submission counts per form for the Analytics dashboard.
-
-    Query params:
-        range: '7d' | '30d' | '3m' | '6m' (default) | '1y' | 'all'
-    """
+    """Owner-only: Return submission counts per active form for the Analytics dashboard."""
     try:
         user_id = session.get("user_id")
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
 
-        from datetime import datetime, timedelta
-
         db = get_db()
-        now = datetime.utcnow()
 
-        RANGE_MAP = {
-            "7d":  timedelta(days=7),
-            "30d": timedelta(days=30),
-            "3m":  timedelta(days=91),
-            "6m":  timedelta(days=182),
-            "1y":  timedelta(days=365),
-        }
-        range_param = request.args.get("range", "6m")
-        cutoff: datetime | None = (now - RANGE_MAP[range_param]) if range_param in RANGE_MAP else None
-        cutoff_str = cutoff.isoformat() if cutoff else None
-
-        # ── 1. Get all owner form requests (title lookup + baseline 0 counts) ─
+        # ── 1. Get all owner form requests that are active ─
         all_requests = db.collection(Collections.FORM_REQUESTS)\
             .where(filter=FieldFilter("owner_id", "==", user_id))\
             .stream()
@@ -2254,6 +2238,8 @@ def get_submission_analytics():
         group_ids_to_lookup: dict[str, str] = {}  # request_id -> group_id
         for req_doc in all_requests:
             data = req_doc.to_dict() or {}
+            if not data.get("is_active", True):
+                continue
             req_id = data.get("id") or req_doc.id
             title = data.get("title") or "Untitled"
             owner_request_ids.append(req_id)
@@ -2263,7 +2249,7 @@ def get_submission_analytics():
                 group_ids_to_lookup[req_id] = gid
 
         if not owner_request_ids:
-            return jsonify({"per_form": [], "total": 0, "range": range_param}), 200
+            return jsonify({"per_form": [], "total": 0}), 200
 
         # ── 1b. Look up group member counts for each form request ─────────
         unique_group_ids = set(group_ids_to_lookup.values())
@@ -2287,8 +2273,6 @@ def get_submission_analytics():
                 .stream()
             for resp_doc in responses:
                 resp = resp_doc.to_dict() or {}
-                if cutoff_str and resp.get("created_at", "") < cutoff_str:
-                    continue
                 req_id = resp.get("request_id", "")
                 if req_id in per_form:
                     per_form[req_id]["submissions"] += 1
@@ -2301,11 +2285,11 @@ def get_submission_analytics():
         total = sum(f["submissions"] for f in per_form_list)
 
         print(
-            f"get_submission_analytics: owner_id={user_id!r} range={range_param!r} "
+            f"get_submission_analytics: owner_id={user_id!r} "
             f"total={total} forms={len(per_form_list)}"
         )
 
-        return jsonify({"per_form": per_form_list, "total": total, "range": range_param}), 200
+        return jsonify({"per_form": per_form_list, "total": total}), 200
 
     except Exception as e:
         import traceback

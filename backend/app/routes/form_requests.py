@@ -328,6 +328,9 @@ def get_form_request_responses(request_id: str):
         
         responses_list = []
         non_member_responses = []
+        dismissed_emails = set(
+            e.lower() for e in request_data.get('dismissed_response_emails', [])
+        )
         
         # Normalize all response emails for matching
         for response in responses:
@@ -341,7 +344,8 @@ def get_form_request_responses(request_id: str):
             }
             
             if group_emails and response_email not in group_emails:
-                non_member_responses.append(response_obj)
+                if response_email not in dismissed_emails:
+                    non_member_responses.append(response_obj)
             else:
                 responses_list.append(response_obj)
         
@@ -1550,6 +1554,44 @@ def add_email_to_group(request_id: str):
             "error": "Failed to add email to group",
             "details": error_msg
         }), 500
+
+
+# Dismiss an unrecognized response email
+@form_requests_bp.post("/<request_id>/dismiss-response")
+def dismiss_response(request_id: str):
+    """Dismiss an unrecognized response so it no longer shows in the UI"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+
+        db = get_db()
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+
+        request_data = request_doc.to_dict()
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        dismissed = request_data.get('dismissed_response_emails', [])
+        if email not in dismissed:
+            dismissed.append(email)
+            request_ref.update({'dismissed_response_emails': dismissed})
+
+        return jsonify({"success": True, "message": f"Dismissed {email}"}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to dismiss response", "details": str(e)}), 500
 
 
 # ============================================================

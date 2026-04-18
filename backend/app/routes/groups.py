@@ -150,9 +150,11 @@ def add_group_members(group_id: str):
             return jsonify({"error": "Unauthorized"}), 403
         
         # Parse emails from text
-        emails = Group.parse_emails(emails_text)
+        emails, invalid_count = Group.parse_emails(emails_text)
         
         if not emails:
+            if invalid_count > 0:
+                return jsonify({"error": f"No valid emails found. {invalid_count} entry(s) had improper formatting."}), 400
             return jsonify({"error": "No valid emails found"}), 400
 
         # Respect org-level opt-out: owners cannot re-add opted-out recipients by accident.
@@ -181,6 +183,8 @@ def add_group_members(group_id: str):
         
         # Build response message
         message = f"Added {added_count} new members"
+        if invalid_count > 0:
+            message += f". Skipped {invalid_count} email(s) with improper formatting"
         if opted_out:
             opted_out_list = ', '.join(opted_out)
             message += f". Skipped {len(opted_out)} opted-out email(s): {opted_out_list} (they can only rejoin via invite link)"
@@ -190,7 +194,8 @@ def add_group_members(group_id: str):
             "message": message,
             "added_count": added_count,
             "total_members": len(group.members),
-            "skipped": len(emails) - added_count,  # Duplicates + opted-out
+            "skipped": len(emails) - added_count + len(opted_out),  # Duplicates + opted-out
+            "skipped_invalid": invalid_count,
             "skipped_opted_out": opted_out
         }), 200
         

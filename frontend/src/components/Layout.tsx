@@ -15,7 +15,8 @@ import {
   Avatar,
   Tooltip,
 } from '@mui/material';
-import { useNavigate, Outlet, useLocation } from 'react-router-dom';
+import { useNavigate, Outlet, useLocation, useNavigation } from 'react-router-dom';
+import LinearProgress from '@mui/material/LinearProgress';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
 import EmailIcon from '@mui/icons-material/Email';
 import GroupIcon from '@mui/icons-material/Group';
@@ -39,6 +40,8 @@ const NAV_ITEMS = [
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const navigation = useNavigation();
+  const isNavigating = navigation.state === 'loading';
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -91,6 +94,10 @@ export default function Layout() {
   };
 
   const handleNavClick = (path: string) => {
+    if (isNavigating || location.pathname === path) {
+      setDrawerOpen(false);
+      return;
+    }
     navigate(path);
     setDrawerOpen(false);
   };
@@ -224,7 +231,7 @@ export default function Layout() {
             display="flex"
             alignItems="center"
             gap={1}
-            onClick={() => navigate('/')}
+            onClick={() => handleNavClick('/')}
             sx={{ cursor: 'pointer', flexGrow: 1 }}
           >
             <CheckBoxIcon color="primary" sx={{ fontSize: 22 }} />
@@ -242,7 +249,8 @@ export default function Layout() {
                   key={item.path}
                   color="inherit"
                   startIcon={item.icon}
-                  onClick={() => navigate(item.path)}
+                  onClick={() => handleNavClick(item.path)}
+                  disabled={isNavigating}
                   sx={{
                     borderRadius: 2,
                     px: 1.5,
@@ -318,6 +326,9 @@ export default function Layout() {
 
       {/* Page Content */}
       <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default' }}>
+        {isNavigating && (
+          <LinearProgress sx={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1201 }} />
+        )}
         <div key={location.pathname} className="page-fade-in">
           <Outlet />
         </div>

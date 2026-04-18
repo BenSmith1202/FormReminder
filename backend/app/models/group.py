@@ -176,13 +176,20 @@ class Group:
         return re.match(pattern, email) is not None
     
     @staticmethod
-    def parse_emails(text: str) -> List[str]:
-        """Parse emails from text (separated by any whitespace)"""
-        # Split by any whitespace (spaces, newlines, tabs, etc.)
-        potential_emails = re.split(r'\s+', text.strip())
+    def parse_emails(text: str) -> tuple:
+        """Parse emails from text (separated by whitespace, commas, or semicolons).
+        Returns (valid_emails, invalid_count) tuple."""
+        # Split by whitespace, commas, or semicolons
+        potential_emails = [e.strip() for e in re.split(r'[\s,;]+', text.strip()) if e.strip()]
         
-        # Filter to only valid email formats
-        valid_emails = [email for email in potential_emails if Group.validate_email(email)]
+        # Separate valid and invalid
+        valid_emails = []
+        invalid_count = 0
+        for email in potential_emails:
+            if Group.validate_email(email):
+                valid_emails.append(email)
+            else:
+                invalid_count += 1
         
         # Remove duplicates while preserving order
         seen = set()
@@ -193,7 +200,7 @@ class Group:
                 seen.add(email_lower)
                 unique_emails.append(email)
         
-        return unique_emails
+        return unique_emails, invalid_count
     
     @staticmethod
     def delete_group(group_id: str):

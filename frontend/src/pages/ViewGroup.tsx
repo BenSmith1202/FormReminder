@@ -197,29 +197,39 @@ export default function ViewGroup() {
           </Box>
 
           {/* Invite Link — right-aligned on desktop */}
-          <Box display="flex" alignItems="center" gap={1} sx={{ ml: { xs: 0, sm: 'auto' } }}>
-            <LinkIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-            <Typography
-              variant="body2"
-              sx={{
-                fontFamily: 'monospace',
-                color: 'text.secondary',
-                maxWidth: { xs: 160, sm: 280 },
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontSize: '0.75rem',
+          <Box display="flex" alignItems="center" gap={1.5} sx={{ ml: { xs: 0, sm: 'auto' } }}>
+            <Box sx={{
+              width: 32, height: 32, borderRadius: 1.5,
+              bgcolor: 'primary.50', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <LinkIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+            </Box>
+            <AnimatedInfoButton title="Invite Link">
+              <p>Share this link with anyone you'd like to add to the group.</p>
+              <p>When they click it, they'll be prompted to join the group automatically — no manual entry needed on your part.</p>
+              <p>You can also copy the link and send it via email, chat, or any messaging platform.</p>
+            </AnimatedInfoButton>
+            <TextField
+              size="small"
+              value={`${window.location.origin}/groups/join/${group.invite_token}`}
+              InputProps={{
+                readOnly: true,
+                sx: { fontFamily: 'monospace', fontSize: '0.85rem' },
               }}
-            >
-              {`${window.location.origin}/groups/join/${group.invite_token}`}
-            </Typography>
+              sx={{ minWidth: { xs: 180, sm: 300 } }}
+            />
             <Tooltip title={copySuccess ? 'Copied!' : 'Copy invite link'}>
               <IconButton
-                size="small"
                 onClick={handleCopyLink}
-                color={copySuccess ? 'success' : 'default'}
+                color={copySuccess ? 'success' : 'primary'}
+                sx={{
+                  border: '1px solid',
+                  borderColor: copySuccess ? 'success.main' : 'primary.main',
+                  borderRadius: 2,
+                  '&:hover': { bgcolor: copySuccess ? 'success.50' : 'primary.50' },
+                }}
               >
-                <ContentCopyIcon sx={{ fontSize: 16 }} />
+                <ContentCopyIcon sx={{ fontSize: 18 }} />
               </IconButton>
             </Tooltip>
           </Box>

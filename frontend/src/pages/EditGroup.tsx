@@ -34,6 +34,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 interface Member {
   email: string;
@@ -103,6 +104,10 @@ export default function EditGroup() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to update group details');
       setGroup((prev) => (prev ? { ...prev, name, description } : null));
+      // Also add any pending emails before showing success
+      if (newEmails.trim()) {
+        await handleAddMembers();
+      }
       setSuccessMsg('Group details updated successfully!');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
@@ -125,10 +130,10 @@ export default function EditGroup() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to add members');
-      alert(
-        `Added ${data.added_count} member${data.added_count !== 1 ? 's' : ''}!` +
-          (data.skipped > 0 ? ` (${data.skipped} duplicate${data.skipped !== 1 ? 's' : ''} skipped)` : '')
-      );
+      let msg = `Added ${data.added_count} member${data.added_count !== 1 ? 's' : ''}!`;
+      if (data.skipped_invalid > 0) msg += ` Skipped ${data.skipped_invalid} email${data.skipped_invalid !== 1 ? 's' : ''} with improper formatting.`;
+      if (data.skipped > 0) msg += ` (${data.skipped} duplicate${data.skipped !== 1 ? 's' : ''} skipped)`;
+      alert(msg);
       setNewEmails('');
       loadGroup();
     } catch (err: any) {
@@ -228,9 +233,7 @@ export default function EditGroup() {
       </Typography>
 
       {/* ── Alerts ── */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>
-      )}
+      <ErrorSnackbar error={error} onClose={() => setError(null)} />
       {successMsg && (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccessMsg(null)}>{successMsg}</Alert>
       )}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
 import {
-  Typography, Button, Box, CircularProgress, Alert, Card, CardContent,
+  Typography, Button, Box, CircularProgress, Card, CardContent,
   CardActionArea, IconButton, Tooltip, Divider, Container,
   Dialog, DialogContent, DialogActions,
 } from '@mui/material';
@@ -14,6 +14,7 @@ import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 interface Group {
   id: string;
@@ -85,11 +86,7 @@ export default function Groups() {
         </Typography>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
+      <ErrorSnackbar error={error} onClose={() => setError(null)} />
 
       {/* Grid with ghost card first */}
       <Box

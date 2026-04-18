@@ -5,6 +5,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 export default function JoinGroup() {
   const { token } = useParams<{ token: string }>();
@@ -117,11 +118,7 @@ export default function JoinGroup() {
                             </AnimatedInfoButton>
         </Typography>
         
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+        <ErrorSnackbar error={error} onClose={() => setError(null)} />
 
         {groupInfo && (
           <>

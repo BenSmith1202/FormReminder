@@ -160,8 +160,10 @@ export default function NotificationBell({ pollInterval = 30000 }: NotificationB
 
     handleClose();
 
-    // Navigate to the form reminder if one is linked
-    if (notification.form_reminder_id) {
+    // Navigate based on notification type
+    if (notification.type === NotificationType.MEMBER_OPTED_OUT) {
+      navigate('/analytics');
+    } else if (notification.form_reminder_id) {
       navigate(`/requests/${notification.form_reminder_id}`);
     }
   };

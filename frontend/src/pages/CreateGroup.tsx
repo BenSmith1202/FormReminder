@@ -6,12 +6,17 @@
  */
 
 import { useState } from 'react';
-import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, DialogContent, DialogActions, IconButton } from '@mui/material';
+import { Paper, Typography, TextField, Button, Box, Alert, Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Divider, Chip } from '@mui/material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import LinkIcon from '@mui/icons-material/Link';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import GroupIcon from '@mui/icons-material/Group';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 export default function CreateGroup() {
   const navigate = useNavigate();
@@ -103,7 +108,10 @@ export default function CreateGroup() {
       }
       
       console.log('Members added:', data);
-      alert(`Added ${data.added_count} members!${data.skipped > 0 ? ` (${data.skipped} duplicates skipped)` : ''}`);
+      let msg = `Added ${data.added_count} member${data.added_count !== 1 ? 's' : ''}!`;
+      if (data.skipped_invalid > 0) msg += ` Skipped ${data.skipped_invalid} email${data.skipped_invalid !== 1 ? 's' : ''} with improper formatting.`;
+      if (data.skipped > 0) msg += ` (${data.skipped} duplicate${data.skipped !== 1 ? 's' : ''} skipped)`;
+      alert(msg);
       setEmails('');
       
       // Update member count in the dialog UI
@@ -137,7 +145,11 @@ export default function CreateGroup() {
    * with the new group ID so it can be auto-selected in the dropdown.
    * Otherwise, go to the groups dashboard.
    */
-  const handleClose = () => {
+  const handleClose = async () => {
+    // Add any pending emails before closing
+    if (emails.trim() && createdGroup) {
+      await handleAddMembers();
+    }
     setShowSuccess(false);
     if (returnTo === 'create-request' && createdGroup?.id) {
       navigate(`/requests/new?newGroupId=${createdGroup.id}`);
@@ -160,11 +172,7 @@ export default function CreateGroup() {
           Groups help you organize recipients for your form requests
         </Typography>
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+        <ErrorSnackbar error={error} onClose={() => setError(null)} />
 
         <form onSubmit={handleSubmit}>
           
@@ -222,53 +230,94 @@ export default function CreateGroup() {
       </Paper>
 
       {/* Success Dialog */}
-      <Dialog open={showSuccess} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitle>Group Created Successfully!</DialogTitle>
-        <DialogContent>
-          <Typography variant="h6" component="p" gutterBottom>
-            {createdGroup?.name}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            {createdGroup?.member_count || 0} members
-          </Typography>
+      <Dialog open={showSuccess} onClose={handleClose} maxWidth="sm" fullWidth
+        PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden' } }}
+      >
+        {/* Header */}
+        <Box sx={{ px: { xs: 3, sm: 4 }, pt: { xs: 3, sm: 4 }, pb: 0 }}>
+          <Box display="flex" alignItems="center" gap={2} mb={2}>
+            <Box sx={{
+              width: 48, height: 48, borderRadius: 2,
+              bgcolor: 'success.50', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <CheckCircleIcon sx={{ color: 'success.main', fontSize: 26 }} />
+            </Box>
+            <Box>
+              <Typography variant="h6" fontWeight="bold">Group Created!</Typography>
+              <Typography variant="body2" color="text.secondary">
+                <strong>{createdGroup?.name}</strong> &middot; {createdGroup?.member_count || 0} members
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
 
+        <DialogContent sx={{ px: { xs: 3, sm: 4 }, pt: 2 }}>
+          {/* Invite Link Section */}
           <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Invite Link:
-            </Typography>
+            <Box display="flex" alignItems="center" gap={1.5} mb={1.5}>
+              <Box sx={{
+                width: 36, height: 36, borderRadius: 1.5,
+                bgcolor: 'primary.50', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <LinkIcon sx={{ color: 'primary.main', fontSize: 18 }} />
+              </Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Invite Link
+              </Typography>
+              <AnimatedInfoButton title="Invite Link">
+                <p>Share this link with the people you'd like to add to the group.</p>
+                <p>When they click the link, they'll be prompted to join the group automatically — no manual entry needed.</p>
+                <p>This is the easiest way to add people who can sign up on their own.</p>
+              </AnimatedInfoButton>
+            </Box>
+            <Divider sx={{ mb: 2 }} />
             <Box display="flex" alignItems="center" gap={1}>
               <TextField
-                fullWidth
-                size="small"
+                fullWidth size="small"
                 value={`${window.location.origin}/groups/join/${createdGroup?.invite_token}`}
-                InputProps={{
-                  readOnly: true,
-                }}
+                InputProps={{ readOnly: true, sx: { fontFamily: 'monospace', fontSize: '0.85rem' } }}
               />
-              <IconButton onClick={handleCopyLink} color="primary">
-                <ContentCopyIcon />
+              <IconButton onClick={handleCopyLink} color="primary" sx={{
+                border: '1px solid', borderColor: 'primary.main', borderRadius: 2,
+                '&:hover': { bgcolor: 'primary.50' },
+              }}>
+                <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Box>
-            <Typography variant="caption" color="text.secondary">
-              Share this link with people to invite them to the group
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+              Anyone with this link can join the group.
             </Typography>
           </Box>
 
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Or add members manually:
-            </Typography>
+          {/* Manual Members Section */}
+          <Box>
+            <Box display="flex" alignItems="center" gap={1.5} mb={1.5}>
+              <Box sx={{
+                width: 36, height: 36, borderRadius: 1.5,
+                bgcolor: 'success.50', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <PersonAddIcon sx={{ color: 'success.main', fontSize: 18 }} />
+              </Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Add Members Manually
+              </Typography>
+              <AnimatedInfoButton title="Add Members Manually">
+                <p>Use this section to directly add people by their email addresses.</p>
+                <p>This is useful when you already know exactly who should be in the group and want to add them right away without sending a link.</p>
+                <p>Separate multiple emails with spaces or new lines.</p>
+              </AnimatedInfoButton>
+            </Box>
+            <Divider sx={{ mb: 2 }} />
             <TextField
-              fullWidth
-              multiline
-              rows={4}
-              placeholder="Paste emails here (separated by spaces or newlines)&#10;&#10;example1@email.com example2@email.com&#10;example3@email.com"
+              fullWidth multiline rows={3} size="small"
+              placeholder={'alice@example.com\nbob@example.com\ncarol@example.com'}
               value={emails}
               onChange={(e) => setEmails(e.target.value)}
-              sx={{ mb: 1 }}
+              sx={{ mb: 1.5 }}
             />
             <Button
-              variant="outlined"
+              variant="outlined" color="success"
+              startIcon={addingMembers ? undefined : <PersonAddIcon />}
               onClick={handleAddMembers}
               disabled={!emails.trim() || addingMembers}
               fullWidth
@@ -277,8 +326,9 @@ export default function CreateGroup() {
             </Button>
           </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleClose} variant="contained">
+
+        <DialogActions sx={{ px: { xs: 3, sm: 4 }, py: 2.5 }}>
+          <Button onClick={handleClose} variant="contained" size="large" sx={{ minWidth: 120 }}>
             Done
           </Button>
         </DialogActions>

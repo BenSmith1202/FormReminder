@@ -36,6 +36,7 @@ import LinkIcon from '@mui/icons-material/Link';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 import API_URL from '../config';
 
 // ── Shared section wrapper ────────────────────────────────────────────────
@@ -593,11 +594,7 @@ export default function Settings() {
       </Box>
 
       {/* ── Global alerts ── */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>
-          {error}
-        </Alert>
-      )}
+      <ErrorSnackbar error={error} onClose={() => setError('')} />
       {success && (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess('')}
           icon={<CheckCircleIcon fontSize="inherit" />}
