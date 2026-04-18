@@ -100,7 +100,7 @@ export default function EditRequest() {
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
-      setActive(request.activity ?? true);
+      setActive(request.is_active ?? true);
       setProvider(request.provider || 'google');
 
       if (request.due_date) {

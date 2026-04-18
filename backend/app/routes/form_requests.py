@@ -734,11 +734,22 @@ def refresh_form_responses(request_id: str):
                 if group_id and group_emails:
                     total_recipients = len(group_emails)
                     if total_recipients > 0 and len(responded_member_emails) >= total_recipients:
-                        notify_form_completed(
-                            user_id=owner_id,
-                            form_name=form_title,
-                            form_reminder_id=request_id
-                        )
+                        # Guard: only send completion notification once per form request
+                        existing_completed = db.collection(Collections.NOTIFICATIONS)\
+                            .where(filter=FieldFilter('form_reminder_id', '==', request_id))\
+                            .where(filter=FieldFilter('type', '==', 'form_completed'))\
+                            .limit(1)\
+                            .stream()
+                        already_notified = any(True for _ in existing_completed)
+                        if not already_notified:
+                            print(f"All {total_recipients} members responded for {request_id} — sending completion notification")
+                            notify_form_completed(
+                                user_id=owner_id,
+                                form_name=form_title,
+                                form_reminder_id=request_id
+                            )
+                        else:
+                            print(f"Skipping duplicate completion notification for {request_id} — already sent")
             
         # Re-check metadata on every successful sync so warnings self-heal if user fixed settings.
         metadata = {}
@@ -1090,6 +1101,7 @@ def create_form_request():
             form_ref.set(form_data)
         
         # Create form request document
+        start_active = data.get('is_active', True)
         form_request_data = {
             'provider': provider,
             'form_id': form_doc_id,
@@ -1100,8 +1112,8 @@ def create_form_request():
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'form_url': form_url,
             'created_at': now,
-            'status': 'Active',
-            'is_active': True,
+            'status': 'Active' if start_active else 'Inactive',
+            'is_active': bool(start_active),
             'due_date': due_date.isoformat(),
             'reminder_schedule': {
                 'schedule_type': reminder_schedule,
@@ -1585,6 +1597,7 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
     # Create the new form request with same settings
     now = datetime.now(timezone.utc).isoformat()
     new_request_data = {
+        'provider': request_data.get('provider'),
         'form_id': request_data.get('form_id'),
         'google_form_id': request_data.get('google_form_id'),
         'owner_id': user_id,
@@ -1592,12 +1605,13 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
         'title': new_title,
         'form_url': request_data.get('form_url'),
         'created_at': now,
-        'status': 'Active',
-        'is_active': True,
+        'status': 'Inactive',
+        'is_active': False,
         'due_date': request_data.get('due_date'),
         'reminder_schedule': request_data.get('reminder_schedule'),
         'first_reminder_timing': request_data.get('first_reminder_timing')
     }
+    print(f"Duplicate created as Inactive for request {request_id} -> new title: {new_title}")
     
     # Add to form_requests collection
     doc_ref = db.collection(Collections.FORM_REQUESTS).document()

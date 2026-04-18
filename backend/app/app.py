@@ -2133,8 +2133,6 @@ def get_email_open_analytics():
 
             if in_range:
                 if req_key in per_form:
-                    if title and title != "Untitled":
-                        per_form[req_key]["form_title"] = title
                     per_form[req_key]["opens"] += 1
                 else:
                     per_form[req_key] = {

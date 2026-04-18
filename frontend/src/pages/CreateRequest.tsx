@@ -29,6 +29,7 @@ import {
   Chip,
   Divider,
   Container,
+  Switch,
 } from '@mui/material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -124,6 +125,7 @@ export default function CreateRequest() {
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [startActive, setStartActive] = useState(true);
 
   // --- Automated Schedule State ---
   const [reminderSchedule, setReminderSchedule] = useState('normal'); // 'gentle', 'normal', 'frequent', or 'custom'
@@ -401,6 +403,7 @@ export default function CreateRequest() {
         due_date: dueDate.toISOString(),
         reminder_schedule: reminderSchedule,
         first_reminder_timing: firstReminderTiming,
+        is_active: startActive,
       };
 
       // Append custom schedule data if applicable
@@ -812,6 +815,31 @@ export default function CreateRequest() {
                 </Box>
               )}
             </Box>
+
+            <Divider sx={{ my: 3 }} />
+
+            {/* Start as Active or Inactive */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={startActive}
+                  onChange={(e) => setStartActive(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label={
+                <Box>
+                  <Typography variant="body2" fontWeight="medium">
+                    Start as {startActive ? 'Active' : 'Inactive'}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {startActive
+                      ? 'Reminders will begin sending according to the schedule above.'
+                      : 'Reminders will be paused until you manually activate this request.'}
+                  </Typography>
+                </Box>
+              }
+            />
           </Paper>
 
           {/* ── Submit row ── */}

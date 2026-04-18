@@ -156,7 +156,7 @@ def trigger_password_reset(email):
 
 @auth_bp.post("/api/login")
 def login():
-    """Login an existing user"""
+    """Login an existing user with email and password"""
     try:
         data = request.get_json()
         
@@ -165,23 +165,23 @@ def login():
         
         link = auth
         
-        username = data.get('username')
+        email = (data.get('email') or "").strip().lower()
         password = data.get('password')
         
-        if not username or not password:
-            return jsonify({"error": "Username and password are required"}), 400
+        if not email or not password:
+            return jsonify({"error": "Email and password are required"}), 400
         
-        print(f"Login attempt for username: {username}")
+        print(f"Login attempt for email: {email}")
         
-        user = User.get_by_username(username)
+        user = User.get_by_email(email)
         
         if not user:
-            print(f"User not found: {username}")
-            return jsonify({"error": "Invalid username or password"}), 401
+            print(f"User not found for email: {email}")
+            return jsonify({"error": "Invalid email or password"}), 401
         
         if not User.verify_password(user.password_hash, password):
-            print(f"Invalid password for user: {username}")
-            return jsonify({"error": "Invalid username or password"}), 401
+            print(f"Invalid password for email: {email}")
+            return jsonify({"error": "Invalid email or password"}), 401
         
         session['user_id'] = user.id
         
