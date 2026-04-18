@@ -183,7 +183,11 @@ def login():
             print(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password"}), 401
         
+        ## user is verified
         session['user_id'] = user.id
+        
+        print(f"Session after login: {dict(session)}")
+        print(f"Request scheme: {request.scheme}")  # Should say 'https', not 'http'
         
         print(f"User logged in successfully: {user.id}")
         
