@@ -183,6 +183,7 @@ def login():
             print(f"Invalid password for user: {username}")
             return jsonify({"error": "Invalid username or password"}), 401
         
+        ## user is verified
         session['user_id'] = user.id
         
         print(f"User logged in successfully: {user.id}")

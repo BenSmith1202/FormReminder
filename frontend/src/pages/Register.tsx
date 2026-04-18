@@ -11,7 +11,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 
-import API_URL from '../config';
+import { api } from '../api/client';
 
 function Register() {
   const [username, setUsername] = useState('');
@@ -39,25 +39,22 @@ function Register() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include', // Important for sessions
-        body: JSON.stringify({ username, email, password }),
-      });
+      const registerRes = await api.post('/api/register', { username, email, password });
+      const registerData = await registerRes.json();
 
-      const data = await response.json();
+      if (!registerRes.ok || !registerData.success) {
+        setError(registerData.error || 'Registration failed');
+        return;
+      }
 
-      if (response.ok && data.success) {
-        console.log('Registration successful:', data.user);
-        // Store user info in localStorage
-        localStorage.setItem('user', JSON.stringify(data.user));
-        // Redirect to dashboard
+      // Confirm session before navigating, same pattern as Login
+      const sessionRes = await api.get('/api/current-user');
+      const sessionData = await sessionRes.json();
+
+      if (sessionData.authenticated) {
         navigate('/');
       } else {
-        setError(data.error || 'Registration failed');
+        setError('Account created but session could not be established. Please try logging in.');
       }
     } catch (err) {
       console.error('Registration error:', err);

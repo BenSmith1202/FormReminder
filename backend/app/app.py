@@ -38,24 +38,42 @@ from routes.settings import settings_bp
 from routes.notifications import notifications_bp
 from routes.provider_auth import provider_auth_bp
 from utils.scheduler import init_scheduler  # Automatic reminder scheduler
+
+# LOGIN REDIRECT FROM COOKIE DROPPING FIX PART 1
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 # -------------------------
 
 # 1. Initialize Flask
 app = Flask(__name__)
 app.secret_key = settings.SECRET_KEY  # Required for sessions
 
-# Session cookie config — required for cross-origin cookies (frontend/backend on different domains)
-is_production = not settings.DEBUG
-app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_production else 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = is_production
+# COOKIE DROPPING FIX PART 2
+# tell flask to trust google cloud load balancer for https routing stuff
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+
+# # Session cookie config — required for cross-origin cookies (frontend/backend on different domains)
+# is_production = not settings.DEBUG
+# app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_production else 'Lax'
+# app.config['SESSION_COOKIE_SECURE'] = is_production
+# app.config['SESSION_COOKIE_HTTPONLY'] = True
+
+# COOKIE DROPPING FIX PART 3
+# hardcode the samesite policy
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_NAME'] = 'formreminder_session'  # explicit name, avoids 'session' conflicts
 
 # disable strict slashes globally
 app.url_map.strict_slashes = False
 
-frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+# COOKIE DROPPING FIX PART 4
+# hardcode this for now, we could set it back if needed
+# frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 CORS(app,
-     origins=[frontend_url, "http://localhost:5173", "http://localhost:5174", "https://formreminder-frontend-176029126556.us-central1.run.app"],
+     origins=["http://localhost:5173", "https://formreminder-frontend-176029126556.us-central1.run.app"],
      supports_credentials=True,
      allow_headers=["Content-Type"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
