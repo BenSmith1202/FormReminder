@@ -1376,6 +1376,10 @@ def create_custom_schedule():
     from utils.reminder_schedule import ReminderSchedule
     
     try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+        
         data = request.get_json()
         if not data or 'custom_days' not in data:
             return jsonify({"error": "custom_days is required"}), 400

@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, session
 import requests
+import traceback
 import os
+import random
 from dotenv import load_dotenv
 from config import settings
 
@@ -9,6 +11,7 @@ from config import settings
 from models.user import User
 from firebase_admin import auth
 from utils.google_forms_service import GoogleFormsService
+from utils.email_service import EmailService, _get_api_config
 
 # Define the Blueprint
 auth_bp = Blueprint('auth_and_login', __name__)
@@ -68,30 +71,68 @@ def register():
 
 @auth_bp.post('/api/reset')
 def reset():
-    """API Route to trigger the password reset email"""
+    """Refactored API: Handles sending OTP and verifying OTP to reset password"""
     try:
         data = request.json
-        email = data.get('email')
-
-        print(email)
+        email = data.get('email', '').strip().lower()
+        user_code = data.get('code') 
+        new_password = data.get('password')
 
         if not email:
             return jsonify({"error": "Email is required"}), 400
 
-        success, message = trigger_password_reset(email)
+        if not user_code:
+            # Check if user exists in your DB first
+            user = User.get_by_email(email)
+            if not user:
+                return jsonify({"success": True, "needs_verification": True}), 200
 
-        if success:
+            verification_code = f"{random.randint(100000, 999999)}"
+            
+            # Store in session
+            session['reset_email'] = email
+            session['reset_code'] = verification_code
+            
+            # Send Email
+            subject = "Your Password Reset Code"
+            html_content = f"""
+                <h2>Password Reset Request</h2>
+                <p>Use the code below to reset your FormReminder password:</p>
+                <h1 style="letter-spacing: 5px; color: #1976d2;">{verification_code}</h1>
+                <p>If you did not request this, please ignore this email.</p>
+            """
+            EmailService.send_email(email, subject, html_content)
+
             return jsonify({
                 "success": True, 
-                "message": "Password reset email sent!"
+                "needs_verification": True,
+                "message": "Verification code sent to your email."
             }), 200
+
+        # STEP 2: Verifying the code and updating password
+        stored_code = session.get('reset_code')
+        stored_email = session.get('reset_email')
+
+        if not stored_code or user_code != stored_code or email != stored_email:
+            return jsonify({"error": "Invalid or expired verification code"}), 400
+
+        if not new_password:
+            return jsonify({"error": "New password is required"}), 400
+
+        # Logic to update password in DB
+        # Note: reset_password needs to be called with the correct identifier (username or email)
+        user = User.get_by_email(email)
+        updated_user = User.reset_password(user.username, new_password)
+
+        if updated_user:
+            # Clear session
+            session.pop('reset_code', None)
+            session.pop('reset_email', None)
+            return jsonify({"success": True, "message": "Password updated successfully!"}), 200
         else:
-            if message == "EMAIL_NOT_FOUND":
-                return jsonify({"error": "No account found with that email address."}), 404
-            return jsonify({"error": f"Firebase error: {message}"}), 400
+            return jsonify({"error": "Failed to update password"}), 500
 
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 

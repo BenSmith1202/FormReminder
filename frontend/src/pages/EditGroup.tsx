@@ -281,6 +281,8 @@ export default function EditGroup() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             size="small"
+            inputProps={{ maxLength: 50 }} // Limit name to 50
+            helperText={`${name.length}/50`}
           />
           <Box display="flex" gap={2} alignItems="flex-start">
             <TextField
@@ -290,6 +292,8 @@ export default function EditGroup() {
               onChange={(e) => setDescription(e.target.value)}
               size="small"
               placeholder="Optional — describe the purpose of this group"
+              inputProps={{ maxLength: 500 }} 
+              helperText={`${description.length}/50`}
             />
             <Button
               variant="contained"

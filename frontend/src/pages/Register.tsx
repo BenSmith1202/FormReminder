@@ -91,6 +91,8 @@ function Register() {
               onChange={(e) => setUsername(e.target.value)}
               required
               autoFocus
+              inputProps={{ maxLength: 50 }} // Limit name to 50
+              helperText={`${username.length}/50`}
             />
 
             <TextField
@@ -102,6 +104,7 @@ function Register() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              inputProps={{ maxLength: 50 }} 
             />
 
             <TextField
@@ -114,6 +117,8 @@ function Register() {
               onChange={(e) => setPassword(e.target.value)}
               required
               helperText="At least 6 characters"
+              inputProps={{ maxLength: 100 }} // Limit name to 50
+              
             />
 
             <TextField
