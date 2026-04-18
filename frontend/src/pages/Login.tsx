@@ -1,17 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
-  Container,
-  Paper,
-  TextField,
-  Button,
-  Typography,
-  Box,
-  Alert,
-  CircularProgress,
+  Container, Paper, TextField, Button,
+  Typography, Box, Alert, CircularProgress,
 } from '@mui/material';
-
-import API_URL from '../config';
+import { api } from "../api/client"  // ← replaces the API_URL import
 
 function Login() {
   const [username, setUsername] = useState('');
@@ -26,25 +19,28 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include', // Important for sessions
-        body: JSON.stringify({ username, password }),
-      });
+      // Step 1: attempt login
+      const loginRes = await api.post('/api/login', { username, password });
+      const loginData = await loginRes.json();
 
-      const data = await response.json();
+      if (!loginRes.ok || !loginData.success) {
+        setError(loginData.error || 'Login failed');
+        return;
+      }
 
-      if (response.ok && data.success) {
-        console.log('Login successful:', data.user);
-        // Store user info in localStorage
-        localStorage.setItem('user', JSON.stringify(data.user));
-        // Redirect to dashboard
+      // Step 2: confirm the session cookie was actually stored
+      // before navigating — this eliminates the race condition
+      const sessionRes = await api.get('/api/current-user');
+      const sessionData = await sessionRes.json();
+
+      if (sessionData.authenticated) {
+        // Session is confirmed. No localStorage needed —
+        // app should always get user state from /api/current-user
         navigate('/');
       } else {
-        setError(data.error || 'Login failed');
+        // Login succeeded but cookie wasn't stored — almost always
+        // a cookie/CORS config issue at this point
+        setError('Session could not be established. Please try again.');
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -53,7 +49,6 @@ function Login() {
       setLoading(false);
     }
   };
-
   return (
     <Container maxWidth="sm" className="page-fade-in">
       <Box sx={{ mt: 8 }}>

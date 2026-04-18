@@ -48,6 +48,9 @@ def data():
 # API request to get a form's id. Requires the link to the form be submitted as an argument.
 @utilities_bp.get("/api/getid")
 def getid():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "Must be logged in"}), 401
     from flask import request
     formlink = request.args.get('formlink', '')
     
@@ -81,6 +84,9 @@ def getid():
 
 @utilities_bp.get("/api/health")
 def health_check():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "Must be logged in"}), 401
     """Health check endpoint"""
     try:
         db = get_db()
@@ -109,6 +115,9 @@ def health_check():
 # This matches frontend/src/pages/ServerTime.tsx
 @utilities_bp.route('/time', methods=['GET'])
 def get_current_time():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "Must be logged in"}), 401
     """Endpoint to get the current server time"""
     from datetime import datetime
     now = datetime.now()
