@@ -109,6 +109,7 @@ def check_and_send_reminders():
     from models.org_membership import OrgMembership
     from utils.email_service import EmailService
     from utils.reminder_schedule import ReminderSchedule
+    from google.cloud.firestore_v1.base_query import FieldFilter
     
     print(f"\n{'='*60}")
     print(f"🔔 [{datetime.now()}] Running automatic reminder check...")
@@ -215,7 +216,7 @@ def check_and_send_reminders():
             
             # Get all responses for this form request
             responses = db.collection(Collections.RESPONSES)\
-                .where('request_id', '==', request_id)\
+                .where(filter=FieldFilter('request_id', '==', request_id))\
                 .stream()
             
             # Build a set of emails that have already responded (case-insensitive)
@@ -327,6 +328,7 @@ def check_overdue_forms():
     from models.database import get_db, Collections
     from models.group import Group
     from models.notification import notify_form_overdue, Notification
+    from google.cloud.firestore_v1.base_query import FieldFilter
     
     print(f"\n{'='*60}")
     print(f"⏰ [{datetime.now()}] Checking for overdue forms...")
@@ -367,8 +369,8 @@ def check_overdue_forms():
             
             # Check if we already sent an overdue notification for this form
             existing_notifications = db.collection(Collections.NOTIFICATIONS)\
-                .where('form_reminder_id', '==', request_id)\
-                .where('type', '==', 'form_overdue')\
+                .where(filter=FieldFilter('form_reminder_id', '==', request_id))\
+                .where(filter=FieldFilter('type', '==', 'form_overdue'))\
                 .limit(1)\
                 .stream()
             
@@ -393,7 +395,7 @@ def check_overdue_forms():
             
             # Count responses
             responses = db.collection(Collections.RESPONSES)\
-                .where('request_id', '==', request_id)\
+                .where(filter=FieldFilter('request_id', '==', request_id))\
                 .stream()
             response_count = sum(1 for _ in responses)
             

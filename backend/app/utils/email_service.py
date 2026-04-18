@@ -17,6 +17,7 @@ except ImportError:
     pass
 
 from jinja2 import Environment, FileSystemLoader
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.database import get_db, Collections
 from config import settings
 from models.org_membership import OrgMembership
@@ -276,8 +277,8 @@ class EmailService:
             cutoff_str = cutoff_time.isoformat() + 'Z'
 
             all_logs = db.collection(Collections.EMAIL_LOGS)\
-                .where('request_id', '==', request_id)\
-                .where('recipient_email', '==', recipient_email)\
+                .where(filter=FieldFilter('request_id', '==', request_id))\
+                .where(filter=FieldFilter('recipient_email', '==', recipient_email))\
                 .stream()
 
             for log in all_logs:

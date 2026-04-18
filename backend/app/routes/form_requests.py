@@ -7,6 +7,8 @@ import traceback
 from models.user import User
 from models.group import Group
 from models.database import get_db, Collections
+from models.org_member import OrgMember
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.notification import (
     notify_form_submission,
     notify_form_completed,
@@ -25,6 +27,21 @@ from utils.scheduler import send_initial_emails  # For immediate email sending
 
 # Define the Blueprint
 form_requests_bp = Blueprint('form_requests', __name__)
+
+
+def _resolve_org_context(session_user_id: str, org_id):
+    """Resolve the effective owner for a request that may come from a sub-user.
+
+    Returns a 3-tuple (effective_owner_id, membership_or_None, error_or_None).
+    """
+    if not org_id or org_id == session_user_id:
+        return session_user_id, None, None
+
+    membership = OrgMember.get_membership(org_id, session_user_id)
+    if not membership or membership.status != OrgMember.STATUS_ACTIVE:
+        return None, None, (jsonify({"error": "Not an active member of this organization"}), 403)
+
+    return org_id, membership, None
 
 
 def _classify_forms_api_error(err: Exception) -> str:
@@ -171,7 +188,7 @@ def get_form_requests():
         db = get_db()
         
         form_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where('owner_id', '==', user_id)\
+            .where(filter=FieldFilter('owner_id', '==', user_id))\
             .stream()
         
         requests_list = []
@@ -207,7 +224,7 @@ def get_form_requests():
             # Calculate response_count - count unique group-member emails that responded
             responded_member_emails = set()
             responses_query = db.collection(Collections.RESPONSES)\
-                .where('request_id', '==', req.id)\
+                .where(filter=FieldFilter('request_id', '==', req.id))\
                 .stream()
             
             for resp in responses_query:
@@ -306,7 +323,7 @@ def get_form_request_responses(request_id: str):
         
         # Get responses from database
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         responses_list = []
@@ -418,7 +435,17 @@ def refresh_form_responses(request_id: str):
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
         
-        user = User.get_by_id(user_id)
+        # Resolve org context so sub-users use the org owner's credentials
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+        
+        # Sub-user: verify assignment before allowing refresh
+        if membership and not membership.can_perform("view", "form_request", request_id):
+            return jsonify({"error": "Not assigned to this form request"}), 403
+        
+        user = User.get_by_id(effective_owner_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
         
@@ -433,8 +460,8 @@ def refresh_form_responses(request_id: str):
         
         request_data = request_doc.to_dict()
         
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+        # Verify ownership (membership assignment already checked above)
+        if not membership and request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # ── Determine provider (fall back to google for legacy requests) ──
@@ -595,7 +622,7 @@ def refresh_form_responses(request_id: str):
         # Get existing responses to check for duplicates by response_id
         existing_responses = {}
         old_responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         for old_response in old_responses:
@@ -1410,7 +1437,7 @@ def delete_form_request(request_id: str):
         
         # Delete all responses for this request
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         deleted_responses = 0
@@ -1575,7 +1602,7 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
     
     # Copy all responses from the original request to the new request
     original_responses = db.collection(Collections.RESPONSES)\
-        .where('request_id', '==', request_id)\
+        .where(filter=FieldFilter('request_id', '==', request_id))\
         .stream()
     
     response_count = 0

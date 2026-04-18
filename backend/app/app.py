@@ -17,6 +17,7 @@ from flask_cors import CORS
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.database import get_db, FirestoreDB, Collections
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.user import User
 from models.group import Group
 from models.org_membership import OrgMembership
@@ -706,7 +707,7 @@ def get_form_requests():
         db = get_db()
 
         form_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where('owner_id', '==', effective_owner_id)\
+            .where(filter=FieldFilter('owner_id', '==', effective_owner_id))\
             .stream()
 
         # If acting as sub-user, only surface assigned form requests
@@ -750,7 +751,7 @@ def get_form_requests():
             # Calculate response_count dynamically from responses collection
             response_count = 0
             responses_query = db.collection(Collections.RESPONSES)\
-                .where('request_id', '==', req.id)\
+                .where(filter=FieldFilter('request_id', '==', req.id))\
                 .stream()
             response_count = sum(1 for _ in responses_query)
             
@@ -846,7 +847,7 @@ def get_form_request_responses(request_id: str):
         
         # Get responses from database
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         responses_list = []
@@ -939,270 +940,11 @@ def get_form_request_responses(request_id: str):
         }), 500
 
 
-# Refresh responses from Google Forms
-@app.post("/api/form-requests/<request_id>/refresh")
-def refresh_form_responses(request_id: str):
-    """Manually refresh responses from Google Forms.
-
-    Always uses the org owner's Google credentials regardless of who triggers
-    the refresh, so sub-users do not need their own Google connection.
-    """
-    from datetime import datetime
-    from models.database import Collections
-
-    try:
-        user_id = session.get('user_id')
-        if not user_id:
-            return jsonify({"error": "Must be logged in"}), 401
-
-        org_id = request.headers.get("X-Org-ID")
-        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
-        if err:
-            return err
-
-        # Sub-user: verify assignment before allowing refresh
-        if membership and not membership.can_perform("view", "form_request", request_id):
-            return jsonify({"error": "Not assigned to this form request"}), 403
-
-        # Always use the org owner's Google credentials
-        user = User.get_by_id(effective_owner_id)
-        if not user or not user.google_access_token:
-            return jsonify({"error": "Google account not connected"}), 403
-        
-        db = get_db()
-        
-        # Get the form request
-        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
-        request_doc = request_ref.get()
-        
-        if not request_doc.exists:
-            return jsonify({"error": "Form request not found"}), 404
-
-        request_data = request_doc.to_dict()
-
-        # Verify ownership (membership assignment already checked above)
-        if not membership and request_data.get('owner_id') != effective_owner_id:
-            return jsonify({"error": "Unauthorized"}), 403
-
-        form_id = request_data.get('google_form_id') or request_data.get('form_id')
-        if not form_id:
-            return jsonify({"error": "No Google Form ID found"}), 400
-
-        print(f"Refreshing responses for form {form_id}")
-        
-        # Get user's Google credentials
-        try:
-            credentials = GoogleFormsService.get_credentials_from_tokens(
-                access_token=user.google_access_token,
-                refresh_token=user.google_refresh_token,
-                token_expiry=user.token_expiry
-            )
-        except ValueError as cred_error:
-            # Token was revoked or is invalid - clear it from database
-            print(f"Credentials invalid: {cred_error}")
-            print("Clearing invalid Google tokens from user account")
-            user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
-            return jsonify({
-                "error": "Google credentials have been revoked",
-                "message": "Please reconnect your Google account",
-                "action_required": "reconnect_google"
-            }), 401
-        
-        # Fetch latest responses from Google
-        print(f"Fetching responses from Google Forms API for form {form_id}...")
-        try:
-            responses = GoogleFormsService.get_form_responses(credentials, form_id)
-        except Exception as api_err:
-            err_str = str(api_err)
-            api_error_reason = _classify_forms_api_error(api_err)
-
-            # Persist failure state so warnings explain the real reason.
-            form_doc_id = request_data.get('form_id') or request_data.get('google_form_id')
-            if form_doc_id:
-                try:
-                    db.collection(Collections.FORMS).document(form_doc_id).set(
-                        {
-                            'api_access_available': False,
-                            'api_error_reason': api_error_reason,
-                            'updated_at': datetime.utcnow().isoformat() + 'Z',
-                        },
-                        merge=True,
-                    )
-                except Exception as persist_err:
-                    print(f"Warning: failed to persist API error reason: {persist_err}")
-
-            # 404 from Forms API = form ID not found (viewform URL uses a different "published" ID than the API expects)
-            if "404" in err_str or "Requested entity was not found" in err_str or "not found" in err_str.lower():
-                return jsonify({
-                    "error": "Form not found",
-                    "message": "The form link you used is likely the view/share link. The API needs the edit link: open the form in Google Forms and copy the URL from the address bar (it contains /edit). Re-create the form request with that edit URL.",
-                    "code": "form_id_edit_link_required"
-                }), 404
-            # 403 from Google = no permission
-            if "403" in err_str or "Forbidden" in err_str:
-                return jsonify({
-                    "error": "No access to this form",
-                    "message": "The connected Google account does not have edit access to this form. Connect the correct Google account or ask the form owner to share editor access.",
-                    "action_required": "reconnect_google"
-                }), 403
-            # Credential/refresh errors
-            if "invalid_grant" in err_str or "revoked" in err_str or "credentials" in err_str.lower():
-                user.update_google_tokens(access_token=None, refresh_token=None, expiry=None)
-                return jsonify({
-                    "error": "Google credentials invalid",
-                    "message": "Please reconnect your Google account",
-                    "action_required": "reconnect_google"
-                }), 401
-            raise
-
-        print(f"Found {len(responses)} total responses from Google")
-        if responses:
-            # Log sample response emails for debugging
-            sample_emails = [r.get('respondent_email', 'no email') for r in responses[:3]]
-            print(f"   Sample respondent emails: {sample_emails}")
-        
-        # Get existing responses to check for duplicates by response_id
-        existing_responses = {}
-        old_responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
-            .stream()
-        
-        for old_response in old_responses:
-            old_data = old_response.to_dict()
-            response_id = old_data.get('response_id')
-            if response_id:
-                existing_responses[response_id] = old_response.reference
-        
-        print(f"Found {len(existing_responses)} existing responses in database")
-        
-        # Store new/updated responses with full answer data
-        stored_count = 0
-        updated_count = 0
-        new_count = 0
-        
-        for response in responses:
-            response_id = response.get('response_id', '')
-            response_data = {
-                'request_id': request_id,
-                'form_id': form_id,
-                'respondent_email': response.get('respondent_email', ''),
-                'response_id': response_id,
-                'submitted_at': response.get('submitted_at', ''),
-                'last_submitted_at': response.get('last_submitted_at', ''),
-                'total_score': response.get('total_score'),
-                'answers': response.get('answers', {}),  # Full answer data
-                'answer_count': response.get('answer_count', 0),
-                'created_at': datetime.utcnow().isoformat() + 'Z'
-            }
-            
-            # Update existing response or create new one
-            if response_id and response_id in existing_responses:
-                # Update existing response
-                existing_responses[response_id].set(response_data)
-                updated_count += 1
-                # Remove from dict so we know which ones to delete
-                del existing_responses[response_id]
-            else:
-                # Create new response
-                db.collection(Collections.RESPONSES).add(response_data)
-                new_count += 1
-            
-            stored_count += 1
-        
-        # Delete responses that no longer exist in Google Forms
-        deleted_count = 0
-        for response_id, response_ref in existing_responses.items():
-            response_ref.delete()
-            deleted_count += 1
-        
-        print(f"Sync complete: {new_count} new, {updated_count} updated, {deleted_count} deleted")
-        
-        # Re-check metadata on every successful sync so warnings self-heal if user fixed settings.
-        metadata = {}
-        email_collection_checked = False
-        email_collection_enabled = True
-        try:
-            metadata = GoogleFormsService.get_form_metadata(credentials, form_id)
-            email_collection_enabled = GoogleFormsService.check_email_collection(credentials, form_id)
-            email_collection_checked = True
-        except Exception as metadata_err:
-            # Don't fail refresh if metadata check fails; we still synced responses.
-            print(f"Warning: metadata re-check failed after refresh: {metadata_err}")
-        
-        # Update form document in forms collection with sync time
-        form_doc_id = request_data.get('form_id')
-        if not form_doc_id:
-            # Fallback: try using google_form_id for older form requests
-            form_doc_id = request_data.get('google_form_id')
-        
-        if form_doc_id:
-            form_ref = db.collection(Collections.FORMS).document(form_doc_id)
-            form_doc = form_ref.get()
-            sync_time = datetime.utcnow().isoformat() + 'Z'
-            if form_doc.exists:
-                existing_settings = (form_doc.to_dict() or {}).get('form_settings') or {}
-                update_data = {
-                    'last_synced_at': sync_time,
-                    'api_access_available': True,
-                    'api_error_reason': None,
-                    'updated_at': sync_time
-                }
-                if isinstance(existing_settings, dict):
-                    update_data['form_settings'] = {
-                        **existing_settings,
-                        'email_collection_checked': email_collection_checked,
-                    }
-                    if email_collection_checked:
-                        update_data['form_settings'].update({
-                            'email_collection_enabled': email_collection_enabled,
-                            'email_collection_type': metadata.get('email_collection_type', existing_settings.get('email_collection_type', 'UNKNOWN')),
-                        })
-                try:
-                    form_ref.update(update_data)
-                    print(f"Updated form document {form_doc_id} with sync time")
-                except Exception as update_err:
-                    print(f"Warning: Could not update form doc: {update_err}")
-            else:
-                # Create form document if it doesn't exist (for older form requests)
-                form_ref.set({
-                    'google_form_id': form_doc_id,
-                    'form_url': request_data.get('form_url', ''),
-                    'title': request_data.get('title', ''),
-                    'description': request_data.get('description', ''),
-                    'owner_id': request_data.get('owner_id'),
-                    'created_at': request_data.get('created_at', sync_time),
-                    'updated_at': sync_time,
-                    'is_active': True,
-                    'api_access_available': True,
-                    'api_error_reason': None,
-                    'last_synced_at': sync_time,
-                    'form_settings': {
-                        **(request_data.get('form_settings', {}) or {}),
-                        'email_collection_checked': email_collection_checked,
-                        'email_collection_enabled': email_collection_enabled if email_collection_checked else True,
-                        'email_collection_type': metadata.get('email_collection_type', 'UNKNOWN') if email_collection_checked else 'UNKNOWN',
-                    }
-                })
-                print(f"Created form document {form_doc_id} with sync time")
-        
-        print(f"Refreshed {stored_count} responses for request {request_id}")
-        
-        return jsonify({
-            "success": True,
-            "message": "Responses refreshed successfully",
-            "response_count": stored_count,
-            "synced_at": datetime.utcnow().isoformat() + 'Z'
-        }), 200
-        
-    except Exception as e:
-        import traceback
-        error_msg = str(e)
-        traceback.print_exc()
-        print(f"Error refreshing responses: {error_msg}")
-        return jsonify({
-            "error": "Failed to refresh responses",
-            "details": error_msg
-        }), 500
+# NOTE: The refresh endpoint is now handled by the form_requests blueprint
+# (routes/form_requests.py) which supports all providers (Google, Jotform,
+# Microsoft).  The legacy Google-only handler that was here has been removed
+# to eliminate the route collision that caused every refresh — even for
+# Jotform/Microsoft requests — to go through Google token logic.
 
 # Create a new form request
 @app.post("/api/form-requests")
@@ -1584,7 +1326,7 @@ def delete_form_request(request_id: str):
         
         # Delete all responses for this request
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         deleted_responses = 0
@@ -2127,7 +1869,7 @@ def get_submissions_over_time():
 
         # Collect all form requests for this owner.
         request_query = db.collection(Collections.FORM_REQUESTS)\
-            .where("owner_id", "==", user_id)\
+            .where(filter=FieldFilter("owner_id", "==", user_id))\
             .stream()
 
         from datetime import datetime
@@ -2169,7 +1911,7 @@ def get_submissions_over_time():
             title = req_data.get("title") or req_data.get("form_title") or f"Form {req_id[:8]}"
 
             responses_stream = db.collection(Collections.RESPONSES)\
-                .where("request_id", "==", req_id)\
+                .where(filter=FieldFilter("request_id", "==", req_id))\
                 .stream()
 
             for resp in responses_stream:
@@ -2325,7 +2067,7 @@ def get_email_open_analytics():
 
         # ── 1. Seed per_form from ALL owner's form requests (0 opens baseline) ─
         all_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where("owner_id", "==", user_id)\
+            .where(filter=FieldFilter("owner_id", "==", user_id))\
             .stream()
 
         per_form: dict[str, dict] = {}
@@ -2417,8 +2159,8 @@ def get_email_open_analytics():
             for i in range(0, len(req_id_list), 30):
                 chunk = req_id_list[i:i + 30]
                 logs = db.collection(Collections.EMAIL_LOGS)\
-                    .where("request_id", "in", chunk)\
-                    .where("success", "==", True)\
+                    .where(filter=FieldFilter("request_id", "in", chunk))\
+                    .where(filter=FieldFilter("success", "==", True))\
                     .stream()
                 for log_doc in logs:
                     log_data = log_doc.to_dict() or {}
@@ -2498,7 +2240,7 @@ def get_submission_analytics():
 
         # ── 1. Get all owner form requests (title lookup + baseline 0 counts) ─
         all_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where("owner_id", "==", user_id)\
+            .where(filter=FieldFilter("owner_id", "==", user_id))\
             .stream()
 
         per_form: dict[str, dict] = {}
@@ -2517,7 +2259,7 @@ def get_submission_analytics():
         for i in range(0, len(owner_request_ids), 30):
             chunk = owner_request_ids[i:i + 30]
             responses = db.collection(Collections.RESPONSES)\
-                .where("request_id", "in", chunk)\
+                .where(filter=FieldFilter("request_id", "in", chunk))\
                 .stream()
             for resp_doc in responses:
                 resp = resp_doc.to_dict() or {}
@@ -2615,7 +2357,7 @@ def invite_org_member():
             # Fallback: search by email field in users collection
             db = get_db()
             from models.database import Collections as _C
-            results = list(db.collection(_C.USERS).where("email", "==", email).stream())
+            results = list(db.collection(_C.USERS).where(filter=FieldFilter("email", "==", email)).stream())
             invitee_id = results[0].id if results else None
         else:
             invitee_id = invitee.id
@@ -2692,7 +2434,7 @@ def add_org_member():
         # Look up user by email
         db = get_db()
         from models.database import Collections as _C
-        results = list(db.collection(_C.USERS).where("email", "==", email).stream())
+        results = list(db.collection(_C.USERS).where(filter=FieldFilter("email", "==", email)).stream())
         if not results:
             return jsonify({
                 "error": "No FormReminder account found for that email address",
@@ -3184,7 +2926,7 @@ def send_bulk_reminders(request_id: str):
         
         # Get responses to determine who hasn't responded
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         responded_emails = set()

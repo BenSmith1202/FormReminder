@@ -107,11 +107,16 @@ def get_credentials_for_provider(user, provider: str):
     if provider == PROVIDER_GOOGLE:
         if not user.google_access_token:
             raise ValueError("Google Forms account not connected")
-        return GoogleFormsService.get_credentials_from_tokens(
+        creds = GoogleFormsService.get_credentials_from_tokens(
             user.google_access_token,
             user.google_refresh_token,
             user.token_expiry or "",
         )
+        # Persist refreshed token back so we don't re-refresh every request
+        if creds.token != user.google_access_token:
+            new_expiry = creds.expiry.isoformat() + 'Z' if creds.expiry else ""
+            user.update_google_tokens(creds.token, creds.refresh_token, new_expiry)
+        return creds
 
     if provider == PROVIDER_JOTFORM:
         api_key = JotformService._get_api_key(user)

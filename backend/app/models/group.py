@@ -5,6 +5,7 @@ import uuid
 import re
 from datetime import datetime
 from typing import Optional, List, Dict
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.database import get_db, Collections
 from models import form_request
 
@@ -115,7 +116,7 @@ class Group:
         try:
             db = get_db()
             groups_ref = db.collection(Collections.GROUPS)
-            query = groups_ref.where('invite_token', '==', invite_token).limit(1).stream()
+            query = groups_ref.where(filter=FieldFilter('invite_token', '==', invite_token)).limit(1).stream()
             
             for doc in query:
                 data = doc.to_dict()
@@ -144,7 +145,7 @@ class Group:
         try:
             db = get_db()
             groups_ref = db.collection(Collections.GROUPS)
-            query = groups_ref.where('owner_id', '==', owner_id).stream()
+            query = groups_ref.where(filter=FieldFilter('owner_id', '==', owner_id)).stream()
             
             groups = []
             for doc in query:
