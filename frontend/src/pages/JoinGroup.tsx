@@ -14,6 +14,8 @@ export default function JoinGroup() {
   const [error, setError] = useState<string | null>(null);
   const [groupInfo, setGroupInfo] = useState<any>(null);
   const [success, setSuccess] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [needsVerification, setNeedsVerification] = useState(false);
 
   useEffect(() => {
     loadGroupInfo();
@@ -45,27 +47,28 @@ export default function JoinGroup() {
     setError(null);
     
     try {
-      console.log('Joining group with email:', email);
+      const payload = needsVerification 
+        ? { email, code: verificationCode } 
+        : { email };
       
       const response = await fetch(`${API_URL}/api/groups/join/${token}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
       });
       
       const data = await response.json();
       
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to join group');
+      if (!response.ok) throw new Error(data.error || 'Failed to join group');
+
+      if (data.needs_verification) {
+        setNeedsVerification(true);
+      } else {
+        setSuccess(true);
       }
       
-      console.log('✅ Successfully joined group:', data);
-      setSuccess(true);
-      
     } catch (err: any) {
-      console.error('❌ Failed to join group:', err);
       setError(err.message);
     } finally {
       setSubmitting(false);
@@ -137,27 +140,50 @@ export default function JoinGroup() {
             </Box>
 
             <form onSubmit={handleSubmit}>
+            <TextField
+              label="Your Email"
+              type="email"
+              fullWidth
+              required
+              disabled={needsVerification} // Lock email while verifying code
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              sx={{ mb: 3 }}
+            />
+
+            {needsVerification && (
               <TextField
-                label="Your Email"
-                type="email"
+                label="Verification Code"
                 fullWidth
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={verificationCode}
+                onChange={(e) => setVerificationCode(e.target.value)}
                 sx={{ mb: 3 }}
-                placeholder="you@example.com"
+                placeholder="123456"
+                helperText="Enter the 6-digit code sent to your email"
               />
+            )}
 
-              <Button
-                type="submit"
-                variant="contained"
-                disabled={submitting || !email.trim()}
-                fullWidth
-                size="large"
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={submitting || !email.trim() || (needsVerification && !verificationCode.trim())}
+              fullWidth
+              size="large"
+            >
+              {submitting ? 'Processing...' : needsVerification ? 'Verify & Join' : 'Send Code'}
+            </Button>
+            
+            {needsVerification && (
+              <Button 
+                variant="text" 
+                onClick={() => setNeedsVerification(false)} 
+                sx={{ mt: 1 }}
               >
-                {submitting ? 'Joining...' : 'Join Group'}
+                Change Email
               </Button>
-            </form>
+            )}
+          </form>
           </>
         )}
       </Paper>
