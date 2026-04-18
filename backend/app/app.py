@@ -2269,21 +2269,27 @@ def get_submission_analytics():
         if not owner_request_ids:
             return jsonify({"per_form": [], "total": 0}), 200
 
-        # ── 1b. Look up group member counts for each form request ─────────
+        # ── 1b. Look up group member emails for each form request ─────────
         unique_group_ids = set(group_ids_to_lookup.values())
-        group_member_counts: dict[str, int] = {}
+        group_member_emails: dict[str, set] = {}  # group_id -> set of lowercase emails
         for gid in unique_group_ids:
             try:
                 g_doc = db.collection(Collections.GROUPS).document(gid).get()
                 if g_doc.exists:
                     g_data = g_doc.to_dict() or {}
-                    group_member_counts[gid] = len(g_data.get("members", []))
+                    group_member_emails[gid] = {
+                        m.get("email", "").lower()
+                        for m in g_data.get("members", [])
+                        if m.get("email")
+                    }
             except Exception:
                 pass
         for req_id, gid in group_ids_to_lookup.items():
-            per_form[req_id]["total_recipients"] = group_member_counts.get(gid, 0)
+            emails = group_member_emails.get(gid, set())
+            per_form[req_id]["total_recipients"] = len(emails)
 
-        # ── 2. Count responses per form (chunked to stay within Firestore 'in' limit) ─
+        # ── 2. Count responses per form — only unique group members ────────
+        responded_emails: dict[str, set] = {rid: set() for rid in owner_request_ids}
         for i in range(0, len(owner_request_ids), 30):
             chunk = owner_request_ids[i:i + 30]
             responses = db.collection(Collections.RESPONSES)\
@@ -2292,8 +2298,21 @@ def get_submission_analytics():
             for resp_doc in responses:
                 resp = resp_doc.to_dict() or {}
                 req_id = resp.get("request_id", "")
-                if req_id in per_form:
-                    per_form[req_id]["submissions"] += 1
+                if req_id not in per_form:
+                    continue
+                resp_email = resp.get("respondent_email", "").lower()
+                if not resp_email:
+                    continue
+                # Only count if the respondent is a current group member
+                gid = group_ids_to_lookup.get(req_id)
+                if gid:
+                    members = group_member_emails.get(gid, set())
+                    if resp_email not in members:
+                        continue
+                responded_emails[req_id].add(resp_email)
+
+        for req_id in owner_request_ids:
+            per_form[req_id]["submissions"] = len(responded_emails[req_id])
 
         per_form_list = sorted(
             per_form.values(),

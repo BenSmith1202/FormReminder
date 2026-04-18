@@ -23,7 +23,7 @@ export default function ErrorSnackbar({
         onClose={onClose}
         action={action}
         variant="filled"
-        sx={{ width: '100%', minWidth: 320, maxWidth: 600, boxShadow: 3 }}
+        sx={{ width: '100%', minWidth: 320, maxWidth: 700, boxShadow: 3 }}
       >
         {error}
       </Alert>
