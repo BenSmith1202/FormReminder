@@ -149,6 +149,7 @@ export default function JoinGroup() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               sx={{ mb: 3 }}
+              inputProps={{ maxLength: 50 }}
             />
 
             {needsVerification && (

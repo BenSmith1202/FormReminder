@@ -323,6 +323,8 @@ export default function EditRequest() {
               size="small"
               value={requestTitle}
               onChange={(e) => setRequestTitle(e.target.value)}
+              inputProps={{ maxLength: 50 }} // Limit name to 50
+              helperText={`${requestTitle.length}/50`}
             />
             <TextField
               label="Form URL"

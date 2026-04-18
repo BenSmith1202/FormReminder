@@ -167,6 +167,8 @@ export default function CreateGroup() {
         )}
 
         <form onSubmit={handleSubmit}>
+          
+          
           <TextField
             label="Group Name"
             fullWidth
@@ -175,8 +177,10 @@ export default function CreateGroup() {
             onChange={(e) => setName(e.target.value)}
             sx={{ mb: 2 }}
             placeholder="e.g., Team Alpha"
+            inputProps={{ maxLength: 50 }} // Limit name to 50
+            helperText={`${name.length}/50`}
           />
-          
+
           <TextField
             label="Description"
             fullWidth
@@ -186,6 +190,8 @@ export default function CreateGroup() {
             onChange={(e) => setDescription(e.target.value)}
             sx={{ mb: 3 }}
             placeholder="Optional description for this group"
+            inputProps={{ maxLength: 300 }} // Limit description to 300
+            helperText={`${description.length}/300`}
           />
 
           <Box display="flex" gap={2}>

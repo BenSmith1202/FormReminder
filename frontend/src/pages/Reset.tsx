@@ -122,6 +122,7 @@ function Reset() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  inputProps={{ maxLength: 100 }} // Limit name to 50
                 />
                 <TextField
                   fullWidth

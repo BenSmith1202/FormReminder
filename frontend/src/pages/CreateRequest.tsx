@@ -594,6 +594,8 @@ export default function CreateRequest() {
                 placeholder="e.g. Q1 Survey — Team Alpha"
                 value={requestTitle}
                 onChange={(e) => setRequestTitle(e.target.value)}
+                inputProps={{ maxLength: 50 }} // Limit name to 50
+                helperText={`${requestTitle.length}/50`}
               />
 
               <Box>
