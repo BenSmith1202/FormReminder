@@ -292,7 +292,7 @@ export default function EditGroup() {
               onChange={(e) => setDescription(e.target.value)}
               size="small"
               placeholder="Optional — describe the purpose of this group"
-              inputProps={{ maxLength: 50 }} // Limit name to 50
+              inputProps={{ maxLength: 500 }} 
               helperText={`${description.length}/50`}
             />
             <Button

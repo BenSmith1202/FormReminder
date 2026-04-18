@@ -190,7 +190,7 @@ export default function CreateGroup() {
             onChange={(e) => setDescription(e.target.value)}
             sx={{ mb: 3 }}
             placeholder="Optional description for this group"
-            inputProps={{ maxLength: 300 }} // Limit description to 300
+            inputProps={{ maxLength: 500 }} // Limit description to 500
             helperText={`${description.length}/300`}
           />
 

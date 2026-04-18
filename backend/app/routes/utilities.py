@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, session
 from datetime import datetime
 from models.database import get_db
 from models.notification import Notification
@@ -24,6 +24,9 @@ def create_notification(owner_id: str, notif_type: str, message: str, data=None,
 
 @utilities_bp.get("/api/data")
 def data():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"error": "Must be logged in"}), 401
     try:
         db = get_db()
         forms = db.collection('forms').stream()
