@@ -190,6 +190,42 @@ class User:
     
 
     @staticmethod
+    def get_by_email(email: str) -> Optional['User']:
+        """Find a user by email"""
+        try:
+            db = get_db()
+            users_ref = db.collection(Collections.USERS)
+            query = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1).stream()
+            
+            for doc in query:
+                user_data = doc.to_dict()
+                return User(
+                    user_id=doc.id,
+                    username=user_data['username'],
+                    email=user_data['email'],
+                    password_hash=user_data.get('password_hash'),
+                    google_access_token=user_data.get('google_access_token'),
+                    google_refresh_token=user_data.get('google_refresh_token'),
+                    token_expiry=user_data.get('token_expiry'),
+                    created_at=user_data.get('created_at'),
+                    email_custom_message=user_data.get('email_custom_message'),
+                    jotform_api_key=user_data.get('jotform_api_key'),
+                    microsoft_access_token=user_data.get('microsoft_access_token'),
+                    microsoft_refresh_token=user_data.get('microsoft_refresh_token'),
+                    microsoft_token_expiry=user_data.get('microsoft_token_expiry'),
+                    profile_photo_url=user_data.get('profile_photo_url'),
+                )
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting user by username: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
+    @staticmethod
     def get_by_username(username: str) -> Optional['User']:
         """Find a user by username"""
         try:
