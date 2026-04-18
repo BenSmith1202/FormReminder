@@ -2154,6 +2154,7 @@ def get_email_open_analytics():
         # ── 4. Total sent in range from owner's email_logs ────────────────────
         cutoff_str = cutoff.isoformat() + "Z" if cutoff else None
         total_sent = 0
+        sent_per_form: dict[str, int] = {}
         if owner_request_ids:
             req_id_list = list(owner_request_ids)
             for i in range(0, len(req_id_list), 30):
@@ -2166,6 +2167,9 @@ def get_email_open_analytics():
                     log_data = log_doc.to_dict() or {}
                     if cutoff_str is None or log_data.get("sent_at", "") >= cutoff_str:
                         total_sent += 1
+                        rid = log_data.get("request_id", "")
+                        if rid:
+                            sent_per_form[rid] = sent_per_form.get(rid, 0) + 1
 
         open_rate = round(total_opens / total_sent * 100, 1) if total_sent > 0 else 0.0
         unique_open_rate = round(len(unique_recipients) / total_sent * 100, 1) if total_sent > 0 else 0.0
@@ -2184,6 +2188,10 @@ def get_email_open_analytics():
                 year, month_str = key.split("-")
                 label = datetime(int(year), int(month_str), 1).strftime("%b '%y")
             time_series.append({"month": key, "label": label, "opens": bucket_counts.get(key, 0)})
+
+        # Attach emails_sent to each per_form entry
+        for rid, entry in per_form.items():
+            entry["emails_sent"] = sent_per_form.get(rid, 0)
 
         per_form_list = sorted(per_form.values(), key=lambda x: x["opens"], reverse=True)
 
@@ -2245,15 +2253,33 @@ def get_submission_analytics():
 
         per_form: dict[str, dict] = {}
         owner_request_ids: list[str] = []
+        group_ids_to_lookup: dict[str, str] = {}  # request_id -> group_id
         for req_doc in all_requests:
             data = req_doc.to_dict() or {}
             req_id = data.get("id") or req_doc.id
             title = data.get("title") or "Untitled"
             owner_request_ids.append(req_id)
-            per_form[req_id] = {"request_id": req_id, "form_title": title, "submissions": 0}
+            per_form[req_id] = {"request_id": req_id, "form_title": title, "submissions": 0, "total_recipients": 0}
+            gid = data.get("group_id")
+            if gid:
+                group_ids_to_lookup[req_id] = gid
 
         if not owner_request_ids:
             return jsonify({"per_form": [], "total": 0, "range": range_param}), 200
+
+        # ── 1b. Look up group member counts for each form request ─────────
+        unique_group_ids = set(group_ids_to_lookup.values())
+        group_member_counts: dict[str, int] = {}
+        for gid in unique_group_ids:
+            try:
+                g_doc = db.collection(Collections.GROUPS).document(gid).get()
+                if g_doc.exists:
+                    g_data = g_doc.to_dict() or {}
+                    group_member_counts[gid] = len(g_data.get("members", []))
+            except Exception:
+                pass
+        for req_id, gid in group_ids_to_lookup.items():
+            per_form[req_id]["total_recipients"] = group_member_counts.get(gid, 0)
 
         # ── 2. Count responses per form (chunked to stay within Firestore 'in' limit) ─
         for i in range(0, len(owner_request_ids), 30):
