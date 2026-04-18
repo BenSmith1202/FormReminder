@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from models.database import get_db, Collections
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 
 def _now_iso() -> str:
@@ -100,7 +101,7 @@ class OptOutEvent:
 
             db = get_db()
             coll = db.collection(Collections.OPT_OUT_EVENTS)
-            stream = coll.where("owner_id", "==", owner_id).stream()
+            stream = coll.where(filter=FieldFilter("owner_id", "==", owner_id)).stream()
             events = []
             for doc in stream:
                 data = doc.to_dict() or {}
@@ -133,7 +134,7 @@ class OptOutEvent:
 
             db = get_db()
             coll = db.collection(Collections.OPT_OUT_EVENTS)
-            stream = coll.where("owner_id", "==", owner_id).where("recipient_email", "==", email).stream()
+            stream = coll.where(filter=FieldFilter("owner_id", "==", owner_id)).where(filter=FieldFilter("recipient_email", "==", email)).stream()
             events = []
             for doc in stream:
                 data = doc.to_dict() or {}

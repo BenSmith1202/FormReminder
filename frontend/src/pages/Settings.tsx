@@ -26,7 +26,6 @@ import {
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
-import GroupIcon from '@mui/icons-material/Group';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import MessageIcon from '@mui/icons-material/Message';
 import PersonIcon from '@mui/icons-material/Person';
@@ -37,6 +36,7 @@ import LinkIcon from '@mui/icons-material/Link';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 import API_URL from '../config';
 
 // ── Shared section wrapper ────────────────────────────────────────────────
@@ -120,7 +120,6 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [dangerOpen, setDangerOpen] = useState(false);
-  const [memberships, setMemberships] = useState<any[]>([]);
   const [customMessage, setCustomMessage] = useState('');
   const [customMessageLoading, setCustomMessageLoading] = useState(false);
   const [customMessageSaved, setCustomMessageSaved] = useState(true);
@@ -273,20 +272,6 @@ export default function Settings() {
     fetchUserForms();
   }, [user]);
 
-  useEffect(() => {
-    const fetchMemberships = async () => {
-      if (!user?.id) return;
-      try {
-        const response = await fetch(`${API_URL}/api/my-memberships`, {
-          credentials: 'include',
-        });
-        const data = await response.json();
-        if (response.ok) setMemberships(data);
-      } catch { /* silent */ }
-    };
-    fetchMemberships();
-  }, [user]);
-
   // ── Actions ──
   const resetPassword = async () => {
     setError('');
@@ -400,35 +385,13 @@ export default function Settings() {
       });
       if (response.ok) {
         setFormRequests((prev) =>
-          prev.map((f) => (f.id === formId ? { ...f, notificationsEnabled: enabled } : f))
+          prev.map((f) => (f.id === formId ? { ...f, notifications_enabled: enabled } : f))
         );
       } else {
         setError('Could not update notification.');
       }
     } catch {
       setError('Connection error.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleLeaveOrg = async (membershipId: string) => {
-    if (!window.confirm("Are you sure you want to leave this organization?")) return;
-    
-    setActionLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/api/memberships/${membershipId}/leave`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (response.ok) {
-        setMemberships((prev) => prev.filter((m) => m.membership_id !== membershipId));
-        setSuccess("You have successfully left the organization.");
-      } else {
-        setError("Failed to leave organization.");
-      }
-    } catch {
-      setError("Connection error.");
     } finally {
       setActionLoading(false);
     }
@@ -631,11 +594,7 @@ export default function Settings() {
       </Box>
 
       {/* ── Global alerts ── */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>
-          {error}
-        </Alert>
-      )}
+      <ErrorSnackbar error={error} onClose={() => setError('')} />
       {success && (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess('')}
           icon={<CheckCircleIcon fontSize="inherit" />}
@@ -891,55 +850,10 @@ export default function Settings() {
                     <Switch
                       edge="end"
                       size="small"
-                      checked={!!form.notificationsEnabled}
+                      checked={form.notifications_enabled !== false}
                       onChange={(e) => handleToggleNotification(form.id, e.target.checked)}
                       disabled={actionLoading}
                     />
-                  </ListItemSecondaryAction>
-                </ListItem>
-              ))}
-            </List>
-          )}
-        </Section>
-
-        {/* ── Team & Organization ── */}
-        <Section
-          icon={<GroupIcon sx={{ fontSize: 20 }} />}
-          title="Team & Organization"
-          description="Organizations you have joined as a member"
-          iconBg="grey.100"
-          iconColor="text.secondary"
-        >
-          {memberships.length === 0 ? (
-            <Box px={3} py={4} textAlign="center">
-              <Typography variant="body2" color="text.secondary">
-                You are not a member of any other organizations.
-              </Typography>
-            </Box>
-          ) : (
-            <List disablePadding>
-              {memberships.map((org, index) => (
-                <ListItem
-                  key={org.membership_id}
-                  divider={index < memberships.length - 1}
-                  sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}
-                >
-                  <ListItemText
-                    primary={org.org_name}
-                    secondary={`Role: ${org.role.charAt(0).toUpperCase() + org.role.slice(1)}`}
-                    primaryTypographyProps={{ variant: 'body1', fontWeight: 'bold' }}
-                  />
-                  <ListItemSecondaryAction>
-                    <Button
-                      size="small"
-                      color="error"
-                      variant="text"
-                      onClick={() => handleLeaveOrg(org.membership_id)}
-                      disabled={actionLoading}
-                      sx={{ fontWeight: 'bold' }}
-                    >
-                      Leave
-                    </Button>
                   </ListItemSecondaryAction>
                 </ListItem>
               ))}

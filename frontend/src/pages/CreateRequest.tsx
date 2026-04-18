@@ -29,6 +29,7 @@ import {
   Chip,
   Divider,
   Container,
+  Switch,
 } from '@mui/material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -46,6 +47,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 import { isValidDate, sanitizePickerDate } from '../utils/dateValidation';
 
 interface Group {
@@ -124,6 +126,7 @@ export default function CreateRequest() {
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [startActive, setStartActive] = useState(true);
 
   // --- Automated Schedule State ---
   const [reminderSchedule, setReminderSchedule] = useState('normal'); // 'gentle', 'normal', 'frequent', or 'custom'
@@ -374,12 +377,68 @@ export default function CreateRequest() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNeedsGoogleReconnect(false);
 
-    // Initial Validation
-    if (!formUrl) { setError('Please enter a form URL'); return; }
-    if (!groupId) { setError('Please select a group'); return; }
+    // ── Client-side validation ──────────────────────────────────────────
+
+    if (!requestTitle.trim()) { setError('Please enter a request title'); return; }
+
+    if (!formUrl.trim()) { setError('Please enter a form URL'); return; }
+
+    // Basic URL format check per provider
+    const trimmedUrl = formUrl.trim();
+    if (provider === 'google') {
+      if (!/docs\.google\.com\/forms\/d\//.test(trimmedUrl)) {
+        setError(
+          'That doesn\'t look like a Google Form link. ' +
+          'It should contain "docs.google.com/forms/d/…". ' +
+          'Make sure you\'re copying the edit or viewform URL from your Google Form.'
+        );
+        return;
+      }
+      if (/\/forms\/d\/e\//.test(trimmedUrl)) {
+        setError(
+          'This looks like a published share link (/d/e/…) which uses a different ID. ' +
+          'Please use the edit or viewform link instead — it contains /d/FORM_ID/.'
+        );
+        return;
+      }
+    } else if (provider === 'jotform') {
+      if (!/jotform\.com/.test(trimmedUrl) && !/^\d{8,}$/.test(trimmedUrl)) {
+        setError(
+          'That doesn\'t look like a Jotform link or form ID. ' +
+          'Paste the full URL (e.g. https://form.jotform.com/242630266486159) or just the numeric form ID.'
+        );
+        return;
+      }
+    } else if (provider === 'microsoft') {
+      if (!/forms\.(office|microsoft)\.com/.test(trimmedUrl)) {
+        setError(
+          'That doesn\'t look like a Microsoft Forms link. ' +
+          'It should be from forms.office.com or forms.microsoft.com.'
+        );
+        return;
+      }
+    }
+
+    // Microsoft Forms requires the title to match the form title exactly
+    if (provider === 'microsoft' && !requestTitle.trim()) {
+      setError(
+        'Microsoft Forms requires a Request Title that exactly matches your form\'s title. ' +
+        'We use it to locate the response file in your OneDrive.'
+      );
+      return;
+    }
+
+    if (!groupId) { setError('Please select a recipient group'); return; }
     if (!isValidDate(dueDate)) {
       setError('Please select a valid due date');
+      return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (dueDate < today) {
+      setError('Due date cannot be in the past');
       return;
     }
     if (
@@ -401,6 +460,7 @@ export default function CreateRequest() {
         due_date: dueDate.toISOString(),
         reminder_schedule: reminderSchedule,
         first_reminder_timing: firstReminderTiming,
+        is_active: startActive,
       };
 
       // Append custom schedule data if applicable
@@ -429,14 +489,56 @@ export default function CreateRequest() {
       const data = await response.json();
 
       if (!response.ok) {
-        // Detect if the failure was due to an expired/invalid provider token.
-        const needsReconnect =
-          data.action_required === 'reconnect_google' ||
-          data.action_required?.startsWith('connect_') ||
-          (response.status === 403 && data.error?.toLowerCase().includes('not connected'));
-        
-        if (needsReconnect) setNeedsGoogleReconnect(true);
-        throw new Error(data.message || data.error || 'Failed to create form request');
+        // ── Map backend errors to user-friendly messages ──
+        const code = data.code || '';
+        const action = data.action_required || '';
+        const rawError = (data.error || '').toLowerCase();
+        const providerLabel = provider === 'google' ? 'Google' : provider === 'jotform' ? 'Jotform' : 'Microsoft';
+
+        // 1) Provider not connected / token expired
+        if (
+          action === 'reconnect_google' ||
+          action.startsWith('connect_') ||
+          (response.status === 403 && rawError.includes('not connected'))
+        ) {
+          setNeedsGoogleReconnect(true);
+          throw new Error(
+            `Your ${providerLabel} account is not connected or the connection expired. ` +
+            `Please reconnect it using the button below.`
+          );
+        }
+
+        // 2) Could not extract a form ID from the URL
+        if (rawError.includes('could not extract') || rawError.includes('form id')) {
+          throw new Error(
+            `We couldn't find a valid form ID in that URL. ` +
+            `Double-check that you copied the full link from ${providerLabel} and that it matches the expected format shown below the URL field.`
+          );
+        }
+
+        // 3) Microsoft Excel file not found
+        if (code === 'microsoft_excel_not_found') {
+          throw new Error(
+            data.message ||
+            'No matching Excel file found in OneDrive. Make sure the request title matches your Microsoft Form title exactly, ' +
+            'you\'ve submitted at least one test response, and clicked "Open in Excel" on the Responses tab.'
+          );
+        }
+
+        // 4) Group not found
+        if (rawError.includes('group not found')) {
+          throw new Error('The selected group no longer exists. Please choose a different group or create a new one.');
+        }
+
+        // 5) Group ownership
+        if (rawError.includes('don\'t own') || rawError.includes('do not own')) {
+          throw new Error('You can only create requests for groups you own.');
+        }
+
+        // 6) Generic fallback — use the backend message if it exists, otherwise a helpful default
+        throw new Error(
+          data.message || data.error || 'Something went wrong creating the form request. Please try again.'
+        );
       }
 
       // Success — clear the draft so stale data doesn't hang around
@@ -469,40 +571,33 @@ export default function CreateRequest() {
           </Typography>
         </Box>
 
-        {/* Dynamic Error Banner (Handles Google OAuth Prompts) */}
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 3 }}
-            onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
-            action={
-              needsGoogleReconnect ? (
-                <Button
-                  color="inherit"
-                  size="small"
-                  onClick={async () => {
-                    try {
-                      // Trigger Google OAuth flow to refresh tokens
-                      const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
-                      const data = await res.json();
-                      if (data.authorization_url) {
-                        window.location.href = data.authorization_url;
-                      } else {
-                        setError(data.error || 'Could not start Google connect');
-                      }
-                    } catch {
-                      setError('Could not start Google connect');
+        <ErrorSnackbar
+          error={error}
+          onClose={() => { setError(null); setNeedsGoogleReconnect(false); }}
+          action={
+            needsGoogleReconnect ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/login/google`, { credentials: 'include' });
+                    const data = await res.json();
+                    if (data.authorization_url) {
+                      window.location.href = data.authorization_url;
+                    } else {
+                      setError(data.error || 'Could not start Google connect');
                     }
-                  }}
-                >
-                  Connect Google
-                </Button>
-              ) : undefined
-            }
-          >
-            {error}
-          </Alert>
-        )}
+                  } catch {
+                    setError('Could not start Google connect');
+                  }
+                }}
+              >
+                Connect Google
+              </Button>
+            ) : undefined
+          }
+        />
 
         <Box component="form" onSubmit={handleSubmit} display="flex" flexDirection="column" gap={3}>
 
@@ -683,6 +778,7 @@ export default function CreateRequest() {
               <DatePicker
                 value={isValidDate(dueDate) ? dueDate : null}
                 onChange={(v) => setDueDate(sanitizePickerDate(v))}
+                minDate={new Date()}
                 slotProps={{
                   textField: { size: 'small', fullWidth: true, required: true },
                 }}
@@ -812,6 +908,31 @@ export default function CreateRequest() {
                 </Box>
               )}
             </Box>
+
+            <Divider sx={{ my: 3 }} />
+
+            {/* Start as Active or Inactive */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={startActive}
+                  onChange={(e) => setStartActive(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label={
+                <Box>
+                  <Typography variant="body2" fontWeight="medium">
+                    Start as {startActive ? 'Active' : 'Inactive'}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {startActive
+                      ? 'Reminders will begin sending according to the schedule above.'
+                      : 'Reminders will be paused until you manually activate this request.'}
+                  </Typography>
+                </Box>
+              }
+            />
           </Paper>
 
           {/* ── Submit row ── */}

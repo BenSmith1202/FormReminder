@@ -7,6 +7,8 @@ import traceback
 from models.user import User
 from models.group import Group
 from models.database import get_db, Collections
+from models.org_member import OrgMember
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.notification import (
     notify_form_submission,
     notify_form_completed,
@@ -25,6 +27,21 @@ from utils.scheduler import send_initial_emails  # For immediate email sending
 
 # Define the Blueprint
 form_requests_bp = Blueprint('form_requests', __name__)
+
+
+def _resolve_org_context(session_user_id: str, org_id):
+    """Resolve the effective owner for a request that may come from a sub-user.
+
+    Returns a 3-tuple (effective_owner_id, membership_or_None, error_or_None).
+    """
+    if not org_id or org_id == session_user_id:
+        return session_user_id, None, None
+
+    membership = OrgMember.get_membership(org_id, session_user_id)
+    if not membership or membership.status != OrgMember.STATUS_ACTIVE:
+        return None, None, (jsonify({"error": "Not an active member of this organization"}), 403)
+
+    return org_id, membership, None
 
 
 def _classify_forms_api_error(err: Exception) -> str:
@@ -171,7 +188,7 @@ def get_form_requests():
         db = get_db()
         
         form_requests = db.collection(Collections.FORM_REQUESTS)\
-            .where('owner_id', '==', user_id)\
+            .where(filter=FieldFilter('owner_id', '==', user_id))\
             .stream()
         
         requests_list = []
@@ -207,7 +224,7 @@ def get_form_requests():
             # Calculate response_count - count unique group-member emails that responded
             responded_member_emails = set()
             responses_query = db.collection(Collections.RESPONSES)\
-                .where('request_id', '==', req.id)\
+                .where(filter=FieldFilter('request_id', '==', req.id))\
                 .stream()
             
             for resp in responses_query:
@@ -306,11 +323,14 @@ def get_form_request_responses(request_id: str):
         
         # Get responses from database
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         responses_list = []
         non_member_responses = []
+        dismissed_emails = set(
+            e.lower() for e in request_data.get('dismissed_response_emails', [])
+        )
         
         # Normalize all response emails for matching
         for response in responses:
@@ -324,7 +344,8 @@ def get_form_request_responses(request_id: str):
             }
             
             if group_emails and response_email not in group_emails:
-                non_member_responses.append(response_obj)
+                if response_email not in dismissed_emails:
+                    non_member_responses.append(response_obj)
             else:
                 responses_list.append(response_obj)
         
@@ -418,7 +439,17 @@ def refresh_form_responses(request_id: str):
         if not user_id:
             return jsonify({"error": "Must be logged in"}), 401
         
-        user = User.get_by_id(user_id)
+        # Resolve org context so sub-users use the org owner's credentials
+        org_id = request.headers.get("X-Org-ID")
+        effective_owner_id, membership, err = _resolve_org_context(user_id, org_id)
+        if err:
+            return err
+        
+        # Sub-user: verify assignment before allowing refresh
+        if membership and not membership.can_perform("view", "form_request", request_id):
+            return jsonify({"error": "Not assigned to this form request"}), 403
+        
+        user = User.get_by_id(effective_owner_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
         
@@ -433,8 +464,8 @@ def refresh_form_responses(request_id: str):
         
         request_data = request_doc.to_dict()
         
-        # Verify ownership
-        if request_data.get('owner_id') != user_id:
+        # Verify ownership (membership assignment already checked above)
+        if not membership and request_data.get('owner_id') != effective_owner_id:
             return jsonify({"error": "Unauthorized"}), 403
         
         # ── Determine provider (fall back to google for legacy requests) ──
@@ -595,7 +626,7 @@ def refresh_form_responses(request_id: str):
         # Get existing responses to check for duplicates by response_id
         existing_responses = {}
         old_responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         for old_response in old_responses:
@@ -707,11 +738,22 @@ def refresh_form_responses(request_id: str):
                 if group_id and group_emails:
                     total_recipients = len(group_emails)
                     if total_recipients > 0 and len(responded_member_emails) >= total_recipients:
-                        notify_form_completed(
-                            user_id=owner_id,
-                            form_name=form_title,
-                            form_reminder_id=request_id
-                        )
+                        # Guard: only send completion notification once per form request
+                        existing_completed = db.collection(Collections.NOTIFICATIONS)\
+                            .where(filter=FieldFilter('form_reminder_id', '==', request_id))\
+                            .where(filter=FieldFilter('type', '==', 'form_completed'))\
+                            .limit(1)\
+                            .stream()
+                        already_notified = any(True for _ in existing_completed)
+                        if not already_notified:
+                            print(f"All {total_recipients} members responded for {request_id} — sending completion notification")
+                            notify_form_completed(
+                                user_id=owner_id,
+                                form_name=form_title,
+                                form_reminder_id=request_id
+                            )
+                        else:
+                            print(f"Skipping duplicate completion notification for {request_id} — already sent")
             
         # Re-check metadata on every successful sync so warnings self-heal if user fixed settings.
         metadata = {}
@@ -1063,6 +1105,7 @@ def create_form_request():
             form_ref.set(form_data)
         
         # Create form request document
+        start_active = data.get('is_active', True)
         form_request_data = {
             'provider': provider,
             'form_id': form_doc_id,
@@ -1073,8 +1116,8 @@ def create_form_request():
             'title': data.get('title') or metadata.get('title', f"Form {form_id[:8]}"),
             'form_url': form_url,
             'created_at': now,
-            'status': 'Active',
-            'is_active': True,
+            'status': 'Active' if start_active else 'Inactive',
+            'is_active': bool(start_active),
             'due_date': due_date.isoformat(),
             'reminder_schedule': {
                 'schedule_type': reminder_schedule,
@@ -1414,7 +1457,7 @@ def delete_form_request(request_id: str):
         
         # Delete all responses for this request
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         deleted_responses = 0
@@ -1513,6 +1556,44 @@ def add_email_to_group(request_id: str):
         }), 500
 
 
+# Dismiss an unrecognized response email
+@form_requests_bp.post("/<request_id>/dismiss-response")
+def dismiss_response(request_id: str):
+    """Dismiss an unrecognized response so it no longer shows in the UI"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({"error": "Must be logged in"}), 401
+
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+
+        db = get_db()
+        request_ref = db.collection(Collections.FORM_REQUESTS).document(request_id)
+        request_doc = request_ref.get()
+
+        if not request_doc.exists:
+            return jsonify({"error": "Form request not found"}), 404
+
+        request_data = request_doc.to_dict()
+        if request_data.get('owner_id') != user_id:
+            return jsonify({"error": "Unauthorized"}), 403
+
+        dismissed = request_data.get('dismissed_response_emails', [])
+        if email not in dismissed:
+            dismissed.append(email)
+            request_ref.update({'dismissed_response_emails': dismissed})
+
+        return jsonify({"success": True, "message": f"Dismissed {email}"}), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to dismiss response", "details": str(e)}), 500
+
+
 # ============================================================
 # DUPLICATION HELPERS - Factored for reusability
 # ============================================================
@@ -1558,6 +1639,7 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
     # Create the new form request with same settings
     now = datetime.now(timezone.utc).isoformat()
     new_request_data = {
+        'provider': request_data.get('provider'),
         'form_id': request_data.get('form_id'),
         'google_form_id': request_data.get('google_form_id'),
         'owner_id': user_id,
@@ -1565,12 +1647,13 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
         'title': new_title,
         'form_url': request_data.get('form_url'),
         'created_at': now,
-        'status': 'Active',
-        'is_active': True,
+        'status': 'Inactive',
+        'is_active': False,
         'due_date': request_data.get('due_date'),
         'reminder_schedule': request_data.get('reminder_schedule'),
         'first_reminder_timing': request_data.get('first_reminder_timing')
     }
+    print(f"Duplicate created as Inactive for request {request_id} -> new title: {new_title}")
     
     # Add to form_requests collection
     doc_ref = db.collection(Collections.FORM_REQUESTS).document()
@@ -1579,7 +1662,7 @@ def _duplicate_form_request(request_id: str, user_id: str) -> tuple:
     
     # Copy all responses from the original request to the new request
     original_responses = db.collection(Collections.RESPONSES)\
-        .where('request_id', '==', request_id)\
+        .where(filter=FieldFilter('request_id', '==', request_id))\
         .stream()
     
     response_count = 0

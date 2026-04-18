@@ -41,6 +41,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import API_URL from '../config';
 import { isValidDate, sanitizePickerDate } from '../utils/dateValidation';
 import AnimatedInfoButton from '../components/InfoButton';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 interface Group {
   id: string;
@@ -100,7 +101,7 @@ export default function EditRequest() {
       setRequestTitle(request.title);
       setFormUrl(request.form_url);
       setGroupId(request.group_id || '');
-      setActive(request.activity ?? true);
+      setActive(request.is_active ?? true);
       setProvider(request.provider || 'google');
 
       if (request.due_date) {
@@ -153,6 +154,11 @@ export default function EditRequest() {
         throw new Error('Please fill in all required fields, including a valid due date');
 
       const now = new Date();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (dueDate < today) {
+        throw new Error('Due date cannot be in the past. Please select a future date.');
+      }
       // If user is trying to set it to Active, but the due date has passed
       if (active && dueDate < now) {
         throw new Error('Cannot set an expired request to Active. Please extend the Due Date first.');
@@ -262,11 +268,7 @@ export default function EditRequest() {
           </Box>
         </Box>
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+        <ErrorSnackbar error={error} onClose={() => setError(null)} />
 
         {/* ── Section 1: General Information ── */}
         <Paper
@@ -420,6 +422,7 @@ export default function EditRequest() {
             <DatePicker
               value={isValidDate(dueDate) ? dueDate : null}
               onChange={(v) => setDueDate(sanitizePickerDate(v))}
+              minDate={new Date()}
               slotProps={{ textField: { size: 'small', fullWidth: true } }}
             />
           </Box>

@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from models.database import get_db, Collections
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 
 class OrgMember:
@@ -185,7 +186,7 @@ class OrgMember:
         db = get_db()
         results = (
             db.collection(Collections.ORG_MEMBERS)
-            .where("invite_token", "==", token)
+            .where(filter=FieldFilter("invite_token", "==", token))
             .stream()
         )
         for doc in results:
@@ -216,7 +217,7 @@ class OrgMember:
         db = get_db()
         docs = (
             db.collection(Collections.ORG_MEMBERS)
-            .where("org_id", "==", org_id)
+            .where(filter=FieldFilter("org_id", "==", org_id))
             .stream()
         )
         return [OrgMember._from_doc(d) for d in docs]
@@ -234,8 +235,8 @@ class OrgMember:
         db = get_db()
         docs = (
             db.collection(Collections.ORG_MEMBERS)
-            .where("member_user_id", "==", user_id)
-            .where("status", "==", OrgMember.STATUS_ACTIVE)
+            .where(filter=FieldFilter("member_user_id", "==", user_id))
+            .where(filter=FieldFilter("status", "==", OrgMember.STATUS_ACTIVE))
             .stream()
         )
         return [OrgMember._from_doc(d) for d in docs]

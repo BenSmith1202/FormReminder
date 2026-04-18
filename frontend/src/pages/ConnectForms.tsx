@@ -27,6 +27,7 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 import API_URL from '../config';
+import ErrorSnackbar from '../components/ErrorSnackbar';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -254,11 +255,7 @@ export default function ConnectForms() {
         </Box>
 
         {/* Error alert */}
-        {connectError && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setConnectError('')}>
-            {connectError}
-          </Alert>
-        )}
+        <ErrorSnackbar error={connectError} onClose={() => setConnectError('')} />
 
         {/* Provider cards */}
         <Box

@@ -22,6 +22,8 @@ import {
   MenuItem,
   ToggleButton,
   ToggleButtonGroup,
+  Collapse,
+  IconButton,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import { DataGrid, type GridColDef, type GridRenderCellParams } from '@mui/x-data-grid';
@@ -42,6 +44,7 @@ import SendIcon from '@mui/icons-material/Send';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import BlockIcon from '@mui/icons-material/Block';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import API_URL from '../config';
 import AnimatedInfoButton from '../components/InfoButton';
@@ -61,6 +64,7 @@ interface EmailOpenPerForm {
   request_id: string | null;
   form_title: string;
   opens: number;
+  emails_sent: number;
 }
 
 interface EmailOpenMonthly {
@@ -84,12 +88,12 @@ interface SubmissionPerForm {
   request_id: string;
   form_title: string;
   submissions: number;
+  total_recipients: number;
 }
 
 interface SubmissionAnalytics {
   per_form: SubmissionPerForm[];
   total: number;
-  range: string;
 }
 
 function formatTimestamp(ts: string): string {
@@ -142,9 +146,13 @@ export default function Analytics() {
   const [statsLoading, setStatsLoading] = useState(false);
 
   const [submissionStats, setSubmissionStats] = useState<SubmissionAnalytics | null>(null);
-  const [submissionRange, setSubmissionRange] = useState<string>('6m');
   const [submissionFormId, setSubmissionFormId] = useState<string>('__all__');
   const [submissionLoading, setSubmissionLoading] = useState(false);
+
+  // Collapsible section state
+  const [emailOpenExpanded, setEmailOpenExpanded] = useState(true);
+  const [submissionsExpanded, setSubmissionsExpanded] = useState(true);
+  const [optOutExpanded, setOptOutExpanded] = useState(true);
 
   const loadEmailOpens = async (range: string) => {
     setStatsLoading(true);
@@ -202,7 +210,7 @@ export default function Analytics() {
     loadUser().then((ownerId) => {
       if (ownerId) {
         loadEmailOpens(timeRange);
-        loadSubmissions(submissionRange);
+        loadSubmissions();
         loadEvents(ownerId);
       } else {
         setLoading(false);
@@ -211,10 +219,10 @@ export default function Analytics() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadSubmissions = async (range: string) => {
+  const loadSubmissions = async () => {
     setSubmissionLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/analytics/submissions?range=${range}`, { credentials: 'include' });
+      const res = await fetch(`${API_URL}/api/analytics/submissions`, { credentials: 'include' });
       if (res.ok) {
         const data: SubmissionAnalytics = await res.json();
         setSubmissionStats(data);
@@ -236,10 +244,7 @@ export default function Analytics() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
 
-  useEffect(() => {
-    loadSubmissions(submissionRange);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submissionRange]);
+
 
   const refreshEvents = async () => {
     if (!user?.id) return;
@@ -384,7 +389,9 @@ export default function Analytics() {
         );
     return filtered.map((row) => ({
       name: row.form_title || 'Untitled',
+      percentage: row.emails_sent > 0 ? Math.round((row.opens / row.emails_sent) * 100) : 0,
       opens: row.opens,
+      emails_sent: row.emails_sent,
     }));
   }, [emailOpenStats, selectedFormId]);
 
@@ -409,7 +416,12 @@ export default function Analytics() {
     const filtered = submissionFormId === '__all__'
       ? submissionStats.per_form
       : submissionStats.per_form.filter((r) => r.request_id === submissionFormId);
-    return filtered.map((r) => ({ name: r.form_title || 'Untitled', submissions: r.submissions }));
+    return filtered.map((r) => ({
+      name: r.form_title || 'Untitled',
+      percentage: r.total_recipients > 0 ? Math.round((r.submissions / r.total_recipients) * 100) : 0,
+      submissions: r.submissions,
+      total_recipients: r.total_recipients,
+    }));
   }, [submissionStats, submissionFormId]);
 
   if (loading) {
@@ -452,17 +464,24 @@ export default function Analytics() {
     },
   };
 
-  const sectionHeader = (icon: React.ReactNode, title: string, controls?: React.ReactNode) => (
+  const sectionHeader = (icon: React.ReactNode, title: string, opts?: { controls?: React.ReactNode; expanded?: boolean; onToggle?: () => void; infoButton?: React.ReactNode }) => (
     <Box
       display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}
       px={{ xs: 2, sm: 2.5 }} py={2}
-      sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
+      sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50', cursor: opts?.onToggle ? 'pointer' : undefined }}
+      onClick={opts?.onToggle}
     >
       <Box display="flex" alignItems="center" gap={1.25}>
         <Box sx={{ color: 'primary.main', display: 'flex', alignItems: 'center' }}>{icon}</Box>
         <Typography variant="subtitle1" fontWeight={700}>{title}</Typography>
+        {opts?.infoButton && <Box onClick={(e) => e.stopPropagation()}>{opts.infoButton}</Box>}
+        {opts?.onToggle && (
+          <IconButton size="small" sx={{ transform: opts.expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.3s' }}>
+            <ExpandMoreIcon fontSize="small" />
+          </IconButton>
+        )}
       </Box>
-      {controls}
+      {opts?.controls && <Box onClick={(e) => e.stopPropagation()}>{opts.controls}</Box>}
     </Box>
   );
 
@@ -481,28 +500,35 @@ export default function Analytics() {
 
       {/* ── Stat cards ── */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1.5, sm: 2 }, mb: 3 }}>
-        {[
-          {
-            label: 'EMAILS SENT',
-            value: emailOpenStats?.total_sent ?? '—',
-            sub: 'Total successfully delivered',
-            icon: <SendIcon fontSize="small" />,
-          },
-          {
-            label: 'OPEN RATE',
-            value: emailOpenStats != null ? `${emailOpenStats.open_rate}%` : '—',
-            sub: emailOpenStats != null
-              ? `${emailOpenStats.unique_opens} unique opener${emailOpenStats.unique_opens !== 1 ? 's' : ''}`
-              : 'Of emails delivered',
-            icon: <TrendingUpIcon fontSize="small" />,
-          },
-          {
-            label: 'TOTAL SUBMISSIONS',
-            value: submissionStats?.total ?? '—',
-            sub: `In ${RANGE_LABELS[submissionRange] ?? submissionRange}`,
-            icon: <AssignmentTurnedInIcon fontSize="small" />,
-          },
-        ].map(({ label, value, sub, icon }) => (
+        {(() => {
+          const totalSubmissions = submissionStats ? submissionStats.per_form.reduce((a, f) => a + f.submissions, 0) : 0;
+          const totalRecipients = submissionStats ? submissionStats.per_form.reduce((a, f) => a + f.total_recipients, 0) : 0;
+          const submissionRate = totalRecipients > 0 ? Math.round((totalSubmissions / totalRecipients) * 100) : 0;
+          return [
+            {
+              label: 'OPEN RATE',
+              value: emailOpenStats != null ? `${emailOpenStats.open_rate}%` : '—',
+              sub: emailOpenStats != null
+                ? `${emailOpenStats.unique_opens} unique opener${emailOpenStats.unique_opens !== 1 ? 's' : ''}`
+                : 'Of emails delivered',
+              icon: <TrendingUpIcon fontSize="small" />,
+            },
+            {
+              label: 'SUBMISSION RATE',
+              value: submissionStats != null ? `${submissionRate}%` : '—',
+              sub: submissionStats != null
+                ? `${totalSubmissions} / ${totalRecipients} across active forms`
+                : 'Of active form requests',
+              icon: <AssignmentTurnedInIcon fontSize="small" />,
+            },
+            {
+              label: 'EMAILS SENT',
+              value: emailOpenStats?.total_sent ?? '—',
+              sub: 'Total successfully delivered',
+              icon: <SendIcon fontSize="small" />,
+            },
+          ];
+        })().map(({ label, value, sub, icon }) => (
           <Box key={label} sx={{ flex: { xs: '1 1 calc(33% - 8px)', sm: '1 1 180px' }, minWidth: 140 }}>
             <Card elevation={0} sx={{
               height: '100%', borderRadius: 3, border: '1px solid', borderColor: 'divider',
@@ -530,18 +556,85 @@ export default function Analytics() {
         ))}
       </Box>
 
+      {/* ── Submissions per form ── */}
+      <Paper {...sectionPaper}>
+        {sectionHeader(
+          <AssignmentTurnedInIcon fontSize="small" />,
+          'Submissions per Form',
+          {
+            controls: (
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel id="sub-form-label">Form</InputLabel>
+                <Select labelId="sub-form-label" label="Form" value={submissionFormId}
+                  onChange={(e: SelectChangeEvent) => setSubmissionFormId(e.target.value)}>
+                  <MenuItem value="__all__">All forms</MenuItem>
+                  {submissionFormOptions.map((opt) => (
+                    <MenuItem key={opt.id} value={opt.id}>{opt.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ),
+            expanded: submissionsExpanded,
+            onToggle: () => setSubmissionsExpanded((prev) => !prev),
+            infoButton: (
+              <AnimatedInfoButton title="Submissions per Form">
+                <p>View the <strong>completion rate percentage</strong> (submissions / total group recipients) for each active form request. This helps identify which forms have the highest response rates.</p>
+              </AnimatedInfoButton>
+            ),
+          }
+        )}
+        <Collapse in={submissionsExpanded}>
+        <Box sx={{ p: { xs: 2, sm: 2.5 }, position: 'relative' }}>
+          {submissionLoading && (
+            <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.7)', zIndex: 1 }}>
+              <CircularProgress size={28} />
+            </Box>
+          )}
+          {submissionBarData.length === 0 ? (
+            <Box sx={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" color="text.secondary">No active form submissions to display.</Typography>
+            </Box>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={submissionBarData} margin={{ top: 4, right: 8, left: -10, bottom: submissionBarData.length > 4 ? 40 : 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+                  interval={0} angle={submissionBarData.length > 4 ? -30 : 0}
+                  textAnchor={submissionBarData.length > 4 ? 'end' : 'middle'} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e0e0e0', fontSize: 12 }} formatter={(value: number, _name: string, props: { payload?: { submissions: number; total_recipients: number } }) => [`${value}% (${props.payload?.submissions ?? 0}/${props.payload?.total_recipients ?? 0})`, 'Completion Rate']} />
+                <Bar dataKey="percentage" fill="#1976d2" name="Completion Rate" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Box>
+        </Collapse>
+      </Paper>
+
       {/* ── Email open analytics ── */}
       <Paper {...sectionPaper}>
         {sectionHeader(
           <SendIcon fontSize="small" />,
           'Email Open Analytics',
-          <ToggleButtonGroup size="small" value={timeRange} exclusive
-            onChange={(_e, val) => { if (val) setTimeRange(val); }} sx={toggleStyle}>
-            {RANGE_OPTIONS.map(({ value, label }) => (
-              <ToggleButton key={value} value={value}>{label}</ToggleButton>
-            ))}
-          </ToggleButtonGroup>
+          {
+            controls: (
+              <ToggleButtonGroup size="small" value={timeRange} exclusive
+                onChange={(_e, val) => { if (val) setTimeRange(val); }} sx={toggleStyle}>
+                {RANGE_OPTIONS.map(({ value, label }) => (
+                  <ToggleButton key={value} value={value}>{label}</ToggleButton>
+                ))}
+              </ToggleButtonGroup>
+            ),
+            expanded: emailOpenExpanded,
+            onToggle: () => setEmailOpenExpanded((prev) => !prev),
+            infoButton: (
+              <AnimatedInfoButton title="Email Open Analytics">
+                <p>Track how many recipients open your reminder emails. The bar chart shows the <strong>open rate percentage</strong> (opens / emails sent) for each form, while the line chart shows open trends over time.</p>
+              </AnimatedInfoButton>
+            ),
+          }
         )}
+        <Collapse in={emailOpenExpanded}>
         <Box sx={{ position: 'relative' }}>
           {statsLoading && (
             <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.7)', zIndex: 1 }}>
@@ -552,7 +645,7 @@ export default function Analytics() {
             {/* Bar chart */}
             <Box sx={{ flex: { xs: '1 1 100%', md: '1 1 50%' }, minWidth: 0, borderRight: { md: '1px solid' }, borderColor: { md: 'divider' }, p: { xs: 2, sm: 2.5 } }}>
               <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1.5}>
-                <Typography variant="body2" fontWeight={600} color="text.secondary">Opens per form</Typography>
+                <Typography variant="body2" fontWeight={600} color="text.secondary">Open rate per form</Typography>
                 <FormControl size="small" sx={{ minWidth: 150 }}>
                   <InputLabel id="form-filter-label">Form</InputLabel>
                   <Select labelId="form-filter-label" label="Form" value={selectedFormId}
@@ -573,9 +666,9 @@ export default function Analytics() {
                   <BarChart data={openBarData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e0e0e0', fontSize: 12 }} />
-                    <Bar dataKey="opens" fill="#43a047" name="Opens" radius={[4, 4, 0, 0]} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e0e0e0', fontSize: 12 }} formatter={(value: number, _name: string, props: { payload?: { opens: number; emails_sent: number } }) => [`${value}% (${props.payload?.opens ?? 0}/${props.payload?.emails_sent ?? 0})`, 'Open Rate']} />
+                    <Bar dataKey="percentage" fill="#43a047" name="Open Rate" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -598,61 +691,21 @@ export default function Analytics() {
             </Box>
           </Box>
         </Box>
-      </Paper>
-
-      {/* ── Submissions per form ── */}
-      <Paper {...sectionPaper}>
-        {sectionHeader(
-          <AssignmentTurnedInIcon fontSize="small" />,
-          'Submissions per Form',
-          <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-            <FormControl size="small" sx={{ minWidth: 150 }}>
-              <InputLabel id="sub-form-label">Form</InputLabel>
-              <Select labelId="sub-form-label" label="Form" value={submissionFormId}
-                onChange={(e: SelectChangeEvent) => setSubmissionFormId(e.target.value)}>
-                <MenuItem value="__all__">All forms</MenuItem>
-                {submissionFormOptions.map((opt) => (
-                  <MenuItem key={opt.id} value={opt.id}>{opt.label}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <ToggleButtonGroup size="small" value={submissionRange} exclusive
-              onChange={(_e, val) => { if (val) setSubmissionRange(val); }} sx={toggleStyle}>
-              {RANGE_OPTIONS.map(({ value, label }) => (
-                <ToggleButton key={value} value={value}>{label}</ToggleButton>
-              ))}
-            </ToggleButtonGroup>
-          </Box>
-        )}
-        <Box sx={{ p: { xs: 2, sm: 2.5 }, position: 'relative' }}>
-          {submissionLoading && (
-            <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.7)', zIndex: 1 }}>
-              <CircularProgress size={28} />
-            </Box>
-          )}
-          {submissionBarData.length === 0 ? (
-            <Box sx={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Typography variant="body2" color="text.secondary">No submissions recorded for this period.</Typography>
-            </Box>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={submissionBarData} margin={{ top: 4, right: 8, left: -10, bottom: submissionBarData.length > 4 ? 40 : 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
-                  interval={0} angle={submissionBarData.length > 4 ? -30 : 0}
-                  textAnchor={submissionBarData.length > 4 ? 'end' : 'middle'} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e0e0e0', fontSize: 12 }} />
-                <Bar dataKey="submissions" fill="#1976d2" name="Submissions" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </Box>
+        </Collapse>
       </Paper>
 
       {/* ── Opted-Out Recipients ── */}
       <Paper {...sectionPaper} sx={{ ...sectionPaper.sx, mb: 0 }}>
-        {sectionHeader(<BlockIcon fontSize="small" />, 'Opted-Out Recipients')}
+        {sectionHeader(<BlockIcon fontSize="small" />, 'Opted-Out Recipients', {
+          expanded: optOutExpanded,
+          onToggle: () => setOptOutExpanded((prev) => !prev),
+          infoButton: (
+            <AnimatedInfoButton title="Opted-Out Recipients">
+              <p>View recipients who have opted out of receiving your form reminders. This log tracks all opt-out and resubscribe events including the source, group, and timestamp of each event.</p>
+            </AnimatedInfoButton>
+          ),
+        })}
+        <Collapse in={optOutExpanded}>
         <Box sx={{ p: { xs: 1.5, sm: 2 } }}>
           {isMobile ? (
             <Box>
@@ -701,6 +754,7 @@ export default function Analytics() {
             </Box>
           )}
         </Box>
+        </Collapse>
       </Paper>
 
       <Snackbar

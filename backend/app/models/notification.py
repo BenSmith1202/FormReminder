@@ -3,6 +3,7 @@
 
 from typing import Dict, List, Optional
 from datetime import datetime
+from google.cloud.firestore_v1.base_query import FieldFilter
 from models.database import get_db, Collections
 
 
@@ -96,10 +97,10 @@ class Notification:
             notifications_ref = db.collection(Collections.NOTIFICATIONS)
             
             # Simple query without ordering to avoid needing composite index
-            query = notifications_ref.where('user_id', '==', user_id)
+            query = notifications_ref.where(filter=FieldFilter('user_id', '==', user_id))
             
             if not include_read:
-                query = query.where('is_read', '==', False)
+                query = query.where(filter=FieldFilter('is_read', '==', False))
             
             # Fetch all matching notifications
             notifications = []
@@ -125,7 +126,7 @@ class Notification:
             db = get_db()
             notifications_ref = db.collection(Collections.NOTIFICATIONS)
             
-            query = notifications_ref.where('user_id', '==', user_id).where('is_read', '==', False)
+            query = notifications_ref.where(filter=FieldFilter('user_id', '==', user_id)).where(filter=FieldFilter('is_read', '==', False))
             
             # Count documents
             count = 0
@@ -159,7 +160,7 @@ class Notification:
             db = get_db()
             notifications_ref = db.collection(Collections.NOTIFICATIONS)
             
-            query = notifications_ref.where('user_id', '==', user_id).where('is_read', '==', False)
+            query = notifications_ref.where(filter=FieldFilter('user_id', '==', user_id)).where(filter=FieldFilter('is_read', '==', False))
             
             for doc in query.stream():
                 doc.reference.update({'is_read': True})

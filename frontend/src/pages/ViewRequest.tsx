@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Paper,
@@ -24,8 +24,7 @@ import {
   Skeleton,
   InputAdornment,
   TextField,
-  Tabs,
-  Tab
+  Collapse
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -36,10 +35,13 @@ import EditIcon from '@mui/icons-material/Edit';
 import EventIcon from '@mui/icons-material/Event';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import LinkIcon from '@mui/icons-material/Link';
 import SearchIcon from '@mui/icons-material/Search';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
@@ -76,16 +78,6 @@ interface MemberStatus {
   submitted_at?: string;
 }
 
-interface OptOutEventItem {
-  id: string;
-  recipient_email: string;
-  event_type: string;
-  group_name: string | null;
-  performed_by: string;
-  source: string;
-  timestamp: string;
-}
-
 export default function ViewRequest() {
   const { requestId } = useParams<{ requestId: string }>();
   const navigate = useNavigate();
@@ -102,15 +94,10 @@ export default function ViewRequest() {
   const [refreshing, setRefreshing] = useState(false);
   const [needsGoogleReconnect, setNeedsGoogleReconnect] = useState(false);
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const [dismissingEmail, setDismissingEmail] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
-
-  // Opt-out tab state
-  const [tabIndex, setTabIndex] = useState(0);
-  const [optOutEvents, setOptOutEvents] = useState<OptOutEventItem[]>([]);
-  const [optOutLoading, setOptOutLoading] = useState(false);
-  const [optOutFetched, setOptOutFetched] = useState(false);
-  const [resubscribingEmail, setResubscribingEmail] = useState<string | null>(null);
-  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [membersOpen, setMembersOpen] = useState(true);
+  const [unrecognizedOpen, setUnrecognizedOpen] = useState(true);
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -258,33 +245,26 @@ export default function ViewRequest() {
     }
   };
 
-  const handleResubscribeOptOut = async (email: string) => {
-    if (!ownerId) return;
-    setResubscribingEmail(email);
+  const handleDismissResponse = async (email: string) => {
+    setDismissingEmail(email);
     try {
-      const res = await fetch(`${API_URL}/api/organizations/${ownerId}/resubscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setSnackbar({ open: true, message: data.error || 'Failed to re-subscribe', severity: 'error' });
-        return;
-      }
-      setSnackbar({ open: true, message: 'Recipient re-subscribed successfully', severity: 'success' });
-      const eventsRes = await fetch(`${API_URL}/api/organizations/${ownerId}/opt-out-events`, {
-        credentials: 'include',
-      });
-      if (eventsRes.ok) {
-        const eventsData = await eventsRes.json();
-        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
-      }
-    } catch (e: any) {
-      setSnackbar({ open: true, message: e.message || 'Failed to re-subscribe', severity: 'error' });
+      const response = await fetch(
+        `${API_URL}/api/form-requests/${requestId}/dismiss-response`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email }),
+        }
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to dismiss');
+      setNonMemberResponses(prev => prev.filter(r => r.respondent_email.toLowerCase() !== email.toLowerCase()));
+      setSnackbar({ open: true, message: `Dismissed ${email}`, severity: 'success' });
+    } catch (err: any) {
+      setSnackbar({ open: true, message: err.message, severity: 'error' });
     } finally {
-      setResubscribingEmail(null);
+      setDismissingEmail(null);
     }
   };
 
@@ -293,33 +273,6 @@ export default function ViewRequest() {
   useEffect(() => {
     if (requestId) syncAndLoadData();
   }, [requestId]);
-
-  // Fetch opt-out data lazily when the Opted Out tab is first opened
-  useEffect(() => {
-    if (tabIndex !== 1 || optOutFetched) return;
-    const fetchOptOutData = async () => {
-      setOptOutLoading(true);
-      try {
-        const userRes = await fetch(`${API_URL}/api/current-user`, { credentials: 'include' });
-        const userData = await userRes.json();
-        if (!userData.authenticated || !userData.user?.id) return;
-        setOwnerId(userData.user.id);
-        const eventsRes = await fetch(
-          `${API_URL}/api/organizations/${userData.user.id}/opt-out-events`,
-          { credentials: 'include' }
-        );
-        if (!eventsRes.ok) throw new Error('Failed to load opt-out events');
-        const eventsData = await eventsRes.json();
-        setOptOutEvents(Array.isArray(eventsData.events) ? eventsData.events : []);
-      } catch {
-        setOptOutEvents([]);
-      } finally {
-        setOptOutLoading(false);
-        setOptOutFetched(true);
-      }
-    };
-    fetchOptOutData();
-  }, [tabIndex, optOutFetched]);
 
   // Provider-specific poll intervals (ms): Google 30s, Jotform 2min, Microsoft 5min
   const PROVIDER_POLL_INTERVALS: Record<string, number> = {
@@ -364,37 +317,6 @@ export default function ViewRequest() {
     formRequest && formRequest.total_recipients > 0
       ? Math.round((formRequest.response_count / formRequest.total_recipients) * 100)
       : 0;
-
-  const memberEmailsSet = useMemo(
-    () => new Set(memberStatus.map((m) => m.email.toLowerCase())),
-    [memberStatus]
-  );
-
-  const optedOutForRequest = useMemo(() => {
-    const byEmail: Record<string, { event_type: string; timestamp: string }> = {};
-    const sorted = [...optOutEvents]
-      .filter((e) => memberEmailsSet.has((e.recipient_email || '').toLowerCase()))
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    for (const e of sorted) {
-      const key = (e.recipient_email || '').toLowerCase();
-      if (key && byEmail[key] === undefined)
-        byEmail[key] = { event_type: e.event_type, timestamp: e.timestamp };
-    }
-    return Object.entries(byEmail)
-      .filter(([, v]) => v.event_type === 'opted_out' || v.event_type === 'left_group')
-      .map(([email, v]) => ({ email, event_type: v.event_type, timestamp: v.timestamp }));
-  }, [optOutEvents, memberEmailsSet]);
-
-  const formatOptOutTimestamp = (ts: string) => {
-    try {
-      const d = new Date(ts);
-      if (isNaN(d.getTime())) return ts;
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const h = d.getHours(), am = h < 12, h12 = h % 12 || 12, m = d.getMinutes();
-      const pad = (n: number) => (n < 10 ? '0' + n : String(n));
-      return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${h12}:${pad(m)} ${am ? 'am' : 'pm'}`;
-    } catch { return ts; }
-  };
 
   const getScheduleLabel = (
     schedule?: string | { schedule_type: string; [key: string]: any }
@@ -653,87 +575,73 @@ export default function ViewRequest() {
         )}
       </Paper>
 
-      {/* ── Tabs ── */}
-      <Tabs
-        value={tabIndex}
-        onChange={(_, v: number) => setTabIndex(v)}
-        sx={{ mb: 3, borderBottom: '1px solid', borderColor: 'divider' }}
+      {/* ── Member Status (collapsible) ── */}
+      <Paper
+        elevation={0}
+        sx={{ mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 3, overflow: 'hidden' }}
       >
-        <Tab label="Responses" />
-        <Tab
-          label={
-            <Box display="flex" alignItems="center" gap={1}>
-              Opted Out
-              {optedOutForRequest.length > 0 && (
-                <Chip label={optedOutForRequest.length} size="small" color="warning" sx={{ height: 18, fontSize: '0.7rem' }} />
-              )}
-            </Box>
-          }
-        />
-      </Tabs>
-
-      {/* ══════════════════════════════════════════════════════════════════
-          TAB 0 — Responses
-      ══════════════════════════════════════════════════════════════════ */}
-      {tabIndex === 0 && (
-        <>
-          {/* Member Status Panel */}
-          <Paper
-            elevation={0}
-            sx={{ mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 3, overflow: 'hidden' }}
-          >
-            <Box
-              px={{ xs: 2, sm: 3 }}
-              py={2}
-              display="flex"
-              alignItems="center"
-              justifyContent="space-between"
-              flexWrap="wrap"
-              gap={2}
-              sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
+        <Box
+          px={{ xs: 2, sm: 3 }}
+          py={2}
+          display="flex"
+          alignItems="center"
+          justifyContent="space-between"
+          flexWrap="wrap"
+          gap={2}
+          sx={{
+            borderBottom: membersOpen ? '1px solid' : 'none',
+            borderColor: 'divider',
+            bgcolor: 'grey.50',
+            cursor: 'pointer',
+          }}
+          onClick={() => setMembersOpen(!membersOpen)}
+        >
+          <Box display="flex" alignItems="center" gap={1}>
+            <PeopleAltIcon fontSize="small" color="action" />
+            <Typography variant="subtitle1" fontWeight="bold">Member Status</Typography>
+            <IconButton size="small" sx={{ ml: -0.5 }}>
+              {membersOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+            </IconButton>
+          </Box>
+          <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" onClick={(e) => e.stopPropagation()}>
+            <TextField
+              size="small"
+              placeholder="Search members…"
+              value={memberSearch}
+              onChange={(e) => setMemberSearch(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ width: { xs: '100%', sm: 200 } }}
+            />
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={sendingBulk ? <CircularProgress size={14} color="inherit" /> : <SendIcon fontSize="small" />}
+              onClick={handleSendBulkReminders}
+              disabled={sendingBulk || nonResponderCount === 0}
             >
-              <Box display="flex" alignItems="center" gap={1}>
-                <PeopleAltIcon fontSize="small" color="action" />
-                <Typography variant="subtitle1" fontWeight="bold">Member Status</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-                <TextField
-                  size="small"
-                  placeholder="Search members…"
-                  value={memberSearch}
-                  onChange={(e) => setMemberSearch(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} />
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ width: { xs: '100%', sm: 200 } }}
-                />
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={sendingBulk ? <CircularProgress size={14} color="inherit" /> : <SendIcon fontSize="small" />}
-                  onClick={handleSendBulkReminders}
-                  disabled={sendingBulk || nonResponderCount === 0}
-                >
-                  {sendingBulk ? 'Sending…' : `Remind All (${nonResponderCount})`}
-                </Button>
-              </Box>
-            </Box>
+              {sendingBulk ? 'Sending…' : `Remind All (${nonResponderCount})`}
+            </Button>
+          </Box>
+        </Box>
 
-            <TableContainer sx={{ maxHeight: 520 }}>
-              <Table stickyHeader size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', width: 44 }}>#</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }}>Email</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>Submitted</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">Status</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">Action</TableCell>
-                  </TableRow>
-                </TableHead>
+        <Collapse in={membersOpen}>
+          <TableContainer sx={{ maxHeight: 520 }}>
+            <Table stickyHeader size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', width: 44 }}>#</TableCell>
+                  <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }}>Email</TableCell>
+                  <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>Submitted</TableCell>
+                  <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">Status</TableCell>
+                  <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="center">Action</TableCell>
+                </TableRow>
+              </TableHead>
                 <TableBody>
                   {filteredMembers.length === 0 ? (
                     <TableRow>
@@ -801,35 +709,46 @@ export default function ViewRequest() {
                 </TableBody>
               </Table>
             </TableContainer>
-          </Paper>
+          </Collapse>
+        </Paper>
 
-          {/* Unrecognized Responses */}
-          {nonMemberResponses.length > 0 && (
-            <Paper
-              elevation={0}
-              sx={{ border: '1px solid', borderColor: 'warning.light', borderRadius: 3, overflow: 'hidden' }}
+        {/* Unrecognized Responses (collapsible) */}
+        {nonMemberResponses.length > 0 && (
+          <Paper
+            elevation={0}
+            sx={{ border: '1px solid', borderColor: 'warning.light', borderRadius: 3, overflow: 'hidden', mb: 3 }}
+          >
+            <Box
+              px={{ xs: 2, sm: 3 }}
+              py={2}
+              display="flex"
+              alignItems="center"
+              gap={1}
+              sx={{
+                borderBottom: unrecognizedOpen ? '1px solid' : 'none',
+                borderColor: 'warning.light',
+                bgcolor: '#fffbf0',
+                cursor: 'pointer',
+              }}
+              onClick={() => setUnrecognizedOpen(!unrecognizedOpen)}
             >
-              <Box
-                px={{ xs: 2, sm: 3 }}
-                py={2}
-                display="flex"
-                alignItems="center"
-                gap={1}
-                sx={{ borderBottom: '1px solid', borderColor: 'warning.light', bgcolor: '#fffbf0' }}
-              >
-                <WarningAmberIcon color="warning" fontSize="small" />
-                <Typography variant="subtitle1" fontWeight="bold" color="warning.dark">
-                  Unrecognized Responses
-                </Typography>
-                <Chip label={nonMemberResponses.length} size="small" color="warning" variant="outlined" sx={{ ml: 0.5 }} />
-              </Box>
+              <WarningAmberIcon color="warning" fontSize="small" />
+              <Typography variant="subtitle1" fontWeight="bold" color="warning.dark">
+                Unrecognized Responses
+              </Typography>
+              <Chip label={nonMemberResponses.length} size="small" color="warning" variant="outlined" sx={{ ml: 0.5 }} />
+              <IconButton size="small" sx={{ ml: 'auto' }}>
+                {unrecognizedOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+              </IconButton>
+            </Box>
+            <Collapse in={unrecognizedOpen}>
               <TableContainer>
                 <Table size="small">
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold' }}>Email</TableCell>
                       <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>Submitted</TableCell>
-                      <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold' }} align="center">Add to Group</TableCell>
+                      <TableCell sx={{ bgcolor: '#fffbf0', fontWeight: 'bold' }} align="center">Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -844,110 +763,45 @@ export default function ViewRequest() {
                           </Typography>
                         </TableCell>
                         <TableCell align="center">
-                          {response.respondent_email && (
-                            <Tooltip title="Add this email to the group">
-                              <IconButton
-                                size="small"
-                                color="primary"
-                                onClick={() => handleAddEmailToGroup(response.respondent_email)}
-                                disabled={addingEmail === response.respondent_email}
-                              >
-                                {addingEmail === response.respondent_email
-                                  ? <CircularProgress size={16} />
-                                  : <PersonAddIcon fontSize="small" />}
-                              </IconButton>
-                            </Tooltip>
-                          )}
+                          <Box display="flex" justifyContent="center" gap={0.5}>
+                            {response.respondent_email && (
+                              <>
+                                <Tooltip title="Add this email to the group">
+                                  <IconButton
+                                    size="small"
+                                    color="primary"
+                                    onClick={() => handleAddEmailToGroup(response.respondent_email)}
+                                    disabled={addingEmail === response.respondent_email}
+                                  >
+                                    {addingEmail === response.respondent_email
+                                      ? <CircularProgress size={16} />
+                                      : <PersonAddIcon fontSize="small" />}
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Dismiss this response">
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    onClick={() => handleDismissResponse(response.respondent_email)}
+                                    disabled={dismissingEmail === response.respondent_email}
+                                  >
+                                    {dismissingEmail === response.respondent_email
+                                      ? <CircularProgress size={16} />
+                                      : <DeleteOutlineIcon fontSize="small" />}
+                                  </IconButton>
+                                </Tooltip>
+                              </>
+                            )}
+                          </Box>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </TableContainer>
-            </Paper>
-          )}
-        </>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════
-          TAB 1 — Opted Out
-      ══════════════════════════════════════════════════════════════════ */}
-      {tabIndex === 1 && (
-        <Paper
-          elevation={0}
-          sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, overflow: 'hidden' }}
-        >
-          <Box
-            px={{ xs: 2, sm: 3 }}
-            py={2}
-            sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}
-          >
-            <Typography variant="subtitle1" fontWeight="bold">Opted Out Recipients</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Members who have opted out or left the group for this request.
-            </Typography>
-          </Box>
-
-          {optOutLoading ? (
-            <Box display="flex" justifyContent="center" py={6}>
-              <CircularProgress />
-            </Box>
-          ) : optedOutForRequest.length === 0 ? (
-            <Box py={6} textAlign="center">
-              <CheckCircleIcon sx={{ fontSize: 40, color: 'success.light', mb: 1 }} />
-              <Typography variant="body2" color="text.secondary">
-                No opted-out recipients for this request.
-              </Typography>
-            </Box>
-          ) : (
-            <TableContainer sx={{ overflowX: 'auto' }}>
-              <Table size="small" sx={{ minWidth: 360 }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }}>Email</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }}>Event</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>Timestamp</TableCell>
-                    <TableCell sx={{ bgcolor: 'grey.50', fontWeight: 'bold' }} align="right">Action</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {optedOutForRequest.map((row) => (
-                    <TableRow key={row.email} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight="medium">{row.email}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={row.event_type}
-                          color={row.event_type === 'opted_out' ? 'error' : 'warning'}
-                          size="small"
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
-                        <Typography variant="body2" color="text.secondary">
-                          {formatOptOutTimestamp(row.timestamp)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={resubscribingEmail === row.email}
-                          onClick={() => handleResubscribeOptOut(row.email)}
-                          startIcon={resubscribingEmail === row.email ? <CircularProgress size={14} /> : undefined}
-                        >
-                          {resubscribingEmail === row.email ? 'Sending…' : 'Re-subscribe'}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </Paper>
-      )}
+            </Collapse>
+          </Paper>
+        )}
 
       {/* ── Snackbar ── */}
       <Snackbar

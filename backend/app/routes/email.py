@@ -6,6 +6,7 @@ import traceback
 from models.group import Group
 from models.org_membership import OrgMembership
 from models.database import get_db, Collections
+from google.cloud.firestore_v1.base_query import FieldFilter
 from utils.email_service import EmailService
 
 
@@ -116,7 +117,7 @@ def send_bulk_reminders(request_id: str):
         
         # Get responses to determine who hasn't responded
         responses = db.collection(Collections.RESPONSES)\
-            .where('request_id', '==', request_id)\
+            .where(filter=FieldFilter('request_id', '==', request_id))\
             .stream()
         
         responded_emails = set()

@@ -7,7 +7,7 @@ import {
 import { api } from "../api/client"  // ← replaces the API_URL import
 
 function Login() {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,7 +20,7 @@ function Login() {
 
     try {
       // Step 1: attempt login
-      const loginRes = await api.post('/api/login', { username, password });
+      const loginRes = await api.post('/api/login', { email, password });
       const loginData = await loginRes.json();
 
       if (!loginRes.ok || !loginData.success) {
@@ -66,11 +66,12 @@ function Login() {
           <form onSubmit={handleSubmit}>
             <TextField
               fullWidth
-              label="Username"
+              label="Email"
+              type="email"
               variant="outlined"
               margin="normal"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
               autoFocus
             />

@@ -32,6 +32,7 @@ except ImportError:
     pass
 
 from fake_firestore import FakeFirestore  # noqa: E402
+from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: E402
 
 EMAILIT_API_URL = "https://api.emailit.com/v2/emails"
 
@@ -380,7 +381,7 @@ class TestEmailServiceLive:
 
         logs = list(
             fake_db.collection(Collections.EMAIL_LOGS)
-            .where("request_id", "==", request_id)
+            .where(filter=FieldFilter("request_id", "==", request_id))
             .stream()
         )
         assert len(logs) >= 1, "No email_logs entry written after successful send"
