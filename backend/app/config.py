@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     
     # Application Settings
     APP_NAME: str = "FormReminder"
-    DEBUG: bool = True
+    DEBUG: bool = False # was true
     SECRET_KEY: str = "change_me_in_production"  # Flask session secret
     # Public base URL used in emails (unsubscribe links, etc.)
     BACKEND_PUBLIC_URL: str = "http://localhost:5000"

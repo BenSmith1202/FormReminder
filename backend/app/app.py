@@ -75,7 +75,7 @@ app.url_map.strict_slashes = False
 CORS(app,
      origins=["http://localhost:5173", "https://formreminder-frontend-176029126556.us-central1.run.app"],
      supports_credentials=True,
-     allow_headers=["Content-Type"],
+     allow_headers=["Content-Type", "X-Org-ID"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # Initialize database at startup
