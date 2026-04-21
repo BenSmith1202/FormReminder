@@ -275,6 +275,8 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(provider_auth_bp)  # Jotform + Microsoft auth, connected-accounts
 
+init_scheduler(app)  # Start automatic reminder scheduler
+
 
 @app.get("/")
 def root():

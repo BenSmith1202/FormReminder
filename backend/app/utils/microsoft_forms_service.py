@@ -326,22 +326,33 @@ class MicrosoftFormsService:
         START_NAMES = {"start time", "started"}
         SYSTEM_COLS = EMAIL_NAMES | ID_NAMES | TIME_NAMES | START_NAMES
 
+        # Always identify non-email system columns by header first
         for i, h in enumerate(headers):
-            if h in EMAIL_NAMES:
-                email_col = i
-            elif h in ID_NAMES:
+            if h in ID_NAMES:
                 id_col = i
             elif h in TIME_NAMES:
                 time_col = i
             elif h in START_NAMES:
                 start_col = i
 
-        # If no exact header match, look for headers containing "email"
+        # Primary: scan ALL data rows for a column that actually contains email-shaped values
+        _email_re = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+        if len(rows) > 1:
+            col_email_hits = {}
+            for row in rows[1:]:
+                for i, cell in enumerate(row):
+                    if _email_re.match(str(cell).strip()):
+                        col_email_hits[i] = col_email_hits.get(i, 0) + 1
+            if col_email_hits:
+                email_col = max(col_email_hits, key=col_email_hits.get)
+                print(f"[Microsoft] Regex-matched email column: col {email_col} ('{headers_raw[email_col]}', {col_email_hits[email_col]} hits)")
+
+        # Fallback: header-name matching if no data-based match found
         if email_col is None:
             for i, h in enumerate(headers):
-                if "email" in h and h not in SYSTEM_COLS:
+                if h in EMAIL_NAMES or ("email" in h and h not in SYSTEM_COLS):
                     email_col = i
-                    print(f"[Microsoft] Fuzzy-matched email column: '{headers_raw[i]}' (col {i})")
+                    print(f"[Microsoft] Header-matched email column: '{headers_raw[i]}' (col {i})")
                     break
 
         if email_col is None:
